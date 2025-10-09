@@ -1,6 +1,6 @@
 /* No element resets. Only variables + optional page bg/text */
 @import "tailwindcss";
-@import "tw-animate-css";`  
+@import "tw-animate-css"; 
 
 @custom-variant dark (&:is(.dark *));
 .theme-scheduleit{
