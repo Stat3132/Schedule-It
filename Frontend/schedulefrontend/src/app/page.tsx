@@ -1,10 +1,12 @@
 "use client";
 import Link from "next/link";
+import Image from "next/image";
 import "./globals.css";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Briefcase, User } from "lucide-react";
 import { useRouter } from "next/navigation";
+import next from "next";
 
 export default function Page() {
   const router = useRouter();
@@ -16,10 +18,6 @@ export default function Page() {
 
   return (
     <div className="size-full bg-background p-8">
-      {/* Schedule-It Logo */}
-      <div className="mb-16">
-        <h1 className="text-primary">Schedule-It</h1>
-      </div>
 
       {/* Main Content */}
       <div className="flex flex-col items-center justify-center">
