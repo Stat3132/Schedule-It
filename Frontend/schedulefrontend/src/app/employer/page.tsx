@@ -83,8 +83,8 @@ export default function EmployerPage() {
             </div>
 
             <p className="mt-6 text-center text-sm text-muted-foreground">
-              Register a corporation?{" "}
-              <Link href="/signup" className="text-primary hover:underline">
+              Registering a new corporation?{" "}
+              <Link href="/registercorporation" className="text-primary hover:underline">
                 Register new corporation
               </Link>
             </p>
