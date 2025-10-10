@@ -1,14 +1,18 @@
+"use client";
 import Link from "next/link";
 import "./globals.css";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Briefcase, User } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 export default function Page() {
+  const router = useRouter();
+
   const handleRoleSelection = (role: "employer" | "employee") => {
     console.log(`Selected role: ${role}`);
-    // Add your navigation logic here
-  };
+    router.push(role === "employer" ? "/employer" : "/employee");
+    };
 
   return (
     <div className="size-full bg-background p-8">
