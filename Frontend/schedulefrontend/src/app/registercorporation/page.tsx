@@ -10,6 +10,7 @@ export default function CorporationRegistration() {
     email: '',
     password: '',
     phoneNumber: '',
+    //A SIMPLE TEST
   });
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
