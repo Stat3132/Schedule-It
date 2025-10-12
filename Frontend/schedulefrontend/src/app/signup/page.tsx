@@ -1,15 +1,17 @@
 "use client";
 import { useState } from 'react';
 import { User } from 'lucide-react';
+import { useRouter } from "next/navigation";
 
 export default function SignUp() {
+  const router = useRouter();
   const [formData, setFormData] = useState({
-    businessName: '',
-    ownerName: '',
-    location: '',
+    firstName: '',
+    lastName: '',
     email: '',
     password: '',
     phoneNumber: '',
+    verifyPassword: '',
   });
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -21,7 +23,7 @@ export default function SignUp() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Form submitted:', formData);
+    router.push('/addcorptouser');
   };
 
   return (
@@ -45,34 +47,33 @@ export default function SignUp() {
           <form onSubmit={handleSubmit} className="px-8 py-10">
             <div className="space-y-6">
               <div>
-                <label htmlFor="businessName" className="block text-sm font-semibold text-foreground mb-2">
-                  Full name
+                <label htmlFor="firstName" className="block text-sm font-semibold text-foreground mb-2">
+                  First name
                 </label>
                 <input
                   type="text"
-                  id="businessName"
-                  name="businessName"
-                  value={formData.businessName}
+                  id="firstName"
+                  name="firstName"
+                  value={formData.firstName}
                   onChange={handleChange}
                   required
                   className="w-full px-4 py-3 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent transition-all bg-background text-foreground"
-                  placeholder="Enter your business name"
+                  placeholder="Enter your First name"
                 />
               </div>
-
               <div>
-                <label htmlFor="location" className="block text-sm font-semibold text-foreground mb-2">
-                  Zipcode
+                <label htmlFor="lastName" className="block text-sm font-semibold text-foreground mb-2">
+                  Last name
                 </label>
                 <input
                   type="text"
-                  id="location"
-                  name="location"
-                  value={formData.location}
+                  id="lastName"
+                  name="lastName"
+                  value={formData.lastName}
                   onChange={handleChange}
                   required
                   className="w-full px-4 py-3 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent transition-all bg-background text-foreground"
-                  placeholder="Enter business location"
+                  placeholder="Enter your Last name"
                 />
               </div>
 
@@ -88,7 +89,7 @@ export default function SignUp() {
                   onChange={handleChange}
                   required
                   className="w-full px-4 py-3 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent transition-all bg-background text-foreground"
-                  placeholder="owner@business.com"
+                  placeholder="User@gmail.com"
                 />
               </div>
 
@@ -125,13 +126,30 @@ export default function SignUp() {
                 />
                 <p className="text-sm text-muted-foreground mt-1">Must be at least 8 characters</p>
               </div>
+                            <div>
+                <label htmlFor="verifyPassword" className="block text-sm font-semibold text-foreground mb-2">
+                  Verify Password
+                </label>
+                <input
+                  type="password"
+                  id="verifyPassword"
+                  name="verifyPassword"
+                  value={formData.verifyPassword}
+                  onChange={handleChange}
+                  required
+                  minLength={8}
+                  className="w-full px-4 py-3 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent transition-all bg-background text-foreground"
+                  placeholder="Confirm password above"
+                />
+                <p className="text-sm text-muted-foreground mt-1">Must match above password above</p>
+              </div>
             </div>
 
             <button
               type="submit"
               className="w-full mt-8 bg-primary text-primary-foreground py-4 rounded-lg font-semibold hover:opacity-90 transition-opacity shadow-lg hover:shadow-xl"
             >
-              Register
+              Next
             </button>
           </form>
         </div>
