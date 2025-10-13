@@ -14,7 +14,7 @@ export default function SignUp() {
     phoneNumber: '',
     verifyPassword: '',
   });
-   const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -41,6 +41,7 @@ export default function SignUp() {
             data: {
               first_name: formData.firstName,
               last_name: formData.lastName,
+              
             }
           },
         }
@@ -51,8 +52,16 @@ export default function SignUp() {
       });
       router.push('/addcorptouser');
   }
-      catch (error: any) {
-      setMessage({ type: 'error', text: error.message });
+    catch (error: unknown) {
+      // Narrow unknown to a useful message
+      const messageText =
+        typeof error === 'string'
+          ? error
+          : error && typeof (error as { message?: unknown }).message === 'string'
+          ? (error as { message: string }).message
+          : 'An unexpected error occurred';
+
+      setMessage({ type: 'error', text: messageText });
     } finally {
       setLoading(false);
     }
