@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { User } from 'lucide-react';
 import { useRouter } from "next/navigation";
+import {supabase} from '../../lib/supabase';
 
 export default function SignUp() {
   const router = useRouter();
@@ -13,6 +14,8 @@ export default function SignUp() {
     phoneNumber: '',
     verifyPassword: '',
   });
+   const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({
@@ -21,9 +24,38 @@ export default function SignUp() {
     });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    router.push('/addcorptouser');
+    if (formData.password !== formData.verifyPassword) {
+      setMessage({ type: 'error', text: 'Passwords do not match' });
+      return;
+    }
+    setLoading(true);
+    setMessage(null);
+    try { 
+      const { error } = await supabase.auth.signUp(
+        {
+          email: formData.email,
+          password: formData.password,
+          options: {
+            data: {
+              first_name: formData.firstName,
+              last_name: formData.lastName,
+            }
+          },
+        }
+        );
+      if (error) throw error;
+      setMessage({ type: 'success', text: 'User created successfully!' });
+      setFormData({firstName: '', lastName: '', email: '', password: '', phoneNumber: '', verifyPassword: '',
+      });
+      router.push('/addcorptouser');
+  }
+      catch (error: any) {
+      setMessage({ type: 'error', text: error.message });
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
