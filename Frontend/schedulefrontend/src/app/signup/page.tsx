@@ -10,7 +10,6 @@ export default function SignUp() {
     lastName: '',
     email: '',
     password: '',
-    phoneNumber: '',
     verifyPassword: '',
   });
 
@@ -92,23 +91,6 @@ export default function SignUp() {
                   placeholder="User@gmail.com"
                 />
               </div>
-
-              <div>
-                <label htmlFor="phoneNumber" className="block text-sm font-semibold text-foreground mb-2">
-                  Phone Number
-                </label>
-                <input
-                  type="tel"
-                  id="phoneNumber"
-                  name="phoneNumber"
-                  value={formData.phoneNumber}
-                  onChange={handleChange}
-                  required
-                  className="w-full px-4 py-3 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent transition-all bg-background text-foreground"
-                  placeholder="+1 (555) 123-4567"
-                />
-              </div>
-
               <div>
                 <label htmlFor="password" className="block text-sm font-semibold text-foreground mb-2">
                   Password
