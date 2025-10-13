@@ -12,7 +12,7 @@ interface Business {
 export default function BusinessSearch() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Business[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+  const [isSearching] = useState(false);
   const [selectedBusiness, setSelectedBusiness] = useState<Business | null>(null);
 
   const handleBusinessSelect = (business: Business) => {
@@ -89,7 +89,7 @@ export default function BusinessSearch() {
                   <div>
                     <p className="font-semibold text-destructive">Business not found</p>
                     <p className="text-sm text-destructive/80 mt-1">
-                      No registered businesses match "{searchQuery}"
+                      No registered businesses match {searchQuery}
                     </p>
                   </div>
                 </div>
