@@ -38,16 +38,15 @@ export default function SignUp() {
           password: formData.password,
           options: {
             data: {
-              first_name: formData.firstName,
-              last_name: formData.lastName,
-              
+            first_name: formData.firstName,
+            last_name: formData.lastName,
             }
           },
         }
         );
       if (error) throw error;
       setMessage({ type: 'success', text: 'User created successfully!' });
-      setFormData({firstName: '', lastName: '', email: '', password: '', phoneNumber: '', verifyPassword: '',
+      setFormData({firstName: '', lastName: '', email: '', password: '', verifyPassword: '',
       });
       router.push('/addcorptouser');
   }
