@@ -1,4 +1,4 @@
-"'use client';"
+"use client";
 import { useState, useEffect } from 'react';
 import { Mail, CheckCircle, ArrowLeft } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
