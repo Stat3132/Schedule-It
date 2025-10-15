@@ -75,7 +75,6 @@ export default function EmployeePage() {
               <span className="text-xs text-muted-foreground">Or continue with</span>
               <Separator className="flex-1" />
             </div>
-
             <div className="grid grid-cols-2 gap-3">
               <Button type="button" variant="outline" className="w-full">
                 <span className="mr-2 font-semibold">G</span> Google
