@@ -78,7 +78,7 @@ export default function EmployeePage() {
                 <span className="mr-2 font-semibold">G</span> Google
               </Button>
               <Button asChild variant="outline" className="w-full">
-                <Link href="https://snxmcaolyiovnfxokzdk.supabase.co/auth/v1/authorize?provider=azure&redirect_to=http://localhost:3000/auth/callback" className="w-full flex items-center justify-center">
+                <Link href="https://snxmcaolyiovnfxokzdk.supabase.co/auth/v1/authorize?provider=azure&redirect_to=http://localhost:3000/emailauthorization" className="w-full flex items-center justify-center">
                   <span className="mr-2 font-semibold">▦</span> Microsoft
                 </Link>
               </Button>
