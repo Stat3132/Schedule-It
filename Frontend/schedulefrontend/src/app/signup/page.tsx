@@ -51,7 +51,6 @@ export default function SignUp() {
       router.push('/addcorptouser');
   }
     catch (error: unknown) {
-      // Narrow unknown to a useful message
       const messageText =
         typeof error === 'string'
           ? error
