@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Mail, CheckCircle, ArrowLeft } from "lucide-react";
-import { supabase } from "@/lib/supabase"; // adjust if your path differs
+import { supabase } from "@/lib/supabase";
 
 export interface SmsVerificationProps {
   verificationId: string;
