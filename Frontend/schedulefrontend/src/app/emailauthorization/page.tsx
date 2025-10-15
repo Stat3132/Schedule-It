@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Mail, CheckCircle, ArrowLeft } from 'lucide-react';
+import { SmsVerification } from "@/components/ui/SmsVerification";
 import { supabase } from '../../lib/supabase';
 
 export default function EmailAuthorizationPage() {
