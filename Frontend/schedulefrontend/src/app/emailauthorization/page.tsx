@@ -1,19 +1,13 @@
 "use client";
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Mail, CheckCircle, ArrowLeft } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
-interface SmsVerificationProps {
-  verificationId: string;
-  onVerified: () => void;
-  onBack: () => void;
-}
-
-export default function SmsVerification({
-  verificationId,
-  onVerified,
-  onBack
-}: SmsVerificationProps) {
+export default function EmailAuthorizationPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const verificationId = searchParams?.get('verificationId') ?? '';
   const [code, setCode] = useState(['', '', '', '', '', '']);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -53,7 +47,7 @@ export default function SmsVerification({
     setCode(newCode);
   };
 
-  const verifyCode = async () => {
+  const verifyCode = useCallback(async () => {
     const enteredCode = code.join('');
     if (enteredCode.length !== 6) {
       setError('Please enter all 6 digits');
@@ -103,7 +97,8 @@ export default function SmsVerification({
 
       setIsVerified(true);
       setTimeout(() => {
-        onVerified();
+        // Redirect after success; update destination as needed
+        router.push('/');
       }, 2000);
     } catch (err) {
       setError('Failed to verify code. Please try again.');
@@ -111,13 +106,13 @@ export default function SmsVerification({
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [code, verificationId, router]);
 
   useEffect(() => {
     if (code.every(digit => digit !== '')) {
       verifyCode();
     }
-  }, [code]);
+  }, [verifyCode]);
 
   if (isVerified) {
     return (
@@ -143,7 +138,7 @@ export default function SmsVerification({
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
         <button
-          onClick={onBack}
+          onClick={() => router.back()}
           className="flex items-center text-slate-600 hover:text-slate-800 mb-6 transition"
         >
           <ArrowLeft className="w-4 h-4 mr-2" />
@@ -189,7 +184,7 @@ export default function SmsVerification({
           )}
         </div>
 
-        
+        {/* TESTING */}
         <button
           onClick={verifyCode}
           disabled={isLoading || code.some(digit => digit === '')}
