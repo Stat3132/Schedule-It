@@ -17,6 +17,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { supabase } from "@/lib/supabase";
 
 export default function EmployeePage() {
   const [remember, setRemember] = useState(false);
@@ -79,10 +80,20 @@ export default function EmployeePage() {
               <Button type="button" variant="outline" className="w-full">
                 <span className="mr-2 font-semibold">G</span> Google
               </Button>
-              <Button asChild variant="outline" className="w-full">
-                <Link href="https://snxmcaolyiovnfxokzdk.supabase.co/auth/v1/authorize?provider=azure&redirect_to=http://localhost:3000/emailauthorization" className="w-full flex items-center justify-center">
-                  <span className="mr-2 font-semibold">▦</span> Microsoft
-                </Link>
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={async () => {
+                  await supabase.auth.signInWithOAuth({
+                  provider: "azure",
+                  options: {
+                  redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/emailauthorization`,
+                  queryParams: { prompt: "select_account" }, 
+              },
+              });
+              }}
+              >
+                <span className="mr-2 font-semibold">▦</span> Microsoft
               </Button>
             </div>
 
