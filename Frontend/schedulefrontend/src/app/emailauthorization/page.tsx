@@ -188,7 +188,8 @@ export default function SmsVerification({
             </div>
           )}
         </div>
-        /*TESTING*/
+
+        
         <button
           onClick={verifyCode}
           disabled={isLoading || code.some(digit => digit === '')}
