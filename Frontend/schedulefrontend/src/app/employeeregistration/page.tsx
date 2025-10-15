@@ -87,7 +87,7 @@ export default function EmployeePage() {
                   provider: "azure",
                   options: {
                   redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/emailauthorization`,
-                  queryParams: { prompt: "consent" }, 
+                  queryParams: { prompt: "select_account" }, 
               },
               });
               }}
