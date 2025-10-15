@@ -13,7 +13,7 @@ export default function Page() {
 
   const handleRoleSelection = (role: "employer" | "employee") => {
     console.log(`Selected role: ${role}`);
-    router.push(role === "employer" ? "/employer" : "/employee");
+    router.push(role === "employer" ? "/employerregistration" : "/employeeregistration");
     };
 
   return (
