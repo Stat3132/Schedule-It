@@ -198,7 +198,7 @@ export default function SmsVerification({
         </button>
 
         <p className="text-center text-sm text-slate-500 mt-6">
-          Didn't receive a code?{' '}
+          Didn't receive a code?{" "}
           <button className="text-blue-600 hover:text-blue-700 font-medium">
             Resend
           </button>
