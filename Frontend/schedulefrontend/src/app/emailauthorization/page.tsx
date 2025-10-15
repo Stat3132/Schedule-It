@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { SmsVerification } from "@/components/ui/SmsVerification";
 
-export default function Page() {
+export default function emailauthorization() {
   return (
     <Suspense fallback={<div className="p-6 text-center">Loading…</div>}>
       <EmailAuthorizationClient />
