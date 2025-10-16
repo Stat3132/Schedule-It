@@ -48,7 +48,7 @@ export default function SignUp() {
       setMessage({ type: 'success', text: 'User created successfully!' });
       setFormData({firstName: '', lastName: '', email: '', password: '', verifyPassword: '',
       });
-      router.push('/addcorptouser');
+      router.push('/emailauthorization');
   }
     catch (error: unknown) {
       const messageText =
