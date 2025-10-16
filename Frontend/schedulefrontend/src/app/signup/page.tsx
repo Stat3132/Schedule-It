@@ -48,7 +48,10 @@ export default function SignUp() {
       setMessage({ type: 'success', text: 'User created successfully!' });
       setFormData({firstName: '', lastName: '', email: '', password: '', verifyPassword: '',
       });
-      router.push('/emailauthorization');
+      await supabase.auth.signInWithOtp({
+        email: formData.email,
+        options: { emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/emailauthorization` }
+      });
   }
     catch (error: unknown) {
       const messageText =

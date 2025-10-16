@@ -83,14 +83,16 @@ export default function EmployeePage() {
                   variant="outline"
                   className="w-full"
                   onClick={async () => {
-                  const redirectTo = `${window.location.origin}/emailauthorization`;
+                  const redirectTo = `${window.location.origin}/addcorptouser`;
                   await supabase.auth.signInWithOAuth({
                   provider: "azure",
                   options: { redirectTo, queryParams: { prompt: "select_account" } },
+                  
               });
+              
               }}
               >
-                
+
                 <span className="mr-2 font-semibold">▦</span> Microsoft
               </Button>
             </div>
