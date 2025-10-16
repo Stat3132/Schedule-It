@@ -83,12 +83,10 @@ export default function EmployeePage() {
                   variant="outline"
                   className="w-full"
                   onClick={async () => {
+                  const redirectTo = `${window.location.origin}/emailauthorization`;
                   await supabase.auth.signInWithOAuth({
                   provider: "azure",
-                  options: {
-                  redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/emailauthorization`,
-                  queryParams: { prompt: "consent" }, 
-              },
+                  options: { redirectTo, queryParams: { prompt: "select_account" } },
               });
               }}
               >
