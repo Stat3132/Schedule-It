@@ -17,10 +17,25 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { supabase } from "@/lib/supabase";
 
-export default function EmployerPage() {
-  const [remember, setRemember] = useState(false);
+  export default function EmployerPage() {
+    const [remember, setRemember] = useState(false);
 
+    async function signIn(email: string, password: string) {
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
+    if (error) {
+      if (error.message.includes('Email not confirmed')) {
+        throw new Error('confirm');
+      }
+      if (error.message.includes('Invalid login credentials')) {
+        throw new Error('invalid');
+      }
+      throw error;
+    }
+    return data.session;
+    }
   return (
     <div className="min-h-screen w-full bg-muted/30 flex items-center justify-center p-6">
       <Card className="w-full max-w-md shadow-lg">
