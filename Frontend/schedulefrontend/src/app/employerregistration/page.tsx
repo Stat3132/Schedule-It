@@ -119,7 +119,7 @@ import { useRouter } from "next/navigation";
 
             <p className="mt-6 text-center text-sm text-muted-foreground">
               Registering a new business?{" "}
-              <Link href="/registerbusiness" className="text-primary hover:underline">
+              <Link href="/employeronboarding/start" className="text-primary hover:underline">
                 Register new business
               </Link>
             </p>
