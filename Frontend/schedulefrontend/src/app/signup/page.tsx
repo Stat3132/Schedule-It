@@ -12,6 +12,7 @@ export default function SignUp() {
     email: '',
     password: '',
     verifyPassword: '',
+    chosenRole: '',
   });
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -46,11 +47,12 @@ export default function SignUp() {
         );
       if (error) throw error;
       setMessage({ type: 'success', text: 'User created successfully!' });
-      setFormData({firstName: '', lastName: '', email: '', password: '', verifyPassword: '',
-      });
+      setFormData({firstName: '', lastName: '', email: '', password: '', verifyPassword: '', chosenRole: ''});
+      ;
       await supabase.auth.signInWithOtp({
         email: formData.email,
-        options: { emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/emailauthorization` }
+        options: { emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/emailauthorization`,
+        data: { role: formData.chosenRole = "employee" }, },
       });
   }
     catch (error: unknown) {

@@ -68,18 +68,18 @@ import { useRouter } from "next/navigation";
         </CardHeader>
 
         <CardContent>
-          <form className="space-y-4" onSubmit={(e) => e.preventDefault()}>
+          <form className="space-y-4" onSubmit={signIn}>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input id="email" value={formData.email} type="email" placeholder="you@example.com" className="pl-9" />
+                <Input id="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} type="email" placeholder="you@example.com" className="pl-9" />
               </div>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
-              <Input id="password" value={formData.password} type="password" placeholder="••••••••" />
+              <Input id="password" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} type="password" placeholder="••••••••" />
             </div>
 
             <div className="flex items-center justify-between">
