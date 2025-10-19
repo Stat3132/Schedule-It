@@ -52,8 +52,8 @@ export default function SignUp() {
       setFormData({firstName: '', lastName: '', email: '', password: '', verifyPassword: ''});
       ;
   }
-    catch (err: any) {
-    setMessage({ type: 'error', text: err?.message ?? 'Unexpected error' });
+    catch (err: unknown) {
+    setMessage({ type: 'error', text: (err as { message?: string })?.message ?? 'Unexpected error' });
   } finally {
     setLoading(false);
   }
