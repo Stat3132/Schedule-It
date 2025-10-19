@@ -12,8 +12,8 @@ export default function SignUp() {
     email: '',
     password: '',
     verifyPassword: '',
-    chosenRole: '',
   });
+  const roleAtSignup: "employee" | "employer" = "employee";
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -38,35 +38,25 @@ export default function SignUp() {
           email: formData.email,
           password: formData.password,
           options: {
+            emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/addcorptouser`,
             data: {
             first_name: formData.firstName,
             last_name: formData.lastName,
+            role: roleAtSignup
             }
           },
         }
         );
       if (error) throw error;
       setMessage({ type: 'success', text: 'User created successfully!' });
-      setFormData({firstName: '', lastName: '', email: '', password: '', verifyPassword: '', chosenRole: ''});
+      setFormData({firstName: '', lastName: '', email: '', password: '', verifyPassword: ''});
       ;
-      await supabase.auth.signInWithOtp({
-        email: formData.email,
-        options: { emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/emailauthorization`,
-        data: { role: formData.chosenRole = "employee" }, },
-      });
   }
-    catch (error: unknown) {
-      const messageText =
-        typeof error === 'string'
-          ? error
-          : error && typeof (error as { message?: unknown }).message === 'string'
-          ? (error as { message: string }).message
-          : 'An unexpected error occurred';
-
-      setMessage({ type: 'error', text: messageText });
-    } finally {
-      setLoading(false);
-    }
+    catch (err: any) {
+    setMessage({ type: 'error', text: err?.message ?? 'Unexpected error' });
+  } finally {
+    setLoading(false);
+  }
   };
 
   return (
