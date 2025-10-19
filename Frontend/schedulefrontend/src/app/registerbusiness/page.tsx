@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { Building2 } from 'lucide-react';
 
-export default function CorporationRegistration() {
+export default function RegisterBusiness() {
   const [formData, setFormData] = useState({
     businessName: '',
     ownerName: '',
@@ -36,7 +36,7 @@ export default function CorporationRegistration() {
               </div>
             </div>
             <h1 className="text-3xl font-bold text-primary-foreground text-center">
-              Corporation Registration
+              Business Registration
             </h1>
             <p className="text-primary-foreground/80 text-center mt-2">
               Register your business and get started today
@@ -148,7 +148,7 @@ export default function CorporationRegistration() {
               type="submit"
               className="w-full mt-8 bg-primary text-primary-foreground py-4 rounded-lg font-semibold hover:opacity-90 transition-opacity shadow-lg hover:shadow-xl"
             >
-              Register Corporation
+              Register Business
             </button>
           </form>
         </div>

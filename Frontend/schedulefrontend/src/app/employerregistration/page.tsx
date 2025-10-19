@@ -118,9 +118,9 @@ import { useRouter } from "next/navigation";
             </div>
 
             <p className="mt-6 text-center text-sm text-muted-foreground">
-              Registering a new corporation?{" "}
-              <Link href="/registercorporation" className="text-primary hover:underline">
-                Register new corporation
+              Registering a new business?{" "}
+              <Link href="/registerbusiness" className="text-primary hover:underline">
+                Register new business
               </Link>
             </p>
           </form>

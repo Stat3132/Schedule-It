@@ -38,7 +38,7 @@ export default function SignUp() {
           email: formData.email,
           password: formData.password,
           options: {
-            emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/addcorptouser`,
+            emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/business-selection`,
             data: {
             first_name: formData.firstName,
             last_name: formData.lastName,
