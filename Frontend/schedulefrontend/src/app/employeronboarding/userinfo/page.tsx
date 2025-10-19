@@ -1,17 +1,23 @@
 "use client";
 import { useState } from 'react';
-import { Building2 } from 'lucide-react';
+import { Building2, Phone } from 'lucide-react';
+import { useRouter } from "next/navigation";
+import { verify } from 'crypto';
+import {supabase} from '../../../lib/supabase';
 
-export default function RegisterBusiness() {
+export default function UserInfo() {
+    const router = useRouter();
   const [formData, setFormData] = useState({
-    businessName: '',
-    ownerName: '',
-    location: '',
+    ownerFirstName: '',
+    ownerLastName: '',
     email: '',
-    password: '',
     phoneNumber: '',
-    //A SIMPLE TEST
+    password: '',
+    verifyPassword: '',
   });
+   const roleAtSignup: "employee" | "employer" = "employer";
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({
@@ -20,10 +26,41 @@ export default function RegisterBusiness() {
     });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    console.log('Form submitted:', formData);
-  };
+  const handleSubmit = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (formData.password !== formData.verifyPassword) {
+        setMessage({ type: 'error', text: 'Passwords do not match' });
+        return;
+      }
+      setLoading(true);
+      setMessage(null);
+      try { 
+        const { error } = await supabase.auth.signUp(
+          {
+            email: formData.email,
+            password: formData.password,
+            options: {
+              emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/employeronboarding/start`,
+              data: {
+              first_name: formData.ownerFirstName,
+              last_name: formData.ownerLastName,
+              phone: formData.phoneNumber,
+              role: roleAtSignup
+              }
+            },
+          }
+          );
+        if (error) throw error;
+        setMessage({ type: 'success', text: 'User created successfully!' });
+        setFormData({ownerFirstName: '', ownerLastName: '', email: '', phoneNumber: '', password: '', verifyPassword: ''});
+        ;
+    }
+      catch (err: unknown) {
+      setMessage({ type: 'error', text: (err as { message?: string })?.message ?? 'Unexpected error' });
+    } finally {
+      setLoading(false);
+    }
+    };
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6">
@@ -36,7 +73,7 @@ export default function RegisterBusiness() {
               </div>
             </div>
             <h1 className="text-3xl font-bold text-primary-foreground text-center">
-              Business Registration
+              User Registration
             </h1>
             <p className="text-primary-foreground/80 text-center mt-2">
               Register your business and get started today
@@ -45,31 +82,31 @@ export default function RegisterBusiness() {
 
           <form onSubmit={handleSubmit} className="px-8 py-10">
             <div className="space-y-6">
+              
               <div>
-                <label htmlFor="businessName" className="block text-sm font-semibold text-foreground mb-2">
-                  Business Name
+                <label htmlFor="ownerFirstName" className="block text-sm font-semibold text-foreground mb-2">
+                  Owner First Name
                 </label>
                 <input
                   type="text"
-                  id="businessName"
-                  name="businessName"
-                  value={formData.businessName}
+                  id="ownerFirstName"
+                  name="ownerFirstName"
+                  value={formData.ownerFirstName}
                   onChange={handleChange}
                   required
                   className="w-full px-4 py-3 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent transition-all bg-background text-foreground"
-                  placeholder="Enter your business name"
+                  placeholder="Enter owner's full name"
                 />
               </div>
-
               <div>
-                <label htmlFor="ownerName" className="block text-sm font-semibold text-foreground mb-2">
-                  Owner Name
+                <label htmlFor="ownerLastName" className="block text-sm font-semibold text-foreground mb-2">
+                  Owner Last Name
                 </label>
                 <input
                   type="text"
-                  id="ownerName"
-                  name="ownerName"
-                  value={formData.ownerName}
+                  id="ownerLastName"
+                  name="ownerLastName"
+                  value={formData.ownerLastName}
                   onChange={handleChange}
                   required
                   className="w-full px-4 py-3 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent transition-all bg-background text-foreground"
@@ -77,21 +114,6 @@ export default function RegisterBusiness() {
                 />
               </div>
 
-              <div>
-                <label htmlFor="location" className="block text-sm font-semibold text-foreground mb-2">
-                  Location
-                </label>
-                <input
-                  type="text"
-                  id="location"
-                  name="location"
-                  value={formData.location}
-                  onChange={handleChange}
-                  required
-                  className="w-full px-4 py-3 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent transition-all bg-background text-foreground"
-                  placeholder="Enter business location"
-                />
-              </div>
 
               <div>
                 <label htmlFor="email" className="block text-sm font-semibold text-foreground mb-2">
@@ -142,13 +164,30 @@ export default function RegisterBusiness() {
                 />
                 <p className="text-sm text-muted-foreground mt-1">Must be at least 8 characters</p>
               </div>
+              <div>
+                <label htmlFor="verifyPassword" className="block text-sm font-semibold text-foreground mb-2">
+                  Confirm Password
+                </label>
+                <input
+                  type="password"
+                  id="verifyPassword"
+                  name="verifyPassword"
+                  value={formData.verifyPassword}
+                  onChange={handleChange}
+                  required
+                  minLength={8}
+                  className="w-full px-4 py-3 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent transition-all bg-background text-foreground"
+                  placeholder="Create a secure password"
+                />
+                <p className="text-sm text-muted-foreground mt-1">Must be at least 8 characters</p>
+              </div>
             </div>
 
             <button
               type="submit"
               className="w-full mt-8 bg-primary text-primary-foreground py-4 rounded-lg font-semibold hover:opacity-90 transition-opacity shadow-lg hover:shadow-xl"
             >
-              Register Business
+              Proceed
             </button>
           </form>
         </div>
