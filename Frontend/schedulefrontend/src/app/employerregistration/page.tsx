@@ -18,25 +18,45 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { supabase } from "@/lib/supabase";
+import { sign } from "crypto";
+import { useRouter } from "next/navigation";
 
   export default function EmployerPage() {
+    const router = useRouter();
     const [remember, setRemember] = useState(false);
+    const [formData, setFormData] = useState({
+    email: '',
+    password: ''
+  });
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
-    async function signIn(email: string, password: string) {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    async function signIn(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setMessage(null);
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: formData.email,
+      password: formData.password,
+    });
 
     if (error) {
-      if (error.message.includes('Email not confirmed')) {
-        throw new Error('confirm');
+      if (error.message.toLowerCase().includes('confirm')) {
+        setMessage({ type: 'info', text: 'Confirm your email, then try again.' });
+        setLoading(false);
+        return;
       }
-      if (error.message.includes('Invalid login credentials')) {
-        throw new Error('invalid');
-      }
-      throw error;
+      setMessage({ type: 'error', text: 'Invalid email or password.' });
+      setLoading(false);
+      return;
     }
-    return data.session;
-    }
-  return (
+
+    setLoading(false);
+    router.push('/homepage');
+  }
+
+    return (
     <div className="min-h-screen w-full bg-muted/30 flex items-center justify-center p-6">
       <Card className="w-full max-w-md shadow-lg">
         <CardHeader className="text-center">
@@ -53,13 +73,13 @@ import { supabase } from "@/lib/supabase";
               <Label htmlFor="email">Email</Label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input id="email" type="email" placeholder="you@example.com" className="pl-9" />
+                <Input id="email" value={formData.email} type="email" placeholder="you@example.com" className="pl-9" />
               </div>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
-              <Input id="password" type="password" placeholder="••••••••" />
+              <Input id="password" value={formData.password} type="password" placeholder="••••••••" />
             </div>
 
             <div className="flex items-center justify-between">
