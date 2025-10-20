@@ -38,7 +38,6 @@ export default function SignUp() {
           email: formData.email,
           password: formData.password,
           options: {
-            emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/business-selection`,
             data: {
             first_name: formData.firstName,
             last_name: formData.lastName,
@@ -47,6 +46,7 @@ export default function SignUp() {
           },
         }
         );
+        router.push('/business-selection');
       if (error) throw error;
       setMessage({ type: 'success', text: 'User created successfully!' });
       setFormData({firstName: '', lastName: '', email: '', password: '', verifyPassword: ''});

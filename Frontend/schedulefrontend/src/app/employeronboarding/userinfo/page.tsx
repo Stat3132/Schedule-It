@@ -40,7 +40,6 @@ export default function UserInfo() {
             email: formData.email,
             password: formData.password,
             options: {
-              emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/employeronboarding/start`,
               data: {
               first_name: formData.ownerFirstName,
               last_name: formData.ownerLastName,
@@ -50,6 +49,7 @@ export default function UserInfo() {
             },
           }
           );
+        router.push('/employeronboarding/start');
         if (error) throw error;
         setMessage({ type: 'success', text: 'User created successfully!' });
         setFormData({ownerFirstName: '', ownerLastName: '', email: '', phoneNumber: '', password: '', verifyPassword: ''});
