@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import CreateBusiness from "@/components/ui/authorizebusiness";
 
@@ -38,9 +39,18 @@ export default function StartPage() {
     load();
   }, [supabase]);
 
+  const router = useRouter();
+
+  const handleContinue = () => {
+    // Proceed to the next onboarding step. Update the route if you have a specific next page.
+    router.push('/employeronboarding/userinfo');
+  };
+
   return (
     <CreateBusiness
-      {...({ email, displayName, onContinue: () => {/* next step */} } as any)}
+      email={email}
+      displayName={displayName}
+      onContinue={handleContinue}
     />
   );
 }
