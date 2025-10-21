@@ -12,6 +12,9 @@ export default function StartPage() {
   useEffect(() => {
     const load = async () => {
       const { data: { user } } = await supabase.auth.getUser();
+      const cachedEmail = localStorage.getItem("pendingEmail") || "";
+      const cachedName = localStorage.getItem("pendingName") || "";
+
       if (!user) return;
 
       setEmail(user.email ?? "");
@@ -26,6 +29,7 @@ export default function StartPage() {
       const metaName = [user.user_metadata?.first_name, user.user_metadata?.last_name]
         .filter(Boolean)
         .join(" ");
+        setDisplayName(metaName || cachedName || user?.email || "");
 
       const resolved =
         profile?.full_name ||
