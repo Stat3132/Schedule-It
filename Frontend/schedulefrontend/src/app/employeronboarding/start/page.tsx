@@ -1,6 +1,5 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import CreateBusiness from "@/components/ui/authorizebusiness";
 
@@ -10,51 +9,48 @@ export default function StartPage() {
   const [displayName, setDisplayName] = useState("");
 
   useEffect(() => {
-    const load = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+    let alive = true;
+    (async () => {
       const cachedEmail = localStorage.getItem("pendingEmail") || "";
-      const cachedName = localStorage.getItem("pendingName") || "";
+      const cachedName  = localStorage.getItem("pendingName")  || "";
 
-      if (!user) return;
+      const { data: { user } } = await supabase.auth.getUser();
 
-      setEmail(user.email ?? "");
+      // default to cached when no session
+      let nextEmail = user?.email ?? cachedEmail;
+      let nextName  = cachedName || nextEmail;
 
-      // Prefer server-side profile, fall back to metadata, then email
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("full_name, display_name, first_name, last_name")
-        .eq("id", user.id)
-        .single();
+      if (user) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("full_name, display_name, first_name, last_name")
+          .eq("id", user.id)
+          .maybeSingle();
 
-      const metaName = [user.user_metadata?.first_name, user.user_metadata?.last_name]
-        .filter(Boolean)
-        .join(" ");
-        setDisplayName(metaName || cachedName || user?.email || "");
+        const metaName = [user.user_metadata?.first_name, user.user_metadata?.last_name]
+          .filter(Boolean).join(" ");
 
-      const resolved =
-        profile?.full_name ||
-        profile?.display_name ||
-        metaName ||
-        user.email ||
-        "";
+        nextName =
+          profile?.full_name ||
+          profile?.display_name ||
+          [profile?.first_name, profile?.last_name].filter(Boolean).join(" ") ||
+          metaName ||
+          cachedName ||
+          nextEmail;
+      }
 
-      setDisplayName(resolved);
-    };
-    load();
+      if (!alive) return;
+      setEmail(nextEmail);
+      setDisplayName(nextName);
+    })();
+    return () => { alive = false; };
   }, [supabase]);
-
-  const router = useRouter();
-
-  const handleContinue = () => {
-    // Proceed to the next onboarding step. Update the route if you have a specific next page.
-    router.push('/employeronboarding/userinfo');
-  };
 
   return (
     <CreateBusiness
       email={email}
       displayName={displayName}
-      onContinue={handleContinue}
+      onContinue={() => {/* route next */}}
     />
   );
 }
