@@ -49,6 +49,8 @@ export default function UserInfo() {
             },
           }
           );
+        localStorage.setItem("pendingEmail", formData.email);
+        localStorage.setItem("pendingName", `${formData.ownerFirstName} ${formData.ownerLastName}`);
         router.push('/employeronboarding/start');
         if (error) throw error;
         setMessage({ type: 'success', text: 'User created successfully!' });
