@@ -17,9 +17,9 @@ export default function BusinessVerificationPage() {
 
       const { data: { user } } = await supabase.auth.getUser();
 
-      // default to cached when no session
-      let nextEmail = user?.email ?? cachedEmail;
-      let nextName  = cachedName || nextEmail;
+  // default to cached when no session
+  const nextEmail = user?.email ?? cachedEmail;
+  let nextName  = cachedName || nextEmail;
 
       if (user) {
         const { data: profile } = await supabase
@@ -49,9 +49,7 @@ export default function BusinessVerificationPage() {
 
   const router = useRouter();
 
- const [msg, setMsg] = useState<string | null>(null);
-
-const handleContinue = async ({ timezone, isOwner }: { timezone: string; isOwner: boolean }) => {
+const handleContinue = async ({ timezone }: { timezone: string; isOwner?: boolean }) => {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Not signed in");
 

@@ -90,7 +90,7 @@ export function SmsVerification({
 
   useEffect(() => {
     if (code.every((d) => d !== "")) verifyCode();
-  }, [verifyCode]);
+  }, [code, verifyCode]);
 
   if (isVerified) {
     return (

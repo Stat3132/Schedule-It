@@ -78,6 +78,11 @@ export default function SignUp() {
           </div>
 
           <form onSubmit={handleSubmit} className="px-8 py-10">
+            {message && (
+              <div className={`mb-4 p-3 rounded ${message.type === 'success' ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-red-50 text-red-700 border border-red-100'}`}>
+                {message.text}
+              </div>
+            )}
             <div className="space-y-6">
               <div>
                 <label htmlFor="firstName" className="block text-sm font-semibold text-foreground mb-2">
@@ -163,9 +168,10 @@ export default function SignUp() {
 
             <button
               type="submit"
-              className="w-full mt-8 bg-primary text-primary-foreground py-4 rounded-lg font-semibold hover:opacity-90 transition-opacity shadow-lg hover:shadow-xl"
+              disabled={loading}
+              className={`w-full mt-8 bg-primary text-primary-foreground py-4 rounded-lg font-semibold hover:opacity-90 transition-opacity shadow-lg hover:shadow-xl ${loading ? 'opacity-60 cursor-not-allowed' : ''}`}
             >
-              Next
+              {loading ? 'Creating...' : 'Next'}
             </button>
           </form>
         </div>

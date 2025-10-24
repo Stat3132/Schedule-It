@@ -1,8 +1,7 @@
 "use client";
 import { useState } from 'react';
-import { Building2, Phone } from 'lucide-react';
+import { Building2 } from 'lucide-react';
 import { useRouter } from "next/navigation";
-import { verify } from 'crypto';
 import {supabase} from '../../../lib/supabase';
 
 export default function UserInfo() {
@@ -67,6 +66,11 @@ export default function UserInfo() {
   return (
     <div className="min-h-screen flex items-center justify-center p-6">
       <div className="w-full max-w-2xl">
+        {message && (
+          <div className={`mb-4 p-3 rounded ${message.type === 'success' ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-red-50 text-red-700 border border-red-100'}`}>
+            {message.text}
+          </div>
+        )}
         <div className="bg-card rounded-2xl shadow-xl border border-border overflow-hidden">
           <div className="bg-primary px-8 py-10">
             <div className="flex items-center justify-center mb-4">
@@ -187,9 +191,10 @@ export default function UserInfo() {
 
             <button
               type="submit"
-              className="w-full mt-8 bg-primary text-primary-foreground py-4 rounded-lg font-semibold hover:opacity-90 transition-opacity shadow-lg hover:shadow-xl"
+              disabled={loading}
+              className="w-full mt-8 bg-primary text-primary-foreground py-4 rounded-lg font-semibold hover:opacity-90 transition-opacity shadow-lg hover:shadow-xl disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              Proceed
+              {loading ? 'Processing...' : 'Proceed'}
             </button>
           </form>
         </div>

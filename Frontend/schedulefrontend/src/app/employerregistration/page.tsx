@@ -18,7 +18,6 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { supabase } from "@/lib/supabase";
-import { sign } from "crypto";
 import { useRouter } from "next/navigation";
 
   export default function EmployerPage() {
@@ -36,7 +35,7 @@ import { useRouter } from "next/navigation";
     setLoading(true);
     setMessage(null);
 
-    const { data, error } = await supabase.auth.signInWithPassword({
+    const { error } = await supabase.auth.signInWithPassword({
       email: formData.email,
       password: formData.password,
     });
@@ -98,8 +97,8 @@ import { useRouter } from "next/navigation";
               </Link>
             </div>
 
-            <Button type="submit" className="w-full">
-              Sign In
+            <Button type="submit" className="w-full" disabled={loading}>
+              {loading ? 'Signing in...' : 'Sign In'}
             </Button>
 
             <div className="my-6 flex items-center gap-4">

@@ -151,7 +151,7 @@ export default function CreateBusiness({ email, displayName, onContinue }: Creat
 
           <button
             type="submit"
-            disabled={!isOwner || !agreedToTerms || isSubmitting}
+            disabled={!isFormValid || isSubmitting}
             className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-semibold py-4 px-6 rounded-lg transition flex items-center justify-center gap-2 group"
           >
             {isSubmitting ? (

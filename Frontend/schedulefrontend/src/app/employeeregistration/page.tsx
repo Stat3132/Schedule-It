@@ -18,7 +18,6 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { supabase } from "@/lib/supabase";
-import { sign } from "crypto";
 import { useRouter } from "next/navigation";
 
 export default function EmployeePage() {
@@ -37,7 +36,7 @@ export default function EmployeePage() {
     setLoading(true);
     setMessage(null);
 
-    const { data, error } = await supabase.auth.signInWithPassword({
+    const { error } = await supabase.auth.signInWithPassword({
       email: formData.email,
       password: formData.password,
     });
@@ -69,6 +68,11 @@ export default function EmployeePage() {
         </CardHeader>
         <CardContent>
           <form className="space-y-4" onSubmit={signIn}>
+            {message && (
+              <div className={`mb-2 p-2 rounded ${message.type === 'success' ? 'bg-green-50 text-green-700 border border-green-100' : message.type === 'info' ? 'bg-blue-50 text-blue-700 border border-blue-100' : 'bg-red-50 text-red-700 border border-red-100'}`}>
+                {message.text}
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <div className="relative">
@@ -98,8 +102,8 @@ export default function EmployeePage() {
               </Link>
             </div>
 
-            <Button type="submit" className="w-full">
-              Sign In
+            <Button type="submit" className="w-full" disabled={loading}>
+              {loading ? 'Signing in...' : 'Sign In'}
             </Button>
 
             <div className="my-6 flex items-center gap-4">

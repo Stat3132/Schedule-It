@@ -1,12 +1,10 @@
 "use client";
-import Link from "next/link";
-import Image from "next/image";
+// removed unused imports
 import "./globals.css";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Briefcase, User } from "lucide-react";
 import { useRouter } from "next/navigation";
-import next from "next";
 
 export default function Page() {
   const router = useRouter();
