@@ -60,8 +60,7 @@ const handleContinue = async ({ timezone, isOwner }: { timezone: string; isOwner
     .insert({ owner_user_id: user.id, timezone, name: `${displayName}'s Business` })
     .select("id")
     .single();
-  if (error) throw error;
-
+  if (error) { console.error(error); throw error; }
   router.push(`/employeronboarding/businessDocumentation/${data.id}`);
 };
 
