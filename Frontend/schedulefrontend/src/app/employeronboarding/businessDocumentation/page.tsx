@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+
+type VerificationStatus = "unverified" | "docs_submitted" | "verified" | "rejected";
 
 type DocKind =
   | "articles" | "license" | "cp575" | "147c"
@@ -10,30 +12,53 @@ type DocKind =
 
 const KINDS: DocKind[] = ["articles","license","cp575","147c","lease","auth_letter","id_front","id_back","other"];
 
-async function sha256(file: File) {
+type BusinessRow = {
+  id: string;
+  legal_name: string | null;
+  jurisdiction: string | null;
+  state_entity_no: string | null;
+  domain: string | null;
+  verification_status: VerificationStatus;
+};
+
+type BusinessDocRow = {
+  id: string;
+  kind: DocKind;
+  storage_path: string;
+  status: "pending" | "accepted" | "rejected";
+  uploaded_at: string;           // ISO string from Supabase
+  notes: string | null;
+  reviewed_at: string | null;
+};
+
+async function sha256(file: File): Promise<string> {
   const buf = await file.arrayBuffer();
   const hash = await crypto.subtle.digest("SHA-256", buf);
-  return Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,"0")).join("");
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
 export default function BusinessDocumentationPage() {
   const supabase = createClientComponentClient();
   const { businessId } = useParams() as { businessId: string };
-  const router = useRouter();
 
-  const [loading, setLoading] = useState(true);
-  const [biz, setBiz] = useState<any>(null);
-  const [docs, setDocs] = useState<any[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [biz, setBiz] = useState<BusinessRow | null>(null);
+  const [docs, setDocs] = useState<BusinessDocRow[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
   // form state
-  const [legal, setLegal] = useState({ legal_name:"", jurisdiction:"", state_entity_no:"", domain:"" });
-  const [ein, setEin] = useState("");
+  const [legal, setLegal] = useState<{ legal_name: string; jurisdiction: string; state_entity_no: string; domain: string }>({
+    legal_name: "",
+    jurisdiction: "",
+    state_entity_no: "",
+    domain: ""
+  });
+  const [ein, setEin] = useState<string>("");
   const [kind, setKind] = useState<DocKind>("articles");
   const [file, setFile] = useState<File | null>(null);
+
   const statusBadge = useMemo(() => {
-    type VerificationStatus = "unverified" | "docs_submitted" | "verified" | "rejected";
-    const s = (biz?.verification_status ?? "unverified") as VerificationStatus;
+    const s: VerificationStatus = (biz?.verification_status ?? "unverified") as VerificationStatus;
     const statusClassMap: Record<VerificationStatus, string> = {
       unverified: "bg-gray-200",
       docs_submitted: "bg-yellow-200",
@@ -48,14 +73,19 @@ export default function BusinessDocumentationPage() {
     (async () => {
       setLoading(true);
       setErr(null);
-      // require auth + ownership via RLS
+
       const { data: b, error: be } = await supabase
         .from("business")
         .select("id, legal_name, jurisdiction, state_entity_no, domain, verification_status")
         .eq("id", businessId)
-        .maybeSingle();
+        .maybeSingle<BusinessRow>();
 
-      if (be || !b) { setErr("Not found or no access"); setLoading(false); return; }
+      if (be || !b) {
+        setErr(be?.message ?? "Not found or no access");
+        setLoading(false);
+        return;
+      }
+
       setBiz(b);
       setLegal({
         legal_name: b.legal_name ?? "",
@@ -68,13 +98,17 @@ export default function BusinessDocumentationPage() {
         .from("business_doc")
         .select("id, kind, storage_path, status, uploaded_at, notes, reviewed_at")
         .eq("business_id", businessId)
-        .order("uploaded_at", { ascending: false });
+        .order("uploaded_at", { ascending: false })
+        .returns<BusinessDocRow[]>();
+
       if (!de && d) setDocs(d);
+      if (de) setErr(de.message);
+
       setLoading(false);
     })();
   }, [businessId, supabase]);
 
-  const saveLegal = async () => {
+  const saveLegal = async (): Promise<void> => {
     setErr(null);
     const { error } = await supabase
       .from("business")
@@ -83,14 +117,14 @@ export default function BusinessDocumentationPage() {
     if (error) setErr(error.message);
   };
 
-  const setEinRpc = async () => {
+  const setEinRpc = async (): Promise<void> => {
     if (!ein.trim()) return;
     setErr(null);
     const { error } = await supabase.rpc("set_business_ein", { p_business: businessId, p_ein: ein });
     if (error) setErr(error.message);
   };
 
-  const uploadDoc = async () => {
+  const uploadDoc = async (): Promise<void> => {
     if (!file) { setErr("Choose a file"); return; }
     setErr(null);
 
@@ -106,22 +140,23 @@ export default function BusinessDocumentationPage() {
       kind,
       storage_path: key,
       sha256: `\\x${hex}`
-    });
+    } as const);
     if (insErr) { setErr(insErr.message); return; }
 
-    // flip to docs_submitted if still unverified
     if (biz?.verification_status === "unverified") {
       await supabase.from("business").update({ verification_status: "docs_submitted" }).eq("id", businessId);
-      setBiz((v:any)=>({...v, verification_status:"docs_submitted"}));
+      setBiz(v => (v ? { ...v, verification_status: "docs_submitted" } : v));
     }
 
-    // refresh list
-    const { data: d2 } = await supabase
+    const { data: d2, error: d2e } = await supabase
       .from("business_doc")
       .select("id, kind, storage_path, status, uploaded_at, notes, reviewed_at")
       .eq("business_id", businessId)
-      .order("uploaded_at", { ascending: false });
-    if (d2) setDocs(d2);
+      .order("uploaded_at", { ascending: false })
+      .returns<BusinessDocRow[]>();
+    if (!d2e && d2) setDocs(d2);
+    if (d2e) setErr(d2e.message);
+
     setFile(null);
   };
 
@@ -143,7 +178,7 @@ export default function BusinessDocumentationPage() {
             <button
               type="button"
               className="ml-2 underline"
-              onClick={()=>navigator.clipboard.writeText(String(businessId))}
+              onClick={() => navigator.clipboard.writeText(String(businessId))}
             >
               Copy
             </button>
@@ -152,35 +187,43 @@ export default function BusinessDocumentationPage() {
         </div>
       </header>
 
-      {/* Section: Business info */}
+      {/* Business info */}
       <section className="space-y-3 border rounded-lg p-4">
         <h2 className="font-medium">Business info</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <label className="grid gap-1 text-sm">
             <span>Legal name</span>
-            <input className="border rounded p-2"
+            <input
+              className="border rounded p-2"
               value={legal.legal_name}
-              onChange={e=>setLegal(s=>({...s, legal_name:e.target.value}))}/>
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLegal(s => ({ ...s, legal_name: e.target.value }))}
+            />
           </label>
           <label className="grid gap-1 text-sm">
             <span>Jurisdiction (state)</span>
-            <input className="border rounded p-2"
+            <input
+              className="border rounded p-2"
               value={legal.jurisdiction}
-              onChange={e=>setLegal(s=>({...s, jurisdiction:e.target.value.toUpperCase()}))}
-              placeholder="UT"/>
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLegal(s => ({ ...s, jurisdiction: e.target.value.toUpperCase() }))}
+              placeholder="UT"
+            />
           </label>
           <label className="grid gap-1 text-sm">
             <span>State entity number</span>
-            <input className="border rounded p-2"
+            <input
+              className="border rounded p-2"
               value={legal.state_entity_no}
-              onChange={e=>setLegal(s=>({...s, state_entity_no:e.target.value}))}/>
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLegal(s => ({ ...s, state_entity_no: e.target.value }))}
+            />
           </label>
           <label className="grid gap-1 text-sm">
             <span>Domain (optional)</span>
-            <input className="border rounded p-2"
+            <input
+              className="border rounded p-2"
               value={legal.domain}
-              onChange={e=>setLegal(s=>({...s, domain:e.target.value}))}
-              placeholder="https://example.com"/>
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLegal(s => ({ ...s, domain: e.target.value }))}
+              placeholder="https://example.com"
+            />
           </label>
         </div>
         <div className="flex gap-2">
@@ -188,12 +231,16 @@ export default function BusinessDocumentationPage() {
         </div>
       </section>
 
-      {/* Section: EIN (optional) */}
+      {/* EIN */}
       <section className="space-y-3 border rounded-lg p-4">
         <h2 className="font-medium">Employer Identification Number (optional)</h2>
         <div className="flex gap-2 items-center">
-          <input className="border rounded p-2 flex-1" placeholder="12-3456789"
-            value={ein} onChange={e=>setEin(e.target.value)} />
+          <input
+            className="border rounded p-2 flex-1"
+            placeholder="12-3456789"
+            value={ein}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEin(e.target.value)}
+          />
           <button className="px-3 py-2 bg-blue-600 text-white rounded" onClick={setEinRpc}>
             Save EIN
           </button>
@@ -201,19 +248,27 @@ export default function BusinessDocumentationPage() {
         <p className="text-xs text-muted-foreground">Stored as hash + last 4 via secure RPC.</p>
       </section>
 
-      {/* Section: Upload document */}
+      {/* Upload document */}
       <section className="space-y-3 border rounded-lg p-4">
         <h2 className="font-medium">Upload documents</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <label className="grid gap-1 text-sm md:col-span-1">
             <span>Type</span>
-            <select className="border rounded p-2" value={kind} onChange={e=>setKind(e.target.value as DocKind)}>
-              {KINDS.map(k=> <option key={k} value={k}>{k}</option>)}
+            <select
+              className="border rounded p-2"
+              value={kind}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setKind(e.target.value as DocKind)}
+            >
+              {KINDS.map(k => <option key={k} value={k}>{k}</option>)}
             </select>
           </label>
           <label className="grid gap-1 text-sm md:col-span-2">
             <span>File (PDF/PNG/JPG)</span>
-            <input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={e=>setFile(e.target.files?.[0] ?? null)} />
+            <input
+              type="file"
+              accept=".pdf,.png,.jpg,.jpeg"
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFile(e.target.files?.[0] ?? null)}
+            />
           </label>
         </div>
         <div className="flex gap-2">
@@ -222,7 +277,7 @@ export default function BusinessDocumentationPage() {
         {err && <p className="text-sm text-red-600">{err}</p>}
       </section>
 
-      {/* Section: Previously uploaded */}
+      {/* Submitted files */}
       <section className="space-y-3 border rounded-lg p-4">
         <h2 className="font-medium">Submitted files</h2>
         <div className="overflow-x-auto">
@@ -237,7 +292,7 @@ export default function BusinessDocumentationPage() {
               </tr>
             </thead>
             <tbody>
-              {docs.map(d=>(
+              {docs.map((d: BusinessDocRow) => (
                 <tr key={d.id} className="border-b last:border-0">
                   <td className="py-2 pr-3">{d.kind}</td>
                   <td className="py-2 pr-3 font-mono">{d.storage_path}</td>
@@ -246,7 +301,7 @@ export default function BusinessDocumentationPage() {
                   <td className="py-2 pr-3">{d.notes ?? ""}</td>
                 </tr>
               ))}
-              {docs.length===0 && (
+              {docs.length === 0 && (
                 <tr><td className="py-2 pr-3" colSpan={5}>No documents yet.</td></tr>
               )}
             </tbody>
