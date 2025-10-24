@@ -124,41 +124,46 @@ export default function BusinessDocumentationPage() {
     if (error) setErr(error.message);
   };
 
-  const uploadDoc = async (): Promise<void> => {
-    if (!file) { setErr("Choose a file"); return; }
-    setErr(null);
+  // inside BusinessDocumentationPage, after setEinRpc()
+const uploadDoc = async (): Promise<void> => {
+  if (!file) { setErr("Choose a file"); return; }
+  setErr(null);
 
-    const ext = file.name.split(".").pop()?.toLowerCase() || "bin";
-    const key = `${businessId}/${crypto.randomUUID()}.${ext}`;
+  const { data: { user }, error: userErr } = await supabase.auth.getUser();
+  if (userErr || !user) { setErr("Not signed in"); return; }
 
-    const up = await supabase.storage.from("business-docs").upload(key, file, { upsert: false });
-    if (up.error) { setErr(up.error.message); return; }
+  const ext = file.name.split(".").pop()?.toLowerCase() || "bin";
+  const key = `${businessId}/${crypto.randomUUID()}.${ext}`;
 
-    const hex = await sha256(file);
-    const { error: insErr } = await supabase.from("business_doc").insert({
-      business_id: businessId,
-      kind,
-      storage_path: key,
-      sha256: `\\x${hex}`
-    } as const);
-    if (insErr) { setErr(insErr.message); return; }
+  const up = await supabase.storage.from("business-docs").upload(key, file, { upsert: false });
+  if (up.error) { setErr(up.error.message); return; }
 
-    if (biz?.verification_status === "unverified") {
-      await supabase.from("business").update({ verification_status: "docs_submitted" }).eq("id", businessId);
-      setBiz(v => (v ? { ...v, verification_status: "docs_submitted" } : v));
-    }
+  const hex = await sha256(file);
+  const { error: insErr } = await supabase.from("business_doc").insert({
+    business_id: businessId,
+    kind,
+    storage_path: key,
+    sha256: `\\x${hex}`,
+    uploaded_by: user.id,        // required by your schema
+  } as const);
+  if (insErr) { setErr(insErr.message); return; }
 
-    const { data: d2, error: d2e } = await supabase
-      .from("business_doc")
-      .select("id, kind, storage_path, status, uploaded_at, notes, reviewed_at")
-      .eq("business_id", businessId)
-      .order("uploaded_at", { ascending: false })
-      .returns<BusinessDocRow[]>();
-    if (!d2e && d2) setDocs(d2);
-    if (d2e) setErr(d2e.message);
+  if (biz?.verification_status === "unverified") {
+    await supabase.from("business").update({ verification_status: "docs_submitted" }).eq("id", businessId);
+    setBiz(v => (v ? { ...v, verification_status: "docs_submitted" } : v));
+  }
 
-    setFile(null);
-  };
+  const { data: d2, error: d2e } = await supabase
+    .from("business_doc")
+    .select("id, kind, storage_path, status, uploaded_at, notes, reviewed_at")
+    .eq("business_id", businessId)
+    .order("uploaded_at", { ascending: false });
+  if (d2e) { setErr(d2e.message); return; }
+
+  setDocs(d2 ?? []);
+  setFile(null);
+};
+
 
   if (loading) return <div className="p-6">Loading…</div>;
   if (err) return <div className="p-6 text-red-600">{err}</div>;
