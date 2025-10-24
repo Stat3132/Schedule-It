@@ -92,12 +92,11 @@ export default function BusinessVerificationPage() {
               setErr(null);
               if (!email) { setErr("No email available."); return; }
 
-              const origin = window.location.origin; // e.g. http://localhost:3000 or your prod domain
+              const origin = window.location.origin;
+              const next = encodeURIComponent("/employeronboarding/businessVerification");
               const { error } = await supabase.auth.signInWithOtp({
                 email,
-                options: {
-                  emailRedirectTo: `${origin}/auth/callback?next=/employeronboarding/businessVerification`,
-                },
+                options: { emailRedirectTo: `${origin}/auth/callback?next=${next}` },
               });
 
               if (error) setErr(error.message);
@@ -106,6 +105,7 @@ export default function BusinessVerificationPage() {
           >
             Send magic link
           </button>
+
 
             <button
               className="px-4 py-2 border rounded"
