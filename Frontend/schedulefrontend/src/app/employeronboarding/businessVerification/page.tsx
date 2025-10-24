@@ -87,16 +87,26 @@ export default function BusinessVerificationPage() {
           <p className="text-sm text-muted-foreground">Confirm your email or sign in to continue.</p>
           <div className="flex gap-2">
             <button
-              className="px-4 py-2 bg-blue-600 text-white rounded"
-              onClick={async () => {
-                setErr(null);
-                if (!email) { setErr("No email available."); return; }
-                const { error } = await supabase.auth.signInWithOtp({ email });
-                if (error) setErr(error.message);
-              }}
-            >
-              Send magic link
-            </button>
+            className="px-4 py-2 bg-blue-600 text-white rounded"
+            onClick={async () => {
+              setErr(null);
+              if (!email) { setErr("No email available."); return; }
+
+              const origin = window.location.origin; // e.g. http://localhost:3000 or your prod domain
+              const { error } = await supabase.auth.signInWithOtp({
+                email,
+                options: {
+                  emailRedirectTo: `${origin}/auth/callback?next=/employeronboarding/businessVerification`,
+                },
+              });
+
+              if (error) setErr(error.message);
+              else setErr("Check your email for the link.");
+            }}
+          >
+            Send magic link
+          </button>
+
             <button
               className="px-4 py-2 border rounded"
               onClick={() => router.push("/signin")}
