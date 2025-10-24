@@ -18,7 +18,7 @@ export default function BusinessVerificationPage() {
       const { data: { user } } = await supabase.auth.getUser();
 
       // default to cached when no session
-      let nextEmail = user?.email ?? cachedEmail;
+      const nextEmail = user?.email ?? cachedEmail;
       let nextName  = cachedName || nextEmail;
 
       if (user) {
