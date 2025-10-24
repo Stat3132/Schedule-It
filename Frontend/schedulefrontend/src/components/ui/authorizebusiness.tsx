@@ -10,6 +10,8 @@ export type CreateBusinessProps = {
   onContinue: (args: { timezone: string; isOwner: boolean }) => Promise<void>;
 };
 
+
+
 export default function CreateBusiness({ email, displayName, onContinue }: CreateBusinessProps) {
   const [isOwner, setIsOwner] = useState(false);
   const [timezone, setTimezone] = useState("");
