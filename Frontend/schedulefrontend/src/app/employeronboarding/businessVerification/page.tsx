@@ -57,7 +57,7 @@ const handleContinue = async ({ timezone, isOwner }: { timezone: string; isOwner
 
   const { data, error } = await supabase
     .from("business")
-    .insert({ owner_user_id: user.id, timezone })
+    .insert({ owner_user_id: user.id, timezone, name: `${displayName}'s Business` })
     .select("id")
     .single();
   if (error) throw error;
