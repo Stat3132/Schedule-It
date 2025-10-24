@@ -1,9 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import CreateBusiness from "@/components/ui/authorizebusiness";
 
-export default function StartPage() {
+export default function BusinessVerificationPage() {
   const supabase = createClientComponentClient();
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -46,11 +47,30 @@ export default function StartPage() {
     return () => { alive = false; };
   }, [supabase]);
 
+  const router = useRouter();
+
+ const [msg, setMsg] = useState<string | null>(null);
+
+const handleContinue = async ({ timezone, isOwner }: { timezone: string; isOwner: boolean }) => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not signed in");
+
+  const { data, error } = await supabase
+    .from("business")
+    .insert({ owner_user_id: user.id, timezone })
+    .select("id")
+    .single();
+  if (error) throw error;
+
+  router.push(`/employeronboarding/businessDocumentation/${data.id}`);
+};
+
+
   return (
     <CreateBusiness
       email={email}
       displayName={displayName}
-      onContinue={() => {/* route next */}}
+      onContinue={handleContinue}
     />
   );
 }

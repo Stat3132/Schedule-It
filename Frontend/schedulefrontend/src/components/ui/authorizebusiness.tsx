@@ -7,28 +7,32 @@ import { Building2, Mail, User, Check } from "lucide-react";
 export type CreateBusinessProps = {
   email: string;
   displayName: string;
-  onContinue: () => void;
+  onContinue: (args: { timezone: string; isOwner: boolean }) => Promise<void>;
 };
 
-export default function CreateBusiness({
-  email,
-  displayName,
-  onContinue,
-}: CreateBusinessProps) {
+export default function CreateBusiness({ email, displayName, onContinue }: CreateBusinessProps) {
   const [isOwner, setIsOwner] = useState(false);
   const [timezone, setTimezone] = useState("");
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone);
   }, []);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isOwner || !agreedToTerms) return;
+    if (!isOwner || !agreedToTerms || isSubmitting) return;
+    setErr(null);
     setIsSubmitting(true);
-    onContinue();
+    try {
+      await onContinue({ timezone, isOwner });
+    } catch (e: any) {
+      setErr(e?.message ?? "Failed to create business");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const isFormValid = isOwner && agreedToTerms;
@@ -144,7 +148,7 @@ export default function CreateBusiness({
 
           <button
             type="submit"
-            disabled={!isFormValid || isSubmitting}
+            disabled={!isOwner || !agreedToTerms || isSubmitting}
             className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-semibold py-4 px-6 rounded-lg transition flex items-center justify-center gap-2 group"
           >
             {isSubmitting ? (
