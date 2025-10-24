@@ -21,19 +21,20 @@ export default function CreateBusiness({ email, displayName, onContinue }: Creat
     setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone);
   }, []);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isOwner || !agreedToTerms || isSubmitting) return;
-    setErr(null);
-    setIsSubmitting(true);
-    try {
-      await onContinue({ timezone, isOwner });
-    } catch (e: any) {
-      setErr(e?.message ?? "Failed to create business");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  e.preventDefault();
+  if (!isOwner || !agreedToTerms || isSubmitting) return;
+  setErr(null);
+  setIsSubmitting(true);
+  try {
+    await onContinue({ timezone, isOwner });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Failed to create business";
+    setErr(msg);
+  } finally {
+    setIsSubmitting(false);
+  }
+};
 
   const isFormValid = isOwner && agreedToTerms;
 
