@@ -11,5 +11,6 @@ export async function GET(req: Request) {
     const supabase = createRouteHandlerClient({ cookies });
     await supabase.auth.exchangeCodeForSession(code);
   }
+
   return NextResponse.redirect(new URL(next, url.origin));
 }
