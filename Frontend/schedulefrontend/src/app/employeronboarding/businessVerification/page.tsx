@@ -10,42 +10,45 @@ export default function BusinessVerificationPage() {
   const [displayName, setDisplayName] = useState("");
 
   useEffect(() => {
-    let alive = true;
-    (async () => {
-      const cachedEmail = localStorage.getItem("pendingEmail") || "";
-      const cachedName  = localStorage.getItem("pendingName")  || "";
+  let alive = true;
+  (async () => {
+    const cachedEmail = localStorage.getItem("pendingEmail") || "";
+    const cachedName  = localStorage.getItem("pendingName")  || "";
 
-      const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user } } = await supabase.auth.getUser();
 
-      // default to cached when no session
-      const nextEmail = user?.email ?? cachedEmail;
-      let nextName  = cachedName || nextEmail;
+    const emailVal = user?.email ?? cachedEmail;
 
-      if (user) {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("full_name, display_name, first_name, last_name")
-          .eq("id", user.id)
-          .maybeSingle();
+    let nameVal =
+      cachedName ||
+      emailVal;
 
-        const metaName = [user.user_metadata?.first_name, user.user_metadata?.last_name]
-          .filter(Boolean).join(" ");
+    if (user) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("full_name, display_name, first_name, last_name")
+        .eq("id", user.id)
+        .maybeSingle();
 
-        nextName =
-          profile?.full_name ||
-          profile?.display_name ||
-          [profile?.first_name, profile?.last_name].filter(Boolean).join(" ") ||
-          metaName ||
-          cachedName ||
-          nextEmail;
-      }
+      const metaName = [user.user_metadata?.first_name, user.user_metadata?.last_name]
+        .filter(Boolean).join(" ");
 
-      if (!alive) return;
-      setEmail(nextEmail);
-      setDisplayName(nextName);
-    })();
-    return () => { alive = false; };
-  }, [supabase]);
+      nameVal =
+        profile?.full_name ||
+        profile?.display_name ||
+        [profile?.first_name, profile?.last_name].filter(Boolean).join(" ") ||
+        metaName ||
+        cachedName ||
+        emailVal;
+    }
+
+    if (!alive) return;
+    setEmail(emailVal);
+    setDisplayName(nameVal);
+  })();
+  return () => { alive = false; };
+}, [supabase]);
+
 
   const router = useRouter();
 
