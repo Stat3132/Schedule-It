@@ -80,6 +80,7 @@ export default function BusinessVerificationPage() {
 
     const userId = session.user.id;
 
+    await supabase.rpc("ensure_profile");
     const { data, error } = await supabase
       .from("business")
       .insert({ owner_user_id: userId, timezone, name: `${displayName}'s Business` })
