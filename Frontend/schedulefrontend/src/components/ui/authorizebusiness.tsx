@@ -164,6 +164,7 @@ export default function CreateBusiness({ email, displayName, onContinue }: Creat
               </>
             )}
           </button>
+          {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
         </form>
 
         <p className="text-xs text-slate-500 text-center mt-6">
