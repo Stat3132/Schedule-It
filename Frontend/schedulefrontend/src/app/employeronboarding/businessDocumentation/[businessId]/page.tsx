@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { useRouter } from "next/navigation";
 
 type VerificationStatus = "unverified" | "docs_submitted" | "verified" | "rejected";
 
@@ -38,6 +39,7 @@ async function sha256(file: File): Promise<string> {
 }
 
 export default function BusinessDocumentationPage() {
+  const router = useRouter();
   const supabase = createClientComponentClient();
   const { businessId } = useParams() as { businessId: string };
 
@@ -70,43 +72,36 @@ export default function BusinessDocumentationPage() {
   }, [biz]);
 
   useEffect(() => {
-    (async () => {
-      setLoading(true);
-      setErr(null);
+  if (!businessId) return;
+  let alive = true;
+  (async () => {
+    setLoading(true); setErr(null);
+    const { data: b, error: be } = await supabase
+      .from("business")
+      .select("id, legal_name, jurisdiction, state_entity_no, domain, verification_status")
+      .eq("id", businessId).single();  // single() since id is PK
+    if (!alive) return;
+    if (be) { setErr(be.message); setLoading(false); return; }
 
-      const { data: b, error: be } = await supabase
-        .from("business")
-        .select("id, legal_name, jurisdiction, state_entity_no, domain, verification_status")
-        .eq("id", businessId)
-        .maybeSingle<BusinessRow>();
+    setBiz(b);
+    setLegal({
+      legal_name: b.legal_name ?? "",
+      jurisdiction: b.jurisdiction ?? "",
+      state_entity_no: b.state_entity_no ?? "",
+      domain: b.domain ?? ""
+    });
 
-      if (be || !b) {
-        setErr(be?.message ?? "Not found or no access");
-        setLoading(false);
-        return;
-      }
+    const { data: d, error: de } = await supabase
+      .from("business_doc")
+      .select("id, kind, storage_path, status, uploaded_at, notes, reviewed_at")
+      .eq("business_id", businessId)
+      .order("uploaded_at", { ascending: false });
+    if (de) setErr(de.message); else setDocs(d ?? []);
+    setLoading(false);
+  })();
+  return () => { alive = false; };
+}, [businessId, supabase]);
 
-      setBiz(b);
-      setLegal({
-        legal_name: b.legal_name ?? "",
-        jurisdiction: b.jurisdiction ?? "",
-        state_entity_no: b.state_entity_no ?? "",
-        domain: b.domain ?? ""
-      });
-
-      const { data: d, error: de } = await supabase
-        .from("business_doc")
-        .select("id, kind, storage_path, status, uploaded_at, notes, reviewed_at")
-        .eq("business_id", businessId)
-        .order("uploaded_at", { ascending: false })
-        .returns<BusinessDocRow[]>();
-
-      if (!de && d) setDocs(d);
-      if (de) setErr(de.message);
-
-      setLoading(false);
-    })();
-  }, [businessId, supabase]);
 
   const saveLegal = async (): Promise<void> => {
     setErr(null);
@@ -144,7 +139,7 @@ const uploadDoc = async (): Promise<void> => {
     kind,
     storage_path: key,
     sha256: `\\x${hex}`,
-    uploaded_by: user.id,        // required by your schema
+    uploaded_by: user.id,
   } as const);
   if (insErr) { setErr(insErr.message); return; }
 
@@ -311,6 +306,11 @@ const uploadDoc = async (): Promise<void> => {
               )}
             </tbody>
           </table>
+          <button
+          className="px-4 py-2 border rounded"
+              onClick={() => router.push("/employeronboarding/location")}>
+              Continue
+          </button>
         </div>
         <p className="text-xs text-muted-foreground">
           After first upload, status becomes <b>docs_submitted</b>. Admin review will set <b>verified</b> or <b>rejected</b>.
