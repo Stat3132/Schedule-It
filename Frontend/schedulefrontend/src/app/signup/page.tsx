@@ -46,7 +46,9 @@ export default function SignUp() {
           },
         }
         );
-        router.push('/business-selection');
+      const token = new URLSearchParams(window.location.search).get("token") ?? "";
+      router.push(`/business-selection${token ? `?token=${encodeURIComponent(token)}` : ""}`);
+
       if (error) throw error;
       setMessage({ type: 'success', text: 'User created successfully!' });
       setFormData({firstName: '', lastName: '', email: '', password: '', verifyPassword: ''});

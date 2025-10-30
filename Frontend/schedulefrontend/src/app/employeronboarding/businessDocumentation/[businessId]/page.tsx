@@ -274,7 +274,13 @@ const uploadDoc = async (): Promise<void> => {
         <div className="flex gap-2">
           <button className="px-3 py-2 bg-blue-600 text-white rounded" onClick={uploadDoc}>Upload</button>
         </div>
-        {err && <p className="text-sm text-red-600">{err}</p>}
+            {err && (
+      <div className="w-full flex justify-center">
+        <div className="px-4 py-2 rounded border border-red-200 bg-red-50 text-red-700">
+            {err}
+          </div>
+        </div>
+    )}
       </section>
 
       {/* Submitted files */}

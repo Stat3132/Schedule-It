@@ -1,12 +1,10 @@
-// app/locations/add/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { useRouter } from "next/navigation";
 
-type Biz = { id: string; name: string; verification_status: "unverified"|"docs_submitted"|"verified"|"rejected" };
-type Emp = { id: string; is_manager: boolean; is_admin: boolean; status: "invited"|"active"|"inactive"|"terminated"; business: Biz };
-
+type Biz = { id: string; name: string; verification_status: string };
 type Draft = {
   business_id: string;
   name: string;
@@ -18,111 +16,152 @@ type Draft = {
 };
 
 export default function AddLocationsPage() {
+  const router = useRouter();
   const supabase = createClientComponentClient();
 
   const [loading, setLoading] = useState(true);
-  const [managerEmployments, setManagerEmployments] = useState<Emp[]>([]);
+  const [businesses, setBusinesses] = useState<Biz[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
 
-  // load employments where user is manager/admin; include business to check verified
+  const hasBiz = businesses.length > 0;
+  const targetBiz = drafts[0]?.business_id || businesses[0]?.id || "";
+
+  const isUUID = (s: string) =>
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+
+  // Load verified businesses
   useEffect(() => {
     let alive = true;
     (async () => {
       setLoading(true);
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { setLoading(false); return; }
+
+      const { data: s } = await supabase.auth.getSession();
+      if (!s.session) {
+        if (alive) {
+          setBusinesses([]);
+          setLoading(false);
+        }
+        return;
+      }
 
       const { data, error } = await supabase
-        .from("employment")
-        .select("id,is_manager,is_admin,status,business:business_id(id,name,verification_status)")
-        .eq("status","active");
+        .from("business")
+        .select("id,name,verification_status")
+        .eq("verification_status", "verified");
 
       if (!alive) return;
-if (error) {
-  console.error(error);
-  setManagerEmployments([]);
-} else {
-  // Supabase can return the joined "business" as an array; normalize to a single object to satisfy our Biz type
-  const mgrsRaw = (data ?? []).filter((e: any) => {
-    const verification = Array.isArray(e.business) ? e.business[0]?.verification_status : e.business?.verification_status;
-    return (e.is_admin || e.is_manager) && verification === "verified";
-  });
 
-  const mgrs = mgrsRaw.map((e: any) => ({
-    id: e.id,
-    is_manager: e.is_manager,
-    is_admin: e.is_admin,
-    status: e.status,
-    business: Array.isArray(e.business) ? e.business[0] : e.business,
-  }));
+      if (error) {
+        console.error("Failed to load businesses:", error.message);
+        setBusinesses([]);
+        setLoading(false);
+        return;
+      }
 
-  setManagerEmployments(mgrs);
-  // seed first draft if at least one business
-  if (mgrs.length && drafts.length === 0) {
-    setDrafts([{ business_id: mgrs[0].business.id, name: "", address: "", tz_override: "" }]);
-  }
-}
+      setBusinesses(data ?? []);
+
+      if ((data?.length ?? 0) > 0 && drafts.length === 0) {
+        setDrafts([
+          {
+            business_id: data![0].id,
+            name: "",
+            address: "",
+            tz_override: "",
+          },
+        ]);
+      }
+
       setLoading(false);
     })();
-    return () => { alive = false; };
-  }, []); // eslint-disable-line
 
-  const bizOptions = useMemo(() => managerEmployments.map(e => e.business), [managerEmployments]);
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const addDraft = () => {
-    setDrafts(d => [...d, { business_id: bizOptions[0]?.id || "", name: "", address: "", tz_override: "" }]);
-  };
+  const bizById = useMemo(
+    () => Object.fromEntries(businesses.map((b) => [b.id, b])),
+    [businesses]
+  );
 
-  const updateDraft = (i: number, patch: Partial<Draft>) => {
-    setDrafts(d => d.map((row, idx) => idx === i ? { ...row, ...patch, ok: undefined, err: undefined } : row));
-  };
+  const addDraft = () =>
+    setDrafts((d) => [
+      ...d,
+      {
+        business_id: businesses[0]?.id ?? "",
+        name: "",
+        address: "",
+        tz_override: "",
+      },
+    ]);
 
-  const removeDraft = (i: number) => {
-    setDrafts(d => d.filter((_, idx) => idx !== i));
-  };
+  const updateDraft = (i: number, patch: Partial<Draft>) =>
+    setDrafts((d) =>
+      d.map((row, idx) =>
+        idx === i ? { ...row, ...patch, ok: undefined, err: undefined } : row
+      )
+    );
+
+  const removeDraft = (i: number) =>
+    setDrafts((d) => d.filter((_, idx) => idx !== i));
 
   const submitOne = async (i: number) => {
-    const draft = drafts[i];
-    if (!draft.business_id || !draft.name.trim()) {
+    const d = drafts[i];
+    if (!d.business_id || !d.name.trim()) {
       updateDraft(i, { err: "Business and name are required." });
       return;
     }
+
     updateDraft(i, { busy: true, err: null });
+
     const { error } = await supabase.from("location").insert({
-      business_id: draft.business_id,
-      name: draft.name.trim(),
-      address: draft.address?.trim() || null,
-      tz_override: draft.tz_override?.trim() || null,
+      business_id: d.business_id,
+      name: d.name.trim(),
+      address: d.address?.trim() || null,
+      tz_override: d.tz_override?.trim() || null,
     });
+
     if (error) {
       updateDraft(i, { busy: false, err: error.message });
     } else {
-      updateDraft(i, { busy: false, ok: true, name: "", address: "", tz_override: "" });
+      updateDraft(i, {
+        busy: false,
+        ok: true,
+        name: "",
+        address: "",
+        tz_override: "",
+      });
     }
   };
 
   return (
     <div className="mx-auto max-w-2xl p-6 space-y-4">
       <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Add locations</h1>
+        <h1 className="text-2xl font-semibold">Add Locations</h1>
         <button
           type="button"
           onClick={addDraft}
-          disabled={loading || bizOptions.length === 0}
+          disabled={loading || !hasBiz}
           className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-white hover:bg-blue-700 disabled:opacity-50"
         >
           <svg aria-hidden viewBox="0 0 24 24" className="h-5 w-5">
-            <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            <path
+              d="M12 5v14M5 12h14"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            />
           </svg>
-          Add new location
+          Add New Location
         </button>
       </header>
 
       {loading && <p className="text-sm opacity-70">Loading…</p>}
 
-      {!loading && bizOptions.length === 0 && (
+      {!loading && !hasBiz && (
         <div className="rounded-md border p-4 text-sm">
-          No verified businesses where you are a manager. Verification and manager role are required to add locations.
+          No verified businesses you own or manage.
         </div>
       )}
 
@@ -130,11 +169,14 @@ if (error) {
         {drafts.map((d, i) => (
           <form
             key={i}
-            onSubmit={(e) => { e.preventDefault(); submitOne(i); }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submitOne(i);
+            }}
             className="rounded-lg border p-4 space-y-3"
           >
             <div className="flex items-center justify-between">
-              <h2 className="font-medium">Location {i+1}</h2>
+              <h2 className="font-medium">Location {i + 1}</h2>
               <button
                 type="button"
                 onClick={() => removeDraft(i)}
@@ -149,13 +191,21 @@ if (error) {
               <select
                 className="w-full rounded-md border px-3 py-2"
                 value={d.business_id}
-                onChange={(e) => updateDraft(i, { business_id: e.target.value })}
+                onChange={(e) =>
+                  updateDraft(i, { business_id: e.target.value })
+                }
                 required
               >
-                {bizOptions.map(b => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
+                {businesses.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
                 ))}
               </select>
+              <p className="mt-1 text-xs opacity-70">
+                Status:{" "}
+                {bizById[d.business_id]?.verification_status ?? "unknown"}
+              </p>
             </label>
 
             <label className="block text-sm">
@@ -180,12 +230,14 @@ if (error) {
             </label>
 
             <label className="block text-sm">
-              <span className="mb-1 block">Time zone override (IANA, optional)</span>
+              <span className="mb-1 block">Time Zone Override (optional)</span>
               <input
                 className="w-full rounded-md border px-3 py-2"
                 placeholder="America/Denver"
                 value={d.tz_override}
-                onChange={(e) => updateDraft(i, { tz_override: e.target.value })}
+                onChange={(e) =>
+                  updateDraft(i, { tz_override: e.target.value })
+                }
               />
             </label>
 
@@ -198,12 +250,22 @@ if (error) {
                 disabled={d.busy}
                 className="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-50"
               >
-                {d.busy ? "Saving…" : "Save location"}
+                {d.busy ? "Saving…" : "Save Location"}
               </button>
             </div>
           </form>
         ))}
       </div>
+
+      <button
+        className="px-4 py-2 border rounded"
+        disabled={!isUUID(targetBiz)}
+        onClick={() =>
+          router.push(`/employeronboarding/roles/${targetBiz}`)
+        }
+      >
+        Continue
+      </button>
     </div>
   );
 }
