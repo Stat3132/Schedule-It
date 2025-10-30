@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Search, Building2, CheckCircle, XCircle } from "lucide-react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
@@ -13,6 +13,14 @@ type Business = {
 };
 
 export default function BusinessSelectionPage() {
+  return (
+    <Suspense fallback={<div className="p-6">Loading…</div>}>
+      <BusinessSelectionInner />
+    </Suspense>
+  );
+}
+
+function BusinessSelectionInner() {
   const supabase = createClientComponentClient();
   const params = useSearchParams();
   const router = useRouter();
