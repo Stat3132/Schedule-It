@@ -19,14 +19,10 @@ type Biz = {
 };
 
 export default function RolesPage() {
-    const [loading, setLoading] = useState(true);
-    const [businesses, setBusinesses] = useState<Biz[]>([]);
-    const [drafts, setDrafts] = useState<RoleRow[]>([]);
-    const supabase = createClientComponentClient();
-    const params = useParams<{ businessId: string }>();
-    const BusinessId = params?.businessId;
-    const hasBiz = businesses.length > 0;
-    const targetBiz = drafts[0]?.business_id || businesses[0]?.id || "";
+  const [loading, setLoading] = useState(true);
+  const supabase = createClientComponentClient();
+  const params = useParams<{ businessid: string }>();
+  const BusinessId = params?.businessid;
     const isUUID = (s: string) =>
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 
@@ -44,6 +40,9 @@ export default function RolesPage() {
   const [minSkill, setMinSkill] = useState("");
 
   const verified = useMemo(() => biz?.verification_status === "verified", [biz]);
+
+  const hasPgCode = (e: unknown): e is { code?: string } =>
+    typeof e === "object" && e !== null && "code" in e;
 
   // --- load business + roles ---
   useEffect(() => {
@@ -122,10 +121,14 @@ export default function RolesPage() {
       min_skill_level: minSkill ? Number.parseInt(minSkill, 10) : null,
     };
 
-    const { data, error } = await supabase.from("role").insert(payload).select().single();
+    const { data, error } = await supabase
+      .from("role")
+      .insert(payload)
+      .select()
+      .single();
     if (error) {
-      if ((error as any).code === "23505") setErr("Role name already exists in this business");
-      else if ((error as any).code === "42501") setErr("Not authorized to add roles");
+      if (hasPgCode(error) && error.code === "23505") setErr("Role name already exists in this business");
+      else if (hasPgCode(error) && error.code === "42501") setErr("Not authorized to add roles");
       else setErr(error.message);
       return;
     }
@@ -148,7 +151,7 @@ export default function RolesPage() {
       .single();
 
     if (error) {
-      if ((error as any).code === "23505") setErr("Duplicate role name");
+      if (hasPgCode(error) && error.code === "23505") setErr("Duplicate role name");
       else setErr(error.message);
       return;
     }
@@ -235,6 +238,7 @@ export default function RolesPage() {
               <RoleItem
                 key={r.id}
                 role={r}
+                businessId={bizId ?? ""}
                 disabled={!verified}
                 onSave={(patch) => updateRole(r.id, patch)}
                 onDelete={() => deleteRole(r.id)}
@@ -248,23 +252,20 @@ export default function RolesPage() {
 }
 
 function RoleItem({
-    
   role,
+  businessId,
   disabled,
   onSave,
   onDelete,
 }: {
   role: RoleRow;
+  businessId: string;
   disabled: boolean;
   onSave: (patch: Partial<RoleRow>) => void;
   onDelete: () => void;
 }) {
-    const router = useRouter();
-    const [businesses, setBusinesses] = useState<Biz[]>([]);
-    const [drafts, setDrafts] = useState<RoleRow[]>([]);
-    const hasBiz = businesses.length > 0;
-    const targetBiz = drafts[0]?.business_id || businesses[0]?.id || "";
-    const isUUID = (s: string) =>
+  const router = useRouter();
+  const isUUID = (s: string) =>
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(role.name);
@@ -343,14 +344,12 @@ function RoleItem({
             Cancel
           </button>
           <button
-        className="px-4 py-2 border rounded"
-        disabled={!isUUID(targetBiz)}
-        onClick={() =>
-          router.push(`/employeronboarding/team/${targetBiz}`)
-        }
-      >
-        Continue
-      </button>
+            className="px-4 py-2 border rounded"
+            disabled={!isUUID(businessId)}
+            onClick={() => router.push(`/employeronboarding/team/${businessId}`)}
+          >
+            Continue
+          </button>
         </>
       )}
     </div>

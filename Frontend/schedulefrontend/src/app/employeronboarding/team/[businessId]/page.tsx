@@ -21,12 +21,41 @@ export default function TeamPage() {
         .eq("business_id", businessId as string)
         .eq("status", "active");
       if (!alive) return;
+      type UnknownRow = { user: unknown; role: unknown };
+      const rows: UnknownRow[] = (data ?? []) as UnknownRow[];
+
+      const toUser = (u: unknown): { id: string; email: string } | null => {
+        const val = Array.isArray(u) ? u[0] : u;
+        if (val && typeof val === "object") {
+          const rec = val as Record<string, unknown>;
+          const id = rec.id;
+          const email = rec.email;
+          if ((typeof id === "string" || typeof id === "number") && typeof email === "string") {
+            return { id: String(id), email };
+          }
+        }
+        return null;
+      };
+
+      const toRoleName = (r: unknown): string | null => {
+        const val = Array.isArray(r) ? r[0] : r;
+        if (val && typeof val === "object") {
+          const rec = val as Record<string, unknown>;
+          const name = rec.name;
+          if (typeof name === "string") return name;
+        }
+        return null;
+      };
+
       setMembers(
-        (data ?? []).map((r: any) => ({
-          id: r.user.id,
-          email: r.user.email,
-          role: r.role?.name ?? null,
-        }))
+        rows.map((row) => {
+          const u = toUser(row.user);
+          return {
+            id: u?.id ?? "",
+            email: u?.email ?? "",
+            role: toRoleName(row.role),
+          };
+        })
       );
     })();
     return () => { alive = false; };

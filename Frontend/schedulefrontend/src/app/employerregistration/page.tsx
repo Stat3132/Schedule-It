@@ -67,6 +67,11 @@ import { useRouter } from "next/navigation";
         </CardHeader>
 
         <CardContent>
+          {message && (
+            <div className={`mb-2 p-2 rounded ${message.type === 'success' ? 'bg-green-50 text-green-700 border border-green-100' : message.type === 'info' ? 'bg-blue-50 text-blue-700 border border-blue-100' : 'bg-red-50 text-red-700 border border-red-100'}`}>
+              {message.text}
+            </div>
+          )}
           <form className="space-y-4" onSubmit={signIn}>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
