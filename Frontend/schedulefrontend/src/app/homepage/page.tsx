@@ -1,25 +1,244 @@
-import { Calendar, Clock, Bell, Settings } from 'lucide-react';
+"use client";
 
-function App() {
-  const scheduleData = [
-    { day: 'Monday', date: '10/27', shifts: [{ start: '9:00 AM', end: '5:00 PM', role: 'Floor Staff' }] },
-    { day: 'Tuesday', date: '10/28', shifts: [{ start: '10:00 AM', end: '6:00 PM', role: 'Floor Staff' }] },
-    { day: 'Wednesday', date: '10/29', shifts: [] },
-    { day: 'Thursday', date: '10/30', shifts: [{ start: '9:00 AM', end: '5:00 PM', role: 'Floor Staff' }] },
-    { day: 'Friday', date: '10/31', shifts: [{ start: '12:00 PM', end: '8:00 PM', role: 'Floor Staff' }] },
-    { day: 'Saturday', date: '11/1', shifts: [] },
-    { day: 'Sunday', date: '11/2', shifts: [] },
-  ];
+import { useEffect, useState } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { Calendar, Clock, Bell, Settings } from "lucide-react";
 
+// ---- Types ----
+type Employment = {
+  id: string;
+  user_id: string;
+  business_id: string;
+  location_id: string | null;
+  role_id: string | null;
+  status: "invited" | "active" | "inactive" | "terminated";
+  is_manager: boolean;
+  is_admin: boolean;
+};
+
+type ShiftRow = {
+  id: string;
+  business_id: string;
+  location_id: string;
+  role_id: string;
+  start_ts: string; // ISO
+  end_ts: string;   // ISO
+  status: "draft" | "published" | "canceled";
+};
+
+type ShiftAssignmentRow = {
+  id: string;
+  shift_id: string;
+  user_id: string;
+  assigned_by: string | null;
+  assigned_at: string;
+  status: "assigned" | "offered" | "accepted" | "declined" | "dropped";
+};
+
+type RoleRow = { id: string; name: string; color: string | null };
+type LocationRow = { id: string; name: string };
+
+type ShiftWithMeta = {
+  shift: ShiftRow;
+  role?: RoleRow | null;
+  location?: LocationRow | null;
+};
+
+type ShiftTemplateRow = {
+  id: string;
+  business_id: string;
+  role_id: string;
+  location_id: string;
+  weekday: number;        // 0=Sun
+  start_time: string;     // "HH:MM:SS"
+  end_time: string;       // "HH:MM:SS"
+};
+
+// ---- Helpers ----
+function startOfWeek(d: Date, weekStartsOn: 0 | 1 = 0): Date {
+  const day = d.getDay();
+  const diff = (day < weekStartsOn ? 7 : 0) + day - weekStartsOn;
+  const out = new Date(d);
+  out.setHours(0, 0, 0, 0);
+  out.setDate(d.getDate() - diff);
+  return out;
+}
+
+function endOfWeek(d: Date, weekStartsOn: 0 | 1 = 0): Date {
+  const start = startOfWeek(d, weekStartsOn);
+  const out = new Date(start);
+  out.setDate(start.getDate() + 7);
+  out.setMilliseconds(-1);
+  return out;
+}
+
+function fmtDateMMDD(d: Date): string {
+  const mm = (d.getMonth() + 1).toString().padStart(2, "0");
+  const dd = d.getDate().toString().padStart(2, "0");
+  return `${mm}/${dd}`;
+}
+
+function fmtTimeLocal(iso: string): string {
+  const dt = new Date(iso);
+  return dt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+const WEEKDAY_LABELS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"] as const;
+
+type DayBucket = {
+  dayIndex: number;
+  date: Date;
+  shifts: Array<{
+    role: string;
+    start: string;
+    end: string;
+    color?: string | null;
+  }>;
+};
+
+export default function EmployeeHomePage() {
+  const supabase = createClientComponentClient();
+
+  const [loading, setLoading] = useState<boolean>(true);
+  const [weekLabel, setWeekLabel] = useState<string>("");
+  const [days, setDays] = useState<DayBucket[]>([]);
+  const [hadRealAssignments, setHadRealAssignments] = useState<boolean>(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+
+      // 1) Auth
+      const { data: auth } = await supabase.auth.getUser();
+      const uid: string | undefined = auth.user?.id;
+      if (!uid) {
+        if (!cancelled) {
+          setDays(defaultEmptyWeek());
+          setWeekLabel(labelForWeek(new Date()));
+          setHadRealAssignments(false);
+          setLoading(false);
+        }
+        return;
+      }
+
+      // 2) Active employment
+      const { data: emps, error: empErr } = await supabase
+        .from("employment")
+        .select("id,user_id,business_id,location_id,role_id,status,is_manager,is_admin")
+        .eq("user_id", uid)
+        .eq("status", "active");
+
+      if (empErr || !emps || emps.length === 0) {
+        if (!cancelled) {
+          setDays(defaultEmptyWeek());
+          setWeekLabel(labelForWeek(new Date()));
+          setHadRealAssignments(false);
+          setLoading(false);
+        }
+        return;
+      }
+      const employment: Employment = emps[0];
+
+      // 3) Week window
+      const now = new Date();
+      const weekStart = startOfWeek(now, 0);
+      const weekEnd = endOfWeek(now, 0);
+      const label = labelForWeek(now);
+
+      // 4) Assignments for user → shift_ids
+      const { data: saRows, error: saErr } = await supabase
+        .from("shift_assignment")
+        .select("id,shift_id,user_id,assigned_by,assigned_at,status")
+        .eq("user_id", uid);
+
+      if (!saErr && saRows && saRows.length > 0) {
+        const shiftIds: string[] = saRows.map((r: ShiftAssignmentRow) => r.shift_id);
+
+        // 5) Shifts in this week and published
+        // Use between and filters to keep payload tight
+        const { data: shifts, error: shErr } = await supabase
+          .from("shift")
+          .select("id,business_id,location_id,role_id,start_ts,end_ts,status")
+          .eq("business_id", employment.business_id)
+          .eq("status", "published")
+          .in("id", shiftIds)
+          .gte("start_ts", weekStart.toISOString())
+          .lte("start_ts", weekEnd.toISOString());
+
+        if (!shErr && shifts && shifts.length > 0) {
+          // Load role names and colors
+          const roleIds = Array.from(new Set(shifts.map(s => s.role_id)));
+          const locIds = Array.from(new Set(shifts.map(s => s.location_id)));
+
+          const [{ data: roles }, { data: locs }] = await Promise.all([
+            supabase.from("role").select("id,name,color").in("id", roleIds),
+            supabase.from("location").select("id,name").in("id", locIds)
+          ]);
+
+          const roleById: Record<string, RoleRow> = {};
+          if (roles) for (const r of roles as RoleRow[]) roleById[r.id] = r;
+
+          const locById: Record<string, LocationRow> = {};
+          if (locs) for (const l of locs as LocationRow[]) locById[l.id] = l;
+
+          const withMeta: ShiftWithMeta[] = (shifts as ShiftRow[]).map((s: ShiftRow) => ({
+            shift: s,
+            role: roleById[s.role_id] ?? null,
+            location: locById[s.location_id] ?? null
+          }));
+
+          const buckets = buildBucketsFromShifts(withMeta, weekStart);
+          if (!cancelled) {
+            setDays(buckets);
+            setWeekLabel(label);
+            setHadRealAssignments(true);
+            setLoading(false);
+          }
+          return;
+        }
+      }
+
+      // 6) Fallback: templates
+      let bucketsFromTemplates: DayBucket[] | null = null;
+      const { data: templates, error: stErr } = await supabase
+        .from("shift_template")
+        .select("id,business_id,role_id,location_id,weekday,start_time,end_time")
+        .eq("business_id", employment.business_id);
+
+      if (!stErr && templates && templates.length > 0) {
+        const filtered = templates.filter((t: ShiftTemplateRow) => {
+          const roleOk = employment.role_id ? t.role_id === employment.role_id : true;
+          const locOk = employment.location_id ? t.location_id === employment.location_id : true;
+          return roleOk && locOk;
+        });
+        if (filtered.length > 0) bucketsFromTemplates = buildBucketsFromTemplates(filtered, weekStart);
+      }
+
+      if (!cancelled) {
+        if (bucketsFromTemplates) {
+          setDays(bucketsFromTemplates);
+          setWeekLabel(label + " • typical week");
+        } else {
+          setDays(defaultEmptyWeek());
+          setWeekLabel(label);
+        }
+        setHadRealAssignments(false);
+        setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase]);
+
+  // ---- Render ----
   return (
     <div className="min-h-screen bg-gray-50">
       <nav className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            <div className="flex items-center">
-              <img src="/image.png" alt="Logo" className="h-10 w-10" />
-            </div>
-
+            <div className="flex items-center" />
             <div className="flex items-center space-x-1">
               <button className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-2">
                 <Clock className="w-4 h-4" />
@@ -45,26 +264,37 @@ function App() {
       <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-6">
           <h1 className="text-3xl font-bold text-gray-900">Your Schedule</h1>
-          <p className="text-gray-600 mt-1">Week of October 27 - November 2, 2025</p>
+          <p className="text-gray-600 mt-1">
+            {loading ? "Loading…" : weekLabel}
+            {!loading && !hadRealAssignments ? " • no assigned shifts" : ""}
+          </p>
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <div className="grid grid-cols-7 gap-px bg-gray-200">
-            {scheduleData.map((day) => (
-              <div key={day.day} className="bg-white p-4 min-h-[180px]">
+            {days.map((bucket: DayBucket) => (
+              <div key={bucket.dayIndex} className="bg-white p-4 min-h-[180px]">
                 <div className="text-center mb-3">
-                  <div className="text-sm font-semibold text-gray-900">{day.day}</div>
-                  <div className="text-xs text-gray-500 mt-1">{day.date}</div>
+                  <div className="text-sm font-semibold text-gray-900">
+                    {WEEKDAY_LABELS[bucket.dayIndex]}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">{fmtDateMMDD(bucket.date)}</div>
                 </div>
 
                 <div className="space-y-2">
-                  {day.shifts.length > 0 ? (
-                    day.shifts.map((shift, index) => (
-                      <div key={index} className="bg-teal-50 border border-teal-200 rounded-lg p-3">
-                        <div className="text-xs font-semibold text-teal-900 mb-1">{shift.role}</div>
+                  {bucket.shifts.length > 0 ? (
+                    bucket.shifts.map((s, i) => (
+                      <div
+                        key={`${bucket.dayIndex}-${i}`}
+                        className="bg-teal-50 border border-teal-200 rounded-lg p-3"
+                        style={s.color ? { borderColor: s.color } : undefined}
+                      >
+                        <div className="text-xs font-semibold text-teal-900 mb-1">
+                          {s.role}
+                        </div>
                         <div className="text-xs text-teal-700 flex items-center gap-1">
                           <Clock className="w-3 h-3" />
-                          {shift.start} - {shift.end}
+                          {s.start} - {s.end}
                         </div>
                       </div>
                     ))
@@ -83,4 +313,67 @@ function App() {
   );
 }
 
-export default App;
+// ---- Builders ----
+function defaultEmptyWeek(): DayBucket[] {
+  const now = new Date();
+  const start = startOfWeek(now, 0);
+  return Array.from({ length: 7 }, (_: unknown, i: number) => {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    return { dayIndex: i, date: d, shifts: [] };
+  });
+}
+
+function labelForWeek(reference: Date): string {
+  const start = startOfWeek(reference, 0);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  const startLabel = start.toLocaleDateString([], { month: "long", day: "numeric" });
+  const endLabel = end.toLocaleDateString([], { month: "long", day: "numeric", year: "numeric" });
+  return `Week of ${startLabel} - ${endLabel}`;
+}
+
+function buildBucketsFromShifts(rows: ShiftWithMeta[], _weekStart: Date): DayBucket[] {
+  const buckets = defaultEmptyWeek();
+  for (const r of rows) {
+    const s = new Date(r.shift.start_ts);
+    const e = new Date(r.shift.end_ts);
+    const idx = s.getDay();
+    const roleName = r.role?.name ?? "Shift";
+    const color = r.role?.color ?? null;
+    buckets[idx].shifts.push({
+      role: roleName,
+      start: fmtTimeLocal(s.toISOString()),
+      end: fmtTimeLocal(e.toISOString()),
+      color
+    });
+  }
+  for (const b of buckets) {
+    b.shifts.sort((a, b2) => a.start.localeCompare(b2.start));
+  }
+  return buckets;
+}
+
+function buildBucketsFromTemplates(templates: ShiftTemplateRow[], weekStart: Date): DayBucket[] {
+  const buckets = defaultEmptyWeek();
+  for (const t of templates) {
+    const dayDate = new Date(weekStart);
+    dayDate.setDate(weekStart.getDate() + t.weekday);
+    const [sh, sm] = t.start_time.split(":").map((n) => parseInt(n, 10));
+    const [eh, em] = t.end_time.split(":").map((n) => parseInt(n, 10));
+    const s = new Date(dayDate);
+    s.setHours(Number.isFinite(sh) ? sh : 0, Number.isFinite(sm) ? sm : 0, 0, 0);
+    const e = new Date(dayDate);
+    e.setHours(Number.isFinite(eh) ? eh : 0, Number.isFinite(em) ? em : 0, 0, 0);
+    buckets[t.weekday].shifts.push({
+      role: "Typical shift",
+      start: s.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+      end: e.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+      color: null
+    });
+  }
+  for (const b of buckets) {
+    b.shifts.sort((a, b2) => a.start.localeCompare(b2.start));
+  }
+  return buckets;
+}

@@ -2,15 +2,11 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { Search, Building2, CheckCircle, XCircle } from "lucide-react";
+import { Search, Building2, CheckCircle, XCircle, ShieldCheck } from "lucide-react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
-type Business = {
-  id: string;
-  business_name: string; 
-  location: string;
-  created_at: string;
-};
+type Business = { id: string; name: string; timezone: string; created_at: string };
+type Location = { id: string; name: string; address?: string | null };
 
 export default function BusinessSelectionPage() {
   return (
@@ -26,46 +22,177 @@ function BusinessSelectionInner() {
   const router = useRouter();
 
   const token = params.get("token") ?? "";
-  const hasToken = token.length > 0;
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<Business[]>([]);
-  const [isSearching] = useState(false);
-  const [selectedBusiness, setSelectedBusiness] = useState<Business | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
 
-  // invite prefill
+  const [selectedBusiness, setSelectedBusiness] = useState<Business | null>(null);
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [locLoading, setLocLoading] = useState(false);
+  const [selectedLocIds, setSelectedLocIds] = useState<string[]>([]);
+
+  // server-side status for the selected business and current user
+  const [isMgr, setIsMgr] = useState<boolean | null>(null);
+  const [isEmp, setIsEmp] = useState<boolean | null>(null);
+  const [isBizVerified, setIsBizVerified] = useState<boolean | null>(null);
+
   const [inviteBiz, setInviteBiz] = useState<{ id: string; name: string } | null>(null);
   const [bannerErr, setBannerErr] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
+  // If token is present, prefill business name
   useEffect(() => {
     let alive = true;
     (async () => {
-      if (!hasToken) return;
-      // must exist in DB:
-      // create function public.get_invite_target(p_token uuid) returns (business_id uuid, business_name text)
+      if (!token) return;
       const { data, error } = await supabase.rpc("get_invite_target", { p_token: token });
-      if (error) { setBannerErr(error.message); return; }
-      const row = data?.[0];
-      if (!row) return;
       if (!alive) return;
-      setInviteBiz({ id: row.business_id as string, name: row.business_name as string });
-      setSearchQuery(row.business_name as string); // prefill search box
+      if (error) { setBannerErr(error.message); return; }
+      const row = (data as { business_id: string; business_name: string }[] | null)?.[0];
+      if (!row) return;
+      setInviteBiz({ id: row.business_id, name: row.business_name });
+      setSearchQuery(row.business_name);
     })();
     return () => { alive = false; };
-  }, [hasToken, token, supabase]);
+  }, [token, supabase]);
 
-  async function acceptInviteNow() {
-    const { data, error } = await supabase.rpc("accept_employee_invite", { p_token: token });
-    if (error) { setBannerErr(error.message); return; }
-    const bizId = data?.[0]?.business_id as string | undefined;
-    router.replace(bizId ? `/employeronboarding/team/${bizId}` : "/homepage");
-  }
+  // Debounced business search
+  useEffect(() => {
+    if (selectedBusiness) return; // stop searching after choose
+    let alive = true;
+    const q = searchQuery.trim();
+    if (q.length < 2) { setSearchResults([]); return; }
+
+    const t = window.setTimeout(async () => {
+      setIsSearching(true);
+      const { data, error } = await supabase
+        .from("business")
+        .select("id,name,timezone,created_at")
+        .ilike("name", `%${q}%`)
+        .order("created_at", { ascending: false })
+        .limit(10);
+      if (!alive) return;
+      setIsSearching(false);
+      if (error) { setSearchResults([]); return; }
+      setSearchResults((data ?? []) as Business[]);
+    }, 200);
+
+    return () => { alive = false; window.clearTimeout(t); };
+  }, [searchQuery, supabase, selectedBusiness]);
+
+  // After selecting a business: load locations and compute permissions
+  useEffect(() => {
+    let alive = true;
+    setLocations([]); setSelectedLocIds([]); setIsMgr(null); setIsEmp(null); setIsBizVerified(null);
+    if (!selectedBusiness) return;
+
+    (async () => {
+      setLocLoading(true);
+      const [{ data: locs, error: locErr }, mgr, emp, ver] = await Promise.all([
+        supabase.from("location").select("id,name,address").eq("business_id", selectedBusiness.id).order("name", { ascending: true }),
+        supabase.rpc("is_manager", { biz: selectedBusiness.id }),
+        supabase.rpc("is_employee", { biz: selectedBusiness.id }),
+        supabase.rpc("is_verified", { biz: selectedBusiness.id }),
+      ]);
+      if (!alive) return;
+
+      setLocLoading(false);
+      if (!locErr && locs) setLocations(locs as Location[]);
+      setIsMgr(Boolean((mgr.data as boolean) ?? false));
+      setIsEmp(Boolean((emp.data as boolean) ?? false));
+      setIsBizVerified(Boolean((ver.data as boolean) ?? false));
+    })();
+
+    return () => { alive = false; };
+  }, [selectedBusiness, supabase]);
 
   function handleBusinessSelect(b: Business) {
     setSelectedBusiness(b);
-    setSearchQuery(b.business_name);
+    setSearchQuery(b.name);
     setSearchResults([]);
   }
+
+  function toggleLoc(id: string) {
+    setSelectedLocIds(v => v.includes(id) ? v.filter(x => x !== id) : [...v, id]);
+  }
+
+  async function acceptInviteNow() {
+    setSubmitting(true);
+    setBannerErr("");
+    const { error } = await supabase.rpc("accept_employee_invite", { p_token: token });
+    if (error) { setSubmitting(false); setBannerErr(error.message); return; }
+    router.replace("/homepage");
+  }
+
+  // Only managers of verified businesses may upsert employment by RLS
+  async function upsertEmploymentForSelf(businessId: string, locationId: string) {
+    // check again server-side and let the DB enforce anyway
+    const { error: insErr } = await supabase.from("employment").insert({
+      // user_id resolved from auth.uid() only by RLS; here we must pass it
+      // client must send the explicit FK:
+      user_id: (await supabase.auth.getUser()).data.user?.id,
+      business_id: businessId,
+      location_id: locationId,
+      role_id: null,
+      status: "active",
+      is_manager: false,
+      is_admin: false,
+      permissions: {},
+    });
+    if (insErr) throw new Error(insErr.message);
+  }
+
+  async function handleContinue() {
+    if (!selectedBusiness || selectedLocIds.length === 0) return;
+    setSubmitting(true);
+    setBannerErr("");
+
+    try {
+      // 1) Invite flow takes precedence
+      if (token) {
+        await acceptInviteNow();
+        return;
+      }
+
+      // 2) If already an employee, do not write. Just store hint and go.
+      if (isEmp) {
+        try {
+          localStorage.setItem("activeBusinessId", selectedBusiness.id);
+          localStorage.setItem("activeBusinessName", selectedBusiness.name);
+          localStorage.setItem("activeLocationIds", JSON.stringify(selectedLocIds));
+        } catch {}
+        router.push("/homepage");
+        return;
+      }
+
+      // 3) If not an employee: only allow manager of a verified business to self-add.
+      if (isMgr && isBizVerified) {
+        await upsertEmploymentForSelf(selectedBusiness.id, selectedLocIds[0]);
+        try {
+          localStorage.setItem("activeBusinessId", selectedBusiness.id);
+          localStorage.setItem("activeBusinessName", selectedBusiness.name);
+          localStorage.setItem("activeLocationIds", JSON.stringify(selectedLocIds));
+        } catch {}
+        router.push("/homepage");
+        return;
+      }
+
+      // 4) Otherwise blocked by RLS. Require an invite.
+      setBannerErr(
+        "You are not a manager of a verified business. Ask a manager to send you an invite link, or sign in with a manager account."
+      );
+      setSubmitting(false);
+    } catch (e) {
+      setBannerErr(e instanceof Error ? e.message : "Failed to save selection");
+      setSubmitting(false);
+    }
+  }
+
+  const canContinue =
+    !!selectedBusiness &&
+    selectedLocIds.length > 0 &&
+    !submitting;
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6">
@@ -78,11 +205,13 @@ function BusinessSelectionInner() {
                 <p className="font-semibold text-blue-900">
                   You were invited to join <span className="underline">{inviteBiz.name}</span>.
                 </p>
-                <p className="text-sm text-blue-700 mt-1">
-                  Click “Join business” to accept. The search is prefilled for confirmation.
-                </p>
+                <p className="text-sm text-blue-700 mt-1">Click “Join business” to accept.</p>
               </div>
-              <button onClick={acceptInviteNow} className="px-3 py-1 border rounded bg-blue-600 text-white">
+              <button
+                disabled={submitting}
+                onClick={acceptInviteNow}
+                className="px-3 py-1 border rounded bg-blue-600 text-white disabled:opacity-60"
+              >
                 Join business
               </button>
             </div>
@@ -131,15 +260,15 @@ function BusinessSelectionInner() {
                     >
                       <Building2 className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <p className="font-semibold truncate">{b.business_name}</p>
-                        <p className="text-sm text-muted-foreground truncate">{b.location}</p>
+                        <p className="font-semibold truncate">{b.name}</p>
+                        <p className="text-sm text-muted-foreground truncate">{b.timezone}</p>
                       </div>
                     </button>
                   ))}
                 </div>
               )}
 
-              {searchQuery.length >= 2 && searchResults.length === 0 && !isSearching && (
+              {!selectedBusiness && searchQuery.length >= 2 && searchResults.length === 0 && !isSearching && (
                 <div className="mt-4 p-4 bg-destructive/10 border border-destructive/20 rounded-lg flex items-start gap-3">
                   <XCircle className="w-5 h-5 text-destructive mt-0.5" />
                   <div>
@@ -154,14 +283,85 @@ function BusinessSelectionInner() {
                   <div className="flex items-start gap-3">
                     <CheckCircle className="w-6 h-6 text-green-600 mt-0.5" />
                     <div className="flex-1">
-                      <p className="font-semibold text-green-900 text-lg">Business Found!</p>
-                      <p className="text-green-700 mt-1">{selectedBusiness.business_name}</p>
-                      <p className="text-sm text-green-600 mt-1">{selectedBusiness.location}</p>
+                      <p className="font-semibold text-green-900 text-lg">Business Found</p>
+                      <p className="text-green-700 mt-1">{selectedBusiness.name}</p>
+                      <p className="text-sm text-green-600 mt-1">{selectedBusiness.timezone}</p>
                       <p className="text-xs text-green-600 mt-2">
                         Registered: {new Date(selectedBusiness.created_at).toLocaleDateString()}
                       </p>
+                      <div className="flex items-center gap-2 mt-2 text-sm">
+                        <ShieldCheck className={`w-4 h-4 ${isBizVerified ? "text-green-600" : "text-gray-400"}`} />
+                        <span>{isBizVerified ? "Business verified" : "Business not verified"}</span>
+                      </div>
+                      {(isMgr === true || isEmp === true) && (
+                        <p className="text-xs text-green-700 mt-1">
+                          {isMgr ? "You are a manager of this business." : "You are an employee of this business."}
+                        </p>
+                      )}
                     </div>
                   </div>
+
+                  <div className="mt-4">
+                    <h3 className="font-semibold mb-2">Select one location</h3>
+                    <div className="border rounded-lg divide-y">
+                      {locLoading ? (
+                        <div className="p-3 text-sm text-muted-foreground">Loading locations…</div>
+                      ) : locations.length === 0 ? (
+                        <div className="p-3 text-sm text-muted-foreground">No locations for this business.</div>
+                      ) : (
+                        locations.map((loc) => {
+                          const checked = selectedLocIds.includes(loc.id);
+                          return (
+                            <label key={loc.id} className="flex items-center gap-3 p-3 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4"
+                                checked={checked}
+                                onChange={() => toggleLoc(loc.id)}
+                              />
+                              <div className="flex-1">
+                                <div className="font-medium">{loc.name}</div>
+                                {loc.address && <div className="text-xs text-muted-foreground">{loc.address}</div>}
+                              </div>
+                            </label>
+                          );
+                        })
+                      )}
+                    </div>
+                    {selectedLocIds.length > 1 && (
+                      <p className="text-xs text-amber-700 mt-2">
+                        Only one location is stored on your employment. The first checked will be saved.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="mt-6 flex justify-end gap-2">
+                    <button
+                      className="px-4 py-2 rounded-lg border"
+                      onClick={() => { setSelectedBusiness(null); setSearchResults([]); setLocations([]); setSelectedLocIds([]); }}
+                      disabled={submitting}
+                    >
+                      Change business
+                    </button>
+                    <button
+                      className={`px-4 py-2 rounded-lg border ${!canContinue
+                        ? "bg-gray-200 text-gray-500 cursor-not-allowed"
+                        : "bg-primary text-primary-foreground"
+                      }`}
+                      disabled={!canContinue}
+                      onClick={handleContinue}
+                    >
+                      {submitting ? "Saving…" : "Continue"}
+                    </button>
+                  </div>
+
+                  {(!isMgr && !isEmp && !token) && (
+                    <p className="text-sm text-amber-700 mt-3">
+                      Not an employee yet. Ask a manager for an invite link to join this business.
+                    </p>
+                  )}
+
+                  {bannerErr && <div className="text-red-600 text-sm mt-3">{bannerErr}</div>}
                 </div>
               )}
             </div>

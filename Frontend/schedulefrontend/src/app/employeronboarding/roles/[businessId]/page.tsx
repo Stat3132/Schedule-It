@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-import { useRouter } from "next/navigation";
+import type { PostgrestError } from "@supabase/supabase-js";
 
 type RoleRow = {
   id: string;
@@ -18,18 +18,31 @@ type Biz = {
   verification_status: "unverified" | "docs_submitted" | "verified" | "rejected";
 };
 
-export default function RolesPage() {
-  const [loading, setLoading] = useState(true);
+function isUUID(s?: string): s is string {
+  return (
+    typeof s === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)
+  );
+}
+
+function hasPgCode(e: unknown): e is PostgrestError {
+  return typeof e === "object" && e !== null && "message" in e;
+}
+
+export default function RolesPage(): JSX.Element {
   const supabase = createClientComponentClient();
-  const params = useParams<{ businessid: string }>();
-  const BusinessId = params?.businessid;
-    const isUUID = (s: string) =>
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 
+  // Read /employeronboarding/roles/[businessId]
+  const params = useParams<{ businessId: string }>();
+  // In case the route ever becomes a catch-all, guard for string[]
+  const rawParam = params?.businessId as string | string[] | undefined;
+  const businessId: string | null =
+    Array.isArray(rawParam) ? rawParam[0] ?? null : rawParam ?? null;
 
-  const hasValidBizId = isUUID(BusinessId);
-  const bizId = hasValidBizId ? BusinessId! : null;
+  const hasValidBizId = isUUID(businessId || undefined);
+  const bizId = hasValidBizId ? (businessId as string) : null;
 
+  const [loading, setLoading] = useState(true);
   const [biz, setBiz] = useState<Biz | null>(null);
   const [roles, setRoles] = useState<RoleRow[]>([]);
   const [err, setErr] = useState<string>("");
@@ -41,12 +54,10 @@ export default function RolesPage() {
 
   const verified = useMemo(() => biz?.verification_status === "verified", [biz]);
 
-  const hasPgCode = (e: unknown): e is { code?: string } =>
-    typeof e === "object" && e !== null && "code" in e;
-
-  // --- load business + roles ---
+  // Load business + roles
   useEffect(() => {
     let alive = true;
+
     (async () => {
       if (!hasValidBizId) {
         setErr("Invalid business id");
@@ -71,8 +82,7 @@ export default function RolesPage() {
         return;
       }
 
-      setBiz(b || null);
-      console.log("Loaded business:", b);
+      setBiz(b ?? null);
 
       const { data: r, error: rErr } = await supabase
         .from("role")
@@ -83,7 +93,7 @@ export default function RolesPage() {
       if (!alive) return;
 
       if (rErr) setErr(rErr.message);
-      setRoles(r || []);
+      setRoles(r ?? []);
       setLoading(false);
     })();
 
@@ -92,7 +102,7 @@ export default function RolesPage() {
     };
   }, [bizId, hasValidBizId, supabase]);
 
-  // --- CRUD actions ---
+  // Create role
   async function createRole(e: React.FormEvent) {
     e.preventDefault();
     setErr("");
@@ -121,28 +131,30 @@ export default function RolesPage() {
       min_skill_level: minSkill ? Number.parseInt(minSkill, 10) : null,
     };
 
-    const { data, error } = await supabase
-      .from("role")
-      .insert(payload)
-      .select()
-      .single();
+    const { data, error } = await supabase.from("role").insert(payload).select().single();
+
     if (error) {
-      if (hasPgCode(error) && error.code === "23505") setErr("Role name already exists in this business");
-      else if (hasPgCode(error) && error.code === "42501") setErr("Not authorized to add roles");
-      else setErr(error.message);
+      if (hasPgCode(error) && (error.code === "23505" || error.message.includes("duplicate"))) {
+        setErr("Role name already exists in this business");
+      } else if (hasPgCode(error) && error.code === "42501") {
+        setErr("Not authorized to add roles");
+      } else {
+        setErr(error.message);
+      }
       return;
     }
 
-    setRoles((prev) =>
-      [...prev, data as RoleRow].sort((a, b) => a.name.localeCompare(b.name))
-    );
+    const inserted = data as RoleRow;
+    setRoles((prev) => [...prev, inserted].sort((a, b) => a.name.localeCompare(b.name)));
     setName("");
     setColor("");
     setMinSkill("");
   }
 
+  // Update role
   async function updateRole(id: string, patch: Partial<RoleRow>) {
     setErr("");
+
     const { data, error } = await supabase
       .from("role")
       .update(patch)
@@ -151,20 +163,24 @@ export default function RolesPage() {
       .single();
 
     if (error) {
-      if (hasPgCode(error) && error.code === "23505") setErr("Duplicate role name");
-      else setErr(error.message);
+      if (hasPgCode(error) && (error.code === "23505" || error.message.includes("duplicate"))) {
+        setErr("Duplicate role name");
+      } else {
+        setErr(error.message);
+      }
       return;
     }
 
+    const updated = data as RoleRow;
     setRoles((prev) =>
-      prev
-        .map((r) => (r.id === id ? (data as RoleRow) : r))
-        .sort((a, b) => a.name.localeCompare(b.name))
+      prev.map((r) => (r.id === id ? updated : r)).sort((a, b) => a.name.localeCompare(b.name))
     );
   }
 
+  // Delete role
   async function deleteRole(id: string) {
     setErr("");
+
     const { error } = await supabase.from("role").delete().eq("id", id);
     if (error) {
       setErr(error.message);
@@ -173,7 +189,6 @@ export default function RolesPage() {
     setRoles((prev) => prev.filter((r) => r.id !== id));
   }
 
-  // --- UI ---
   if (loading) return <div className="p-6">Loading…</div>;
 
   return (
@@ -188,8 +203,8 @@ export default function RolesPage() {
         )}
 
         <form onSubmit={createRole} className="grid gap-3 max-w-lg mt-4">
-          <div className="grid gap-1">
-            <label className="text-sm">Role name</label>
+          <label className="grid gap-1">
+            <span className="text-sm">Role name</span>
             <input
               className="border rounded p-2"
               value={name}
@@ -197,9 +212,10 @@ export default function RolesPage() {
               placeholder="e.g., Server"
               disabled={!verified}
             />
-          </div>
-          <div className="grid gap-1">
-            <label className="text-sm">Color (hex)</label>
+          </label>
+
+          <label className="grid gap-1">
+            <span className="text-sm">Color (hex)</span>
             <input
               className="border rounded p-2"
               value={color}
@@ -207,9 +223,10 @@ export default function RolesPage() {
               placeholder="#2DD4BF"
               disabled={!verified}
             />
-          </div>
-          <div className="grid gap-1">
-            <label className="text-sm">Min skill level</label>
+          </label>
+
+          <label className="grid gap-1">
+            <span className="text-sm">Min skill level</span>
             <input
               type="number"
               className="border rounded p-2"
@@ -218,7 +235,7 @@ export default function RolesPage() {
               placeholder="optional"
               disabled={!verified}
             />
-          </div>
+          </label>
 
           <button
             type="submit"
@@ -227,6 +244,7 @@ export default function RolesPage() {
           >
             Add role
           </button>
+
           {err && <div className="text-red-600 text-sm">{err}</div>}
         </form>
 
@@ -251,22 +269,16 @@ export default function RolesPage() {
   );
 }
 
-function RoleItem({
-  role,
-  businessId,
-  disabled,
-  onSave,
-  onDelete,
-}: {
+function RoleItem(props: {
   role: RoleRow;
   businessId: string;
   disabled: boolean;
   onSave: (patch: Partial<RoleRow>) => void;
   onDelete: () => void;
-}) {
+}): JSX.Element {
+  const { role, businessId, disabled, onSave, onDelete } = props;
   const router = useRouter();
-  const isUUID = (s: string) =>
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(role.name);
   const [color, setColor] = useState(role.color ?? "");
@@ -293,54 +305,22 @@ function RoleItem({
               {role.color || "no color"} · skill {role.min_skill_level ?? "—"}
             </div>
           </div>
-          <button
-            className="px-3 py-1 border rounded"
-            onClick={() => setEditing(true)}
-            disabled={disabled}
-          >
+          <button className="px-3 py-1 border rounded" onClick={() => setEditing(true)} disabled={disabled}>
             Edit
           </button>
-          <button
-            className="px-3 py-1 border rounded"
-            onClick={onDelete}
-            disabled={disabled}
-          >
+          <button className="px-3 py-1 border rounded" onClick={onDelete} disabled={disabled}>
             Delete
           </button>
         </>
       ) : (
         <>
-          <input
-            className="border rounded p-1"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            disabled={disabled}
-          />
-          <input
-            className="border rounded p-1"
-            value={color}
-            onChange={(e) => setColor(e.target.value)}
-            disabled={disabled}
-            placeholder="#000000"
-          />
-          <input
-            className="border rounded p-1"
-            value={minSkill}
-            onChange={(e) => setMinSkill(e.target.value)}
-            disabled={disabled}
-            type="number"
-          />
-          <button
-            className="px-3 py-1 border rounded"
-            onClick={save}
-            disabled={disabled}
-          >
+          <input className="border rounded p-1" value={name} onChange={(e) => setName(e.target.value)} disabled={disabled} />
+          <input className="border rounded p-1" value={color} onChange={(e) => setColor(e.target.value)} disabled={disabled} placeholder="#000000" />
+          <input className="border rounded p-1" value={minSkill} onChange={(e) => setMinSkill(e.target.value)} disabled={disabled} type="number" />
+          <button className="px-3 py-1 border rounded" onClick={save} disabled={disabled}>
             Save
           </button>
-          <button
-            className="px-3 py-1 border rounded"
-            onClick={() => setEditing(false)}
-          >
+          <button className="px-3 py-1 border rounded" onClick={() => setEditing(false)}>
             Cancel
           </button>
           <button
@@ -353,6 +333,5 @@ function RoleItem({
         </>
       )}
     </div>
-    
   );
 }

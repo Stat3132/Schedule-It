@@ -1,153 +1,324 @@
 "use client";
-import { useEffect, useState } from "react";
+
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
 type Member = { id: string; email: string; role: string | null };
+type RoleOpt = { id: string; name: string };
+type LocOpt  = { id: string; name: string };
 type OutLink = { email: string; joinUrl: string };
+
+function cx(...parts: Array<string | false | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
+
+function parseEmails(raw: string): string[] {
+  const emails = raw.split(/[\s,;]+/)
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean)
+    .filter(e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const e of emails) if (!seen.has(e)) { seen.add(e); out.push(e); }
+  return out;
+}
 
 export default function TeamPage() {
   const { businessId } = useParams<{ businessId: string }>();
   const supabase = createClientComponentClient();
 
-  // Members list
-  const [members, setMembers] = useState<Member[]>([]);
+  // ---------- Authz + business state ----------
+  const [canInvite, setCanInvite] = useState<boolean | null>(null);
+  const [authzMsg, setAuthzMsg] = useState("");
+
   useEffect(() => {
     let alive = true;
     (async () => {
-      const { data } = await supabase
-        .from("employment")
-        .select("user:profiles(id,email), role:role(name)")
-        .eq("business_id", businessId as string)
-        .eq("status", "active");
+      const [{ data: mgr }, { data: ver }] = await Promise.all([
+        supabase.rpc("is_manager",  { biz: String(businessId) }),
+        supabase.rpc("is_verified", { biz: String(businessId) }),
+      ]);
       if (!alive) return;
-      type UnknownRow = { user: unknown; role: unknown };
-      const rows: UnknownRow[] = (data ?? []) as UnknownRow[];
-
-      const toUser = (u: unknown): { id: string; email: string } | null => {
-        const val = Array.isArray(u) ? u[0] : u;
-        if (val && typeof val === "object") {
-          const rec = val as Record<string, unknown>;
-          const id = rec.id;
-          const email = rec.email;
-          if ((typeof id === "string" || typeof id === "number") && typeof email === "string") {
-            return { id: String(id), email };
-          }
-        }
-        return null;
-      };
-
-      const toRoleName = (r: unknown): string | null => {
-        const val = Array.isArray(r) ? r[0] : r;
-        if (val && typeof val === "object") {
-          const rec = val as Record<string, unknown>;
-          const name = rec.name;
-          if (typeof name === "string") return name;
-        }
-        return null;
-      };
-
-      setMembers(
-        rows.map((row) => {
-          const u = toUser(row.user);
-          return {
-            id: u?.id ?? "",
-            email: u?.email ?? "",
-            role: toRoleName(row.role),
-          };
-        })
-      );
+      const ok = Boolean(mgr) && Boolean(ver);
+      setCanInvite(ok);
+      setAuthzMsg(!mgr ? "Not authorized. Manager access required." : !ver ? "Business is not verified." : "");
     })();
     return () => { alive = false; };
   }, [businessId, supabase]);
 
-  // Invite form (same logic as before)
-  const [emails, setEmails] = useState("");
+  // ---------- Members ----------
+  const [members, setMembers] = useState<Member[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(true);
+  const [membersErr, setMembersErr] = useState<string>("");
+
+  useEffect(() => {
+    let alive = true;
+    setLoadingMembers(true);
+    setMembersErr("");
+    (async () => {
+      const { data, error } = await supabase
+        .from("employment")
+        .select("user:profiles(id,email), role:role(name)")
+        .eq("business_id", String(businessId))
+        .eq("status", "active");
+      if (!alive) return;
+      if (error) {
+        setMembersErr(error.message || "Failed to load team.");
+        setMembers([]);
+      } else {
+        type Row = { user: any; role: any };
+        const rows: Row[] = (data ?? []) as Row[];
+        const toUser = (u: unknown): { id: string; email: string } | null => {
+          const val = Array.isArray(u) ? u[0] : u;
+          if (val && typeof val === "object") {
+            const r = val as Record<string, unknown>;
+            const id = r.id;
+            const email = r.email;
+            if ((typeof id === "string" || typeof id === "number") && typeof email === "string") {
+              return { id: String(id), email };
+            }
+          }
+          return null;
+        };
+        const toRole = (r: unknown): string | null => {
+          const val = Array.isArray(r) ? r[0] : r;
+          if (val && typeof val === "object") {
+            const name = (val as Record<string, unknown>).name;
+            if (typeof name === "string") return name;
+          }
+          return null;
+        };
+        setMembers(
+          rows.map((row) => {
+            const u = toUser(row.user);
+            return { id: u?.id ?? "", email: u?.email ?? "", role: toRole(row.role) };
+          })
+        );
+      }
+      setLoadingMembers(false);
+    })();
+    return () => { alive = false; };
+  }, [businessId, supabase]);
+
+  // ---------- Dropdown data (optional) ----------
+  const [roles, setRoles] = useState<RoleOpt[]>([]);
+  const [locs,  setLocs]  = useState<LocOpt[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const [{ data: r }, { data: l }] = await Promise.all([
+        supabase.from("role").select("id,name").eq("business_id", String(businessId)).order("name"),
+        supabase.from("location").select("id,name").eq("business_id", String(businessId)).order("name"),
+      ]);
+      if (!alive) return;
+      if (r) setRoles(r as RoleOpt[]);
+      if (l) setLocs(l as LocOpt[]);
+    })();
+    return () => { alive = false; };
+  }, [businessId, supabase]);
+
+  // ---------- Invite form ----------
+  const [rawEmails, setRawEmails] = useState("");
+  const emails = useMemo(() => parseEmails(rawEmails), [rawEmails]);
+
   const [roleId, setRoleId] = useState("");
   const [locationId, setLocationId] = useState("");
   const [isManager, setIsManager] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [out, setOut] = useState<OutLink[]>([]);
-  const [err, setErr] = useState("");
-  const [sending, setSending] = useState(false);
 
-  function parseEmails(raw: string) {
-    return raw.split(/[\s,;]+/).map(s=>s.trim().toLowerCase()).filter(Boolean)
-      .filter(e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
-  }
+  const [out, setOut] = useState<OutLink[]>([]);
+  const [formErr, setFormErr] = useState("");
+  const [sending, setSending] = useState(false);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
 
   async function sendInvites(e: React.FormEvent) {
     e.preventDefault();
-    setErr("");
-    const list = parseEmails(emails);
-    if (!list.length) { setErr("Enter at least one valid email."); return; }
+    setFormErr("");
+    setOut([]);
+
+    if (!canInvite) {
+      setFormErr(authzMsg || "Not allowed.");
+      return;
+    }
+    if (emails.length === 0) {
+      setFormErr("Enter at least one valid email.");
+      return;
+    }
+
     setSending(true);
-    const res = await fetch("/api/invitations", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        businessId,
-        invites: list.map(email => ({
-          email,
-          roleId: roleId || undefined,
-          locationId: locationId || undefined,
-          isManager,
-          isAdmin,
-        })),
-      }),
-    });
-    const json = await res.json();
-    setSending(false);
-    if (!res.ok) { setErr(json.error ?? "Failed to create invites."); return; }
-    setOut(json.invites as OutLink[]);
-    setEmails("");
+    try {
+      // Server route creates employee_invite rows, emails links, and returns join URLs
+      const res = await fetch("/api/invitations", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          businessId: String(businessId),
+          invites: emails.map(email => ({
+            email,
+            roleId: roleId || undefined,
+            locationId: locationId || undefined,
+            isManager,
+            isAdmin,
+          })),
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setFormErr(json.error ?? "Failed to create invites.");
+      } else {
+        setOut(json.invites as OutLink[]);
+        setRawEmails("");
+      }
+    } catch (err: any) {
+      setFormErr(err?.message || "Network error.");
+    } finally {
+      setSending(false);
+      btnRef.current?.blur();
+    }
   }
 
   return (
-    <div className="max-w-4xl mx-auto p-6 space-y-8">
+    <div className="max-w-4xl mx-auto p-6 space-y-10">
+      {/* Team list */}
       <section>
-        <h1 className="text-xl font-semibold">Team</h1>
-        <ul className="mt-3 divide-y">
-          {members.map(m => (
-            <li key={m.id} className="py-2 flex justify-between">
-              <span className="font-mono">{m.email}</span>
-              <span className="text-sm text-neutral-600">{m.role ?? "—"}</span>
-            </li>
-          ))}
-          {members.length === 0 && <div className="text-sm text-neutral-600">No members yet.</div>}
-        </ul>
+        <div className="flex items-end justify-between">
+          <h1 className="text-xl font-semibold">Team</h1>
+          <div className="text-sm text-neutral-500">
+            {loadingMembers ? "Loading…" : `${members.length} member${members.length === 1 ? "" : "s"}`}
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-lg border">
+          {loadingMembers && <div className="p-4 text-sm text-neutral-600">Loading team…</div>}
+          {!loadingMembers && membersErr && <div className="p-4 text-sm text-red-600">{membersErr}</div>}
+          {!loadingMembers && !membersErr && members.length === 0 && (
+            <div className="p-4 text-sm text-neutral-600">No members yet.</div>
+          )}
+          {!loadingMembers && !membersErr && members.length > 0 && (
+            <ul className="divide-y">
+              {members.map((m) => (
+                <li key={m.id} className="px-4 py-3 flex items-center justify-between">
+                  <div className="min-w-0">
+                    <div className="font-mono truncate">{m.email}</div>
+                  </div>
+                  <div className="ml-4 shrink-0 text-sm text-neutral-600">{m.role ?? "—"}</div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </section>
 
+      {/* Invite form */}
       <section>
         <h2 className="text-lg font-semibold">Invite members</h2>
-        <form onSubmit={sendInvites} className="mt-3 space-y-3">
-          <textarea
-            className="w-full border rounded p-2 h-28"
-            placeholder="one@company.com, two@company.com"
-            value={emails}
-            onChange={e=>setEmails(e.target.value)}
-          />
-          <div className="grid grid-cols-2 gap-3">
-            <input className="border rounded p-2" placeholder="Role ID (optional)" value={roleId} onChange={e=>setRoleId(e.target.value)} />
-            <input className="border rounded p-2" placeholder="Location ID (optional)" value={locationId} onChange={e=>setLocationId(e.target.value)} />
+
+        {canInvite === false && (
+          <div className="mt-2 rounded border border-amber-300 bg-amber-50 p-3 text-sm">{authzMsg}</div>
+        )}
+
+        <form onSubmit={sendInvites} className="mt-4 space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">Emails</label>
+            <textarea
+              className={cx("w-full rounded-md border p-2 h-28", formErr && !emails.length && "border-red-500")}
+              placeholder="one@company.com, two@company.com"
+              value={rawEmails}
+              onChange={(e) => setRawEmails(e.target.value)}
+              disabled={canInvite === false}
+            />
+            {emails.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {emails.map((e) => (
+                  <span key={e} className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs bg-neutral-50">
+                    {e}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
-          <label className="mr-4 text-sm"><input type="checkbox" checked={isManager} onChange={e=>setIsManager(e.target.checked)} /> Manager</label>
-          <label className="text-sm"><input type="checkbox" checked={isAdmin} onChange={e=>setIsAdmin(e.target.checked)} /> Admin</label>
-          {err && <div className="text-red-600 text-sm">{err}</div>}
-          <button type="submit" className="rounded bg-black text-white px-4 py-2" disabled={sending}>
-            {sending ? "Sending…" : "Send invites"}
-          </button>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium mb-1">Role (optional)</label>
+              <select
+                className="w-full rounded-md border p-2"
+                value={roleId}
+                onChange={(e) => setRoleId(e.target.value)}
+                disabled={roles.length === 0}
+              >
+                <option value="">— None —</option>
+                {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Location (optional)</label>
+              <select
+                className="w-full rounded-md border p-2"
+                value={locationId}
+                onChange={(e) => setLocationId(e.target.value)}
+                disabled={locs.length === 0}
+              >
+                <option value="">— None —</option>
+                {locs.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-6">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" className="h-4 w-4" checked={isManager} onChange={(e) => setIsManager(e.target.checked)} />
+              Manager
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" className="h-4 w-4" checked={isAdmin} onChange={(e) => setIsAdmin(e.target.checked)} />
+              Admin
+            </label>
+          </div>
+
+          {formErr && <div className="text-sm text-red-600">{formErr}</div>}
+
+          <div className="flex items-center gap-3">
+            <button
+              ref={btnRef}
+              type="submit"
+              disabled={sending || canInvite === false}
+              className={cx(
+                "rounded-md px-4 py-2 text-white",
+                sending ? "bg-neutral-700" : "bg-black hover:bg-neutral-800",
+                "disabled:opacity-60"
+              )}
+            >
+              {sending ? "Sending…" : "Send invites"}
+            </button>
+            {emails.length > 0 && <div className="text-xs text-neutral-600">{emails.length} to send</div>}
+          </div>
         </form>
 
         {out.length > 0 && (
-          <div className="mt-4 space-y-1 text-sm">
-            <div className="text-neutral-600">Invite links:</div>
-            {out.map(x => (
-              <div key={x.email}>
-                <span className="font-mono">{x.email}</span> —{" "}
-                <a className="underline" href={x.joinUrl} target="_blank" rel="noreferrer">{x.joinUrl}</a>
-              </div>
-            ))}
+          <div className="mt-6">
+            <div className="text-sm text-neutral-600 mb-2">Invite links</div>
+            <div className="rounded-lg border divide-y">
+              {out.map((x) => (
+                <div key={x.email} className="p-3 flex items-start gap-3">
+                  <div className="min-w-0">
+                    <div className="font-mono text-sm">{x.email}</div>
+                    <a className="block text-sm underline break-all" href={x.joinUrl} target="_blank" rel="noreferrer">
+                      {x.joinUrl}
+                    </a>
+                  </div>
+                  <button
+                    type="button"
+                    className="ml-auto shrink-0 rounded border px-2 py-1 text-xs hover:bg-neutral-50"
+                    onClick={async () => { try { await navigator.clipboard.writeText(x.joinUrl); } catch {} }}
+                  >
+                    Copy
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </section>
