@@ -191,7 +191,7 @@ export default function TeamPage() {
   const handleContinue = () => {
     // manager + verified
     // Your employer home can key off this query param
-    const url ="/employerhomepage";
+    const url ="/employermanagement/employerhomepage";
     router.push(url);
   };
 

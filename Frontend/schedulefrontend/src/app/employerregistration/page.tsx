@@ -52,7 +52,7 @@ import { useRouter } from "next/navigation";
     }
 
     setLoading(false);
-    router.push('/homepage');
+    router.push('/employermanagement/employerhomepage');
   }
 
     return (
