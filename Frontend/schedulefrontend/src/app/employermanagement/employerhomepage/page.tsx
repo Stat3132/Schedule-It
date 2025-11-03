@@ -1,23 +1,37 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { PostgrestError } from "@supabase/supabase-js";
-
-type EmploymentRow = { business_id: string; is_manager?: boolean; is_admin?: boolean; status?: string; user_id?: string; location_id?: string };
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { Plus, Clock, CheckSquare, Bell, Users, Settings } from "lucide-react";
 
+/* ---------- Types ---------- */
+type EmploymentRow = {
+  business_id: string;
+  is_manager: boolean | null;
+  is_admin: boolean | null;
+  status: string | null;
+  user_id?: string | null;
+  location_id?: string | null;
+};
 type ShiftRow = {
-  id: string; business_id: string; location_id: string; role_id: string;
-  start_ts: string; end_ts: string; status: "draft" | "published" | "canceled";
+  id: string;
+  business_id: string;
+  location_id: string | null;
+  role_id: string | null;
+  start_ts: string;
+  end_ts: string;
+  status: "draft" | "published" | "canceled";
 };
 type AssignmentRow = { id: string; shift_id: string; user_id: string; status: string };
 type ProfileRow = { id: string; full_name: string | null };
-type BusinessOpt = { id: string; name?: string | null };
+type BusinessOpt = { id: string; name: string | null };
 type LocationOpt = { id: string; name: string };
 type DayCell = { start?: string; end?: string };
 type GridRow = { userId: string; name: string; byDay: DayCell[] };
 
+/* ---------- Date helpers ---------- */
 function startOfWeek(d: Date, weekStartsOn: 0 | 1 = 0) {
   const day = d.getDay();
   const diff = (day < weekStartsOn ? 7 : 0) + day - weekStartsOn;
@@ -39,8 +53,10 @@ function fmtDateMMDD(d: Date) {
   return `${mm}/${dd}`;
 }
 
+/* ---------- Component ---------- */
 export default function EmployerHomePage() {
   const supabase = useRef(createClientComponentClient()).current;
+  const router = useRouter();
 
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -55,41 +71,95 @@ export default function EmployerHomePage() {
   const [days, setDays] = useState<{ label: string; date: string }[]>([]);
   const [grid, setGrid] = useState<GridRow[]>([]);
 
-  // Bootstrap: discover businesses where user is owner or manager/admin.
+  /* ---------- Bootstrap: discover accessible businesses ---------- */
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // manager/admin via employment
-      const emp = await supabase
+      setLoading(true);
+      setErrorMsg(null);
+
+      const {
+        data: { user },
+        error: uErr,
+      } = await supabase.auth.getUser();
+      if (uErr || !user) {
+        if (!cancelled) {
+          setLoading(false);
+          setErrorMsg("No session. Please sign in.");
+        }
+        return;
+      }
+
+      // Manager/admin via employment
+      const { data: empData, error: empError } = await supabase
         .from("employment")
         .select("business_id,is_manager,is_admin,status")
         .eq("status", "active")
         .or("is_manager.eq.true,is_admin.eq.true");
+      if (empError) {
+        if (!cancelled) {
+          setLoading(false);
+          setErrorMsg(`Employment bootstrap failed: ${empError.message}`);
+        }
+        return;
+      }
+      const mgrIds = Array.from(
+        new Set(
+          (empData ?? [])
+            .filter((e: EmploymentRow) => e.is_manager || e.is_admin)
+            .map((e: EmploymentRow) => e.business_id),
+        ),
+      );
 
-  const mgrIds = Array.from(new Set(((emp.data ?? []) as EmploymentRow[]).map((e) => e.business_id)));
+      // Owned businesses
+      const { data: ownedRows, error: ownedErr } = await supabase
+        .from("business")
+        .select("id,name")
+        .eq("owner_user_id", user.id);
+      if (ownedErr) {
+        // Not fatal; managers still proceed
+        console.warn("Owned business query error:", ownedErr.message);
+      }
+      const owned = (ownedRows ?? []) as { id: string; name: string | null }[];
 
-      // owned businesses (name may be readable only if owner due to RLS)
-      const owned = await supabase.from("business").select("id,name");
-      const ownedRows = (owned.data ?? []) as { id: string; name?: string | null }[];
-
+      // Union of IDs then fetch names only for those IDs to avoid RLS denials
       const idSet = new Set<string>(mgrIds);
-      for (const b of ownedRows) idSet.add(b.id);
-
+      for (const b of owned) idSet.add(b.id);
       const idList = Array.from(idSet);
-      // Try to attach names where possible
-      const byIdName = new Map(ownedRows.map((r) => [r.id, r.name ?? null]));
-      const bizOpts: BusinessOpt[] = idList.map((id) => ({ id, name: byIdName.get(id) ?? null }));
 
-      if (cancelled) return;
-      setBusinesses(bizOpts);
-      if (!selectedBiz && idList.length > 0) setSelectedBiz(idList[0]);
+      let named: BusinessOpt[] = owned.map((r) => ({ id: r.id, name: r.name }));
+      const needNames = idList.filter((id) => !owned.find((o) => o.id === id));
+      if (needNames.length) {
+        // Try to read names for manager-visible businesses; may be allowed by your RLS
+        const { data: bRows } = await supabase
+          .from("business")
+          .select("id,name")
+          .in("id", needNames);
+        const extra = (bRows ?? []).map((r: { id: string; name: string | null }) => ({
+          id: r.id,
+          name: r.name ?? null,
+        }));
+        const existingIds = new Set(named.map((x) => x.id));
+        named = named.concat(extra.filter((e) => !existingIds.has(e.id)));
+        // Fill any still-unnamed with placeholder
+        for (const id of needNames) {
+          if (!named.find((n) => n.id === id)) named.push({ id, name: null });
+        }
+      }
+
+      if (!cancelled) {
+        setBusinesses(named);
+        if (!selectedBiz && idList.length > 0) setSelectedBiz(idList[0]);
+        setLoading(false);
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [supabase]); // run once
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supabase]);
 
-  // Load locations for the selected business
+  /* ---------- Load locations when business changes ---------- */
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -110,9 +180,8 @@ export default function EmployerHomePage() {
         setSelectedLoc("ALL");
         return;
       }
-  const locs = (data ?? []) as { id: string; name: string }[];
+      const locs = (data ?? []) as LocationOpt[];
       setLocations(locs);
-      // Keep selection if still valid
       if (selectedLoc !== "ALL" && !locs.find((l) => l.id === selectedLoc)) {
         setSelectedLoc("ALL");
       }
@@ -120,14 +189,13 @@ export default function EmployerHomePage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedBiz, supabase]);
+  }, [selectedBiz, selectedLoc, supabase]);
 
-  // Load weekly grid for the selected scope
+  /* ---------- Load weekly grid ---------- */
   const scopeKey = useMemo(() => `${selectedBiz ?? ""}|${selectedLoc}`, [selectedBiz, selectedLoc]);
 
   useEffect(() => {
     let cancelled = false;
-
     (async () => {
       setLoading(true);
       setErrorMsg(null);
@@ -158,17 +226,15 @@ export default function EmployerHomePage() {
         year: "numeric",
       })}`;
 
-      // Active employees in business (optionally restricted to location)
+      // Employees in scope
       let empQ = supabase
         .from("employment")
         .select("user_id,location_id,status")
         .eq("business_id", selectedBiz)
         .eq("status", "active");
-
       if (selectedLoc !== "ALL") {
         empQ = empQ.or(`location_id.is.null,location_id.eq.${selectedLoc}`);
       }
-
       const { data: empRows, error: empErr } = await empQ;
       if (empErr) {
         if (!cancelled) {
@@ -179,28 +245,36 @@ export default function EmployerHomePage() {
         }
         return;
       }
+      const employeeIds = Array.from(
+        new Set(
+          (empRows ?? [])
+            .map((e: { user_id?: string | null }) => e.user_id)
+            .filter(Boolean) as string[],
+        ),
+      );
 
-      const employeeIds = Array.from(new Set(((empRows ?? []) as { user_id?: string }[]).map((e) => e.user_id).filter(Boolean) as string[]));
-      // Names
-      const profsResp = employeeIds.length
-        ? await supabase.from("profiles").select("id,full_name").in("id", employeeIds)
-        : ({ data: [] as { id: string; full_name: string | null }[], error: null as PostgrestError | null });
-      const profs = profsResp.data ?? [];
-      const profErr = profsResp.error;
-
-      if (profErr) {
-        if (!cancelled) {
-          setErrorMsg(`Profile query failed: ${profErr.message}`);
-          setDays(labels);
-          setWeekLabel(header);
-          setLoading(false);
+      // Profiles
+      let nameById = new Map<string, string>();
+      if (employeeIds.length) {
+        const { data: profs, error: profErr } = await supabase
+          .from("profiles")
+          .select("id,full_name")
+          .in("id", employeeIds);
+        if (profErr) {
+          if (!cancelled) {
+            setErrorMsg(`Profile query failed: ${profErr.message}`);
+            setDays(labels);
+            setWeekLabel(header);
+            setLoading(false);
+          }
+          return;
         }
-        return;
+        nameById = new Map<string, string>(
+          (profs as ProfileRow[]).map((p) => [p.id, p.full_name ?? ""]),
+        );
       }
 
-      const nameById = new Map<string, string>((profs as ProfileRow[]).map((p) => [p.id, p.full_name ?? ""]));
-
-      // Published shifts this week in scope
+      // Shifts
       let shiftQ = supabase
         .from("shift")
         .select("id,business_id,location_id,role_id,start_ts,end_ts,status")
@@ -208,9 +282,7 @@ export default function EmployerHomePage() {
         .eq("status", "published")
         .gte("start_ts", ws.toISOString())
         .lte("start_ts", we.toISOString());
-
       if (selectedLoc !== "ALL") shiftQ = shiftQ.eq("location_id", selectedLoc);
-
       const { data: shifts, error: shErr } = await shiftQ;
       if (shErr) {
         if (!cancelled) {
@@ -221,12 +293,11 @@ export default function EmployerHomePage() {
         }
         return;
       }
-
       const safeShifts: ShiftRow[] = Array.isArray(shifts) ? (shifts as ShiftRow[]) : [];
       const shiftIds = safeShifts.map((s) => s.id);
 
-      // Assignments only for those shifts and our employees
-  let assigns: AssignmentRow[] = [];
+      // Assignments
+      let assigns: AssignmentRow[] = [];
       if (shiftIds.length && employeeIds.length) {
         const { data: assignsRaw, error: asErr } = await supabase
           .from("shift_assignment")
@@ -245,7 +316,6 @@ export default function EmployerHomePage() {
         assigns = (assignsRaw ?? []) as AssignmentRow[];
       }
 
-      // Build grid: seed from employment, overlay assignments
       const byUser = new Map<string, GridRow>();
       for (const uid of employeeIds) {
         byUser.set(uid, {
@@ -257,7 +327,7 @@ export default function EmployerHomePage() {
       for (const a of assigns) {
         const sh = safeShifts.find((s) => s.id === a.shift_id);
         if (!sh) continue;
-        const dow = new Date(sh.start_ts).getDay();
+        const dow = new Date(sh.start_ts).getDay(); // 0..6 mapped to labels built from Sunday
         const rec = byUser.get(a.user_id);
         if (!rec) continue;
         rec.byDay[dow] = {
@@ -273,21 +343,30 @@ export default function EmployerHomePage() {
         setLoading(false);
       }
     })();
-
     return () => {
       cancelled = true;
     };
   }, [scopeKey, supabase]);
 
-  // UI helpers
+  /* ---------- Derived ---------- */
   const bizName = useMemo(() => {
     const found = businesses.find((b) => b.id === selectedBiz);
     return found?.name ?? (selectedBiz ? selectedBiz.slice(0, 8) + "…" : "");
   }, [businesses, selectedBiz]);
 
-  if (!businesses.length && loading) return <div className="p-6">Loading…</div>;
-  if (!businesses.length) return <div className="p-6">No manager access found for your user.</div>;
+  /* ---------- Early outs ---------- */
+  if (loading && !businesses.length) return <div className="p-6">Loading…</div>;
+  if (!businesses.length)
+    return (
+      <div className="p-6">
+        No manager access found for your user.
+        <div className="mt-2 text-sm text-gray-600">
+          Ensure you either own a business or have an active employment with manager/admin rights.
+        </div>
+      </div>
+    );
 
+  /* ---------- Render ---------- */
   return (
     <div className="min-h-screen bg-gray-50">
       <nav className="bg-white border-b border-gray-200">
@@ -311,7 +390,7 @@ export default function EmployerHomePage() {
               <select
                 className="border rounded-md px-2 py-1 text-sm"
                 value={selectedLoc}
-                            onChange={(e) => setSelectedLoc((e.target.value as string) || "ALL")}
+                onChange={(e) => setSelectedLoc((e.target.value as string) || "ALL")}
                 disabled={!selectedBiz}
               >
                 <option value="ALL">All locations</option>
@@ -324,22 +403,40 @@ export default function EmployerHomePage() {
             </div>
 
             <div className="flex items-center space-x-1">
-              <button className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2">
+              <button
+                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
+                onClick={() => router.push("/employermanagement/create-schedule")}
+              >
                 <Plus className="w-4 h-4" /> Create Schedule
               </button>
-              <button className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2">
+              <button
+                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
+                onClick={() => router.push("/employermanagement/time-off")}
+              >
                 <Clock className="w-4 h-4" /> Time Off Requests
               </button>
-              <button className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2">
+              <button
+                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
+                onClick={() => router.push("/employermanagement/availability")}
+              >
                 <CheckSquare className="w-4 h-4" /> Availability Requests
               </button>
-              <button className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2">
+              <button
+                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
+                onClick={() => router.push("/employermanagement/announcements")}
+              >
                 <Bell className="w-4 h-4" /> Announcements
               </button>
-              <button className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2">
+              <button
+                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
+                onClick={() => router.push("/employermanagement/users")}
+              >
                 <Users className="w-4 h-4" /> User Management
               </button>
-              <button className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2">
+              <button
+                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
+                onClick={() => router.push("/employermanagement/settings")}
+              >
                 <Settings className="w-4 h-4" /> Settings
               </button>
             </div>
