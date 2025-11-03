@@ -1,20 +1,27 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
 type Member = { id: string; email: string; role: string | null };
 type RoleOpt = { id: string; name: string };
 type LocOpt  = { id: string; name: string };
-type OutLink = { email: string; joinUrl: string };
+
+type InviteResult = {
+  email: string;
+  joinUrl: string;
+  emailed: boolean;
+  error?: string;
+};
 
 function cx(...parts: Array<string | false | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
 function parseEmails(raw: string): string[] {
-  const emails = raw.split(/[\s,;]+/)
+  const emails = raw
+    .split(/[\s,;]+/)
     .map(s => s.trim().toLowerCase())
     .filter(Boolean)
     .filter(e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
@@ -25,10 +32,11 @@ function parseEmails(raw: string): string[] {
 }
 
 export default function TeamPage() {
+  const router = useRouter();
   const { businessId } = useParams<{ businessId: string }>();
   const supabase = createClientComponentClient();
 
-  // ---------- Authz + business state ----------
+  // authz
   const [canInvite, setCanInvite] = useState<boolean | null>(null);
   const [authzMsg, setAuthzMsg] = useState("");
 
@@ -47,7 +55,7 @@ export default function TeamPage() {
     return () => { alive = false; };
   }, [businessId, supabase]);
 
-  // ---------- Members ----------
+  // members
   const [members, setMembers] = useState<Member[]>([]);
   const [loadingMembers, setLoadingMembers] = useState(true);
   const [membersErr, setMembersErr] = useState<string>("");
@@ -101,7 +109,7 @@ export default function TeamPage() {
     return () => { alive = false; };
   }, [businessId, supabase]);
 
-  // ---------- Dropdown data (optional) ----------
+  // dropdowns
   const [roles, setRoles] = useState<RoleOpt[]>([]);
   const [locs,  setLocs]  = useState<LocOpt[]>([]);
 
@@ -119,7 +127,7 @@ export default function TeamPage() {
     return () => { alive = false; };
   }, [businessId, supabase]);
 
-  // ---------- Invite form ----------
+  // invite form
   const [rawEmails, setRawEmails] = useState("");
   const emails = useMemo(() => parseEmails(rawEmails), [rawEmails]);
 
@@ -128,7 +136,7 @@ export default function TeamPage() {
   const [isManager, setIsManager] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
 
-  const [out, setOut] = useState<OutLink[]>([]);
+  const [out, setOut] = useState<InviteResult[]>([]);
   const [formErr, setFormErr] = useState("");
   const [sending, setSending] = useState(false);
   const btnRef = useRef<HTMLButtonElement | null>(null);
@@ -149,8 +157,7 @@ export default function TeamPage() {
 
     setSending(true);
     try {
-      // Server route creates employee_invite rows, emails links, and returns join URLs
-      const res = await fetch("/api/invitations", {
+      const res = await fetch("/api/invitation", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -168,7 +175,7 @@ export default function TeamPage() {
       if (!res.ok) {
         setFormErr(json.error ?? "Failed to create invites.");
       } else {
-        setOut(json.invites as OutLink[]);
+        setOut(json.invites as InviteResult[]);
         setRawEmails("");
       }
     } catch (err: any) {
@@ -179,9 +186,16 @@ export default function TeamPage() {
     }
   }
 
+  // Continue button handler: managers/admins → employer view, others → normal
+  const handleContinue = () => {
+    // manager + verified
+    // Your employer home can key off this query param
+    const url ="/employerhomepage";
+    router.push(url);
+  };
+
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-10">
-      {/* Team list */}
       <section>
         <div className="flex items-end justify-between">
           <h1 className="text-xl font-semibold">Team</h1>
@@ -211,7 +225,6 @@ export default function TeamPage() {
         </div>
       </section>
 
-      {/* Invite form */}
       <section>
         <h2 className="text-lg font-semibold">Invite members</h2>
 
@@ -293,28 +306,38 @@ export default function TeamPage() {
             >
               {sending ? "Sending…" : "Send invites"}
             </button>
+
+            {/* Continue button */}
+            <button
+              type="button"
+              onClick={handleContinue}
+              className="rounded-md border px-4 py-2 text-sm hover:bg-neutral-50"
+            >
+              Continue
+            </button>
+
             {emails.length > 0 && <div className="text-xs text-neutral-600">{emails.length} to send</div>}
           </div>
         </form>
 
         {out.length > 0 && (
           <div className="mt-6">
-            <div className="text-sm text-neutral-600 mb-2">Invite links</div>
+            <div className="text-sm text-neutral-600 mb-2">Invites</div>
             <div className="rounded-lg border divide-y">
-              {out.map((x) => (
-                <div key={x.email} className="p-3 flex items-start gap-3">
+              {out.map(({ email, emailed, error }) => (
+                <div key={email} className="p-3 flex items-start gap-3">
                   <div className="min-w-0">
-                    <div className="font-mono text-sm">{x.email}</div>
-                    <a className="block text-sm underline break-all" href={x.joinUrl} target="_blank" rel="noreferrer">
-                      {x.joinUrl}
-                    </a>
+                    <div className="font-mono text-sm">{email}</div>
+                    <div className={cx("text-xs", emailed ? "text-green-700" : "text-red-700")}>
+                      {emailed ? "Email sent" : `Email not sent: ${error ?? "unknown error"}`}
+                    </div>
                   </div>
                   <button
                     type="button"
                     className="ml-auto shrink-0 rounded border px-2 py-1 text-xs hover:bg-neutral-50"
-                    onClick={async () => { try { await navigator.clipboard.writeText(x.joinUrl); } catch {} }}
+                    onClick={async () => { try { await navigator.clipboard.writeText(email); } catch {} }}
                   >
-                    Copy
+                    Copy email
                   </button>
                 </div>
               ))}
