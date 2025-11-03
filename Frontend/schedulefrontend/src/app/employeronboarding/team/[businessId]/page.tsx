@@ -75,8 +75,8 @@ export default function TeamPage() {
         setMembersErr(error.message || "Failed to load team.");
         setMembers([]);
       } else {
-        type Row = { user: any; role: any };
-        const rows: Row[] = (data ?? []) as Row[];
+  type Row = { user: unknown; role: unknown };
+  const rows: Row[] = (data ?? []) as Row[];
         const toUser = (u: unknown): { id: string; email: string } | null => {
           const val = Array.isArray(u) ? u[0] : u;
           if (val && typeof val === "object") {
@@ -178,8 +178,9 @@ export default function TeamPage() {
         setOut(json.invites as InviteResult[]);
         setRawEmails("");
       }
-    } catch (err: any) {
-      setFormErr(err?.message || "Network error.");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err ?? "");
+      setFormErr(msg || "Network error.");
     } finally {
       setSending(false);
       btnRef.current?.blur();

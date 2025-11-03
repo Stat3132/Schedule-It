@@ -77,8 +77,9 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ invites: out }, { status: 200 });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "Server error" }, { status: 500 });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e ?? "Server error");
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
 export function GET() {

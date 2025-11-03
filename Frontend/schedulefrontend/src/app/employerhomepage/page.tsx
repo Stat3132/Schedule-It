@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { PostgrestError } from "@supabase/supabase-js";
+
+type EmploymentRow = { business_id: string; is_manager?: boolean; is_admin?: boolean; status?: string; user_id?: string; location_id?: string };
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { Plus, Clock, CheckSquare, Bell, Users, Settings } from "lucide-react";
 
@@ -63,7 +66,7 @@ export default function EmployerHomePage() {
         .eq("status", "active")
         .or("is_manager.eq.true,is_admin.eq.true");
 
-      const mgrIds = Array.from(new Set((emp.data ?? []).map((e: any) => e.business_id)));
+  const mgrIds = Array.from(new Set(((emp.data ?? []) as EmploymentRow[]).map((e) => e.business_id)));
 
       // owned businesses (name may be readable only if owner due to RLS)
       const owned = await supabase.from("business").select("id,name");
@@ -107,7 +110,7 @@ export default function EmployerHomePage() {
         setSelectedLoc("ALL");
         return;
       }
-      const locs = (data ?? []).map((r: any) => ({ id: r.id as string, name: r.name as string }));
+  const locs = (data ?? []) as { id: string; name: string }[];
       setLocations(locs);
       // Keep selection if still valid
       if (selectedLoc !== "ALL" && !locs.find((l) => l.id === selectedLoc)) {
@@ -177,11 +180,13 @@ export default function EmployerHomePage() {
         return;
       }
 
-      const employeeIds = Array.from(new Set((empRows ?? []).map((e: any) => e.user_id)));
+      const employeeIds = Array.from(new Set(((empRows ?? []) as { user_id?: string }[]).map((e) => e.user_id).filter(Boolean) as string[]));
       // Names
-      const { data: profs, error: profErr } = employeeIds.length
+      const profsResp = employeeIds.length
         ? await supabase.from("profiles").select("id,full_name").in("id", employeeIds)
-        : { data: [], error: null as any };
+        : ({ data: [] as { id: string; full_name: string | null }[], error: null as PostgrestError | null });
+      const profs = profsResp.data ?? [];
+      const profErr = profsResp.error;
 
       if (profErr) {
         if (!cancelled) {
@@ -221,7 +226,7 @@ export default function EmployerHomePage() {
       const shiftIds = safeShifts.map((s) => s.id);
 
       // Assignments only for those shifts and our employees
-      let assigns: AssignmentRow[] = [];
+  let assigns: AssignmentRow[] = [];
       if (shiftIds.length && employeeIds.length) {
         const { data: assignsRaw, error: asErr } = await supabase
           .from("shift_assignment")
@@ -306,7 +311,7 @@ export default function EmployerHomePage() {
               <select
                 className="border rounded-md px-2 py-1 text-sm"
                 value={selectedLoc}
-                onChange={(e) => setSelectedLoc((e.target.value || "ALL") as any)}
+                            onChange={(e) => setSelectedLoc((e.target.value as string) || "ALL")}
                 disabled={!selectedBiz}
               >
                 <option value="ALL">All locations</option>

@@ -39,7 +39,8 @@ export async function sendInviteEmail(to: string, joinUrl: string): Promise<Send
     const id = result?.data?.id;
     if (!id) return { ok: false, error: "No id returned from Resend" };
     return { ok: true, id };
-  } catch (e: any) {
-    return { ok: false, error: e?.message ?? String(e) };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e ?? "");
+    return { ok: false, error: msg };
   }
 }
