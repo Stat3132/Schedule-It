@@ -263,8 +263,10 @@ function BusinessSelectionInner() {
       if (error) throw error;
       setBannerOk("Request sent to the business managers.");
       return data as string;
-    } catch (e: any) {
-      setBannerErr(e?.message ?? "Failed to send request");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setBannerErr(msg ?? "Failed to send request");
+      // eslint-disable-next-line no-console
       console.error("create_join_request error:", e);
       return null;
     } finally {
