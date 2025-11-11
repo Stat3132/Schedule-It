@@ -12,5 +12,14 @@ export async function GET(req: Request) {
     await supabase.auth.exchangeCodeForSession(code);
   }
 
-  return NextResponse.redirect(new URL(next, url.origin));
+  // next may be URL-encoded by the caller (eg. encodeURIComponent). Decode safely.
+  const target = (() => {
+    try {
+      return next ? decodeURIComponent(next) : "/";
+    } catch (e) {
+      return next ?? "/";
+    }
+  })();
+
+  return NextResponse.redirect(new URL(target, url.origin));
 }

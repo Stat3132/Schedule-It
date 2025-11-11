@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { Calendar, Clock, Bell, Settings } from "lucide-react";
 
@@ -98,6 +99,7 @@ type DayBucket = {
 
 export default function EmployeeHomePage() {
   const supabase = createClientComponentClient();
+  const router = useRouter();
 
   const [loading, setLoading] = useState<boolean>(true);
   const [weekLabel, setWeekLabel] = useState<string>("");
@@ -240,7 +242,8 @@ export default function EmployeeHomePage() {
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center" />
             <div className="flex items-center space-x-1">
-              <button className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-2">
+              <button className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-2"
+              onClick={() => router.push("/employeemanagement/timeoffrequest")}>
                 <Clock className="w-4 h-4" />
                 Request Time Off
               </button>

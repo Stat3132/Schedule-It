@@ -405,7 +405,7 @@ export default function EmployerHomePage() {
             <div className="flex items-center space-x-1">
               <button
                 className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() => router.push("/employermanagement/create-schedule")}
+                onClick={() => router.push("/employermanagement/createschedule")}
               >
                 <Plus className="w-4 h-4" /> Create Schedule
               </button>
@@ -429,7 +429,7 @@ export default function EmployerHomePage() {
               </button>
               <button
                 className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() => router.push("/employermanagement/users")}
+                onClick={() => router.push(`/employermanagement/employeeinvitemanagement/${selectedBiz}`)}
               >
                 <Users className="w-4 h-4" /> User Management
               </button>

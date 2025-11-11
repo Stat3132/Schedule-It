@@ -141,6 +141,68 @@ export default function TeamPage() {
   const [sending, setSending] = useState(false);
   const btnRef = useRef<HTMLButtonElement | null>(null);
 
+  // ensure owner employment/role exists once business is verified and owner confirmed
+  const [ownerEnsured, setOwnerEnsured] = useState(false);
+  const [ownerEnsuredError, setOwnerEnsuredError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!businessId || ownerEnsured) return;
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user) return;
+        const uid = session.user.id;
+
+        // fetch business to check owner and verification
+        const { data: biz, error: bizErr } = await supabase.from('business').select('owner_user_id,verification_status').eq('id', String(businessId)).maybeSingle();
+        if (bizErr || !biz) return;
+        if (String(biz.owner_user_id) !== uid) return; // not the owner
+        if (String(biz.verification_status) !== 'verified') return; // wait until verified
+
+        // find or create Owner role
+        const { data: existingRole } = await supabase
+          .from('role')
+          .select('id')
+          .eq('business_id', businessId)
+          .eq('name', 'Owner')
+          .maybeSingle();
+
+        let ownerRoleId = existingRole?.id;
+        if (!ownerRoleId) {
+          const { data: newRole, error: roleErr } = await supabase
+            .from('role')
+            .insert({ business_id: businessId, name: 'Owner', color: '#111827' })
+            .select('id')
+            .single();
+          if (!roleErr && newRole) ownerRoleId = newRole.id;
+        }
+
+        // upsert employment for owner
+        const ownerEmployment = {
+          user_id: uid,
+          business_id: businessId,
+          location_id: null,
+          role_id: ownerRoleId ?? null,
+          status: 'active',
+          is_manager: true,
+          is_admin: true,
+          permissions: {},
+        };
+
+        const { error: empErr } = await supabase.from('employment').upsert([ownerEmployment], { onConflict: 'user_id,business_id' });
+        if (empErr) {
+          console.error('owner employment upsert', empErr);
+          if (alive) setOwnerEnsuredError(empErr.message ?? String(empErr));
+        } else {
+          if (alive) setOwnerEnsured(true);
+        }
+      } catch (e) {
+        console.error('ensure owner employment', e);
+      }
+    })();
+    return () => { alive = false; };
+  }, [businessId, ownerEnsured, supabase]);
+
   async function sendInvites(e: React.FormEvent) {
     e.preventDefault();
     setFormErr("");

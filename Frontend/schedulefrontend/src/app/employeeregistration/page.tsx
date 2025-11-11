@@ -53,7 +53,7 @@ export default function EmployeePage() {
     }
 
     setLoading(false);
-    router.push('/homepage');
+    router.push('/employeemanagement/employeehomepage');
   }
 
   return (

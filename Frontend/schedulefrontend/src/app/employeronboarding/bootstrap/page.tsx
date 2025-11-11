@@ -51,6 +51,54 @@ export default function Bootstrap() {
         bizId = data.id;
       }
 
+      // Ensure the owner has an employment row and an "Owner" role in this business.
+      try {
+        // find or create an Owner role for this business
+        const { data: existingRole } = await supabase
+          .from('role')
+          .select('id')
+          .eq('business_id', bizId)
+          .eq('name', 'Owner')
+          .maybeSingle();
+
+        let ownerRoleId = existingRole?.id;
+        if (!ownerRoleId) {
+          const { data: newRole, error: roleErr } = await supabase
+            .from('role')
+            .insert({ business_id: bizId, name: 'Owner', color: '#111827' })
+            .select('id')
+            .single();
+          if (roleErr) {
+            // non-fatal: log and continue without role assignment
+            console.error('create owner role', roleErr);
+          } else {
+            ownerRoleId = newRole.id;
+          }
+        }
+
+        // upsert the owner's employment row (makes owner a manager/admin)
+        const ownerEmployment = {
+          user_id: ownerId,
+          business_id: bizId,
+          location_id: null,
+          role_id: ownerRoleId ?? null,
+          status: 'active',
+          is_manager: true,
+          is_admin: true,
+          permissions: {},
+        };
+
+        const { error: empErr } = await supabase
+          .from('employment')
+          .upsert([ownerEmployment], { onConflict: 'user_id,business_id' });
+        if (empErr) {
+          // If RLS prevents this, it may still be fine; log error for debug
+          console.error('ensure owner employment', empErr);
+        }
+      } catch (e) {
+        console.error('owner employment setup error', e);
+      }
+
       router.replace(`/employeronboarding/businessDocumentation/${bizId}`);
     })();
   }, [router, supabase]);

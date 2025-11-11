@@ -33,12 +33,13 @@ function hasPgCode(e: unknown): e is PostgrestError {
 export default function RolesPage(): JSX.Element {
   const supabase = createClientComponentClient();
 
-  // Read /employeronboarding/roles/[businessId]
-  const params = useParams<{ businessId: string }>();
-  // In case the route ever becomes a catch-all, guard for string[]
-  const rawParam = params?.businessId as string | string[] | undefined;
-  const businessId: string | null =
-    Array.isArray(rawParam) ? rawParam[0] ?? null : rawParam ?? null;
+  // Read /employeronboarding/roles/[businessid]
+  // NOTE: route folder uses [businessid] (lowercase) so useParams may expose either key depending on file/folder naming.
+  const params = useParams();
+  // Accept either `businessId` or `businessid` keys and guard for possible string[] values.
+  const rawParam = (params as Record<string, unknown>)?.businessId ?? (params as Record<string, unknown>)?.businessid;
+  const rawStr = Array.isArray(rawParam) ? (rawParam[0] as string | undefined) : (rawParam as string | undefined);
+  const businessId: string | null = rawStr ?? null;
 
   const hasValidBizId = isUUID(businessId || undefined);
   const bizId = hasValidBizId ? (businessId as string) : null;

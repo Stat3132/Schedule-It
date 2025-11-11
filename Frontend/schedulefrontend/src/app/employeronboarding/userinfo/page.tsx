@@ -53,8 +53,8 @@ export default function UserInfo() {
 
     const origin = window.location.origin;
     // callback will redirect to /employeronboarding/bootstrap
-    const next = encodeURIComponent("/employeronboarding/bootstrap");
-    const emailRedirectTo = `${origin}/auth/callback?next=${next}`
+  const next = "/employeronboarding/bootstrap";
+  const emailRedirectTo = `${origin}/auth/callback?next=${encodeURIComponent(next)}`
     
 
     const { data, error } = await supabase.auth.signUp({
