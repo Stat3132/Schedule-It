@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, X, Plus } from "lucide-react";
-import { supabase } from "../../../lib/supabase";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
 /* ========= Types ========= */
 type UUID = string;
@@ -39,6 +39,7 @@ type RequestVM = {
 
 /* ========= Page ========= */
 export default function TimeOffRequestsPage() {
+  const supabase = createClientComponentClient();
   const [requests, setRequests] = useState<RequestVM[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [showForm, setShowForm] = useState(false);

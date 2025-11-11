@@ -71,6 +71,11 @@ export default function UserInfo() {
       },
     });
 
+    // Debugging: log signUp response so we can see whether a session was returned or an email was sent
+    // (remove this in production)
+    // eslint-disable-next-line no-console
+    console.debug("signUp result", { data, error });
+
     if (error) {
       setNotice(error.message);
       setLoading(false);

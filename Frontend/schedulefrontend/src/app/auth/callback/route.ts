@@ -12,10 +12,22 @@ export async function GET(req: Request) {
     await supabase.auth.exchangeCodeForSession(code);
   }
 
-  // next may be URL-encoded by the caller (eg. encodeURIComponent). Decode safely.
+  // next may be URL-encoded by the caller (eg. encodeURIComponent) and may have been
+  // encoded again by intermediate redirects. Try decoding once, then fall back to
+  // attempting a second decode if the first result still looks encoded. Use try/catch
+  // so malformed values don't throw.
   const target = (() => {
+    if (!next) return "/";
     try {
-      return next ? decodeURIComponent(next) : "/";
+      const first = decodeURIComponent(next);
+      try {
+        // If decoding again succeeds and changes the value, prefer the double-decoded value.
+        const second = decodeURIComponent(first);
+        if (second !== first) return second;
+      } catch (_e) {
+        // ignore and return first
+      }
+      return first;
     } catch (e) {
       return next ?? "/";
     }

@@ -3,7 +3,7 @@
 import React, { JSX, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown, X, ArrowLeft } from "lucide-react";
-import { supabase } from "../../../lib/supabase";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
 // Simplified, robust schedule creation UI.
 // Key fixes:
@@ -38,6 +38,7 @@ function clampTimeToStore(start: string, end: string, open = "09:00", close = "1
 
 export default function CreateSchedulePage(): JSX.Element {
   const router = useRouter();
+  const supabase = createClientComponentClient();
 
   const [activeBusinessId, setActiveBusinessId] = useState<string | null>(null);
   const [activeLocationId, setActiveLocationId] = useState<string | null>(null);
@@ -101,13 +102,15 @@ export default function CreateSchedulePage(): JSX.Element {
         }
 
         // load employees
-        const empQ = supabase.from('employment').select('user_id,role_id,status').eq('business_id', activeBusinessId).eq('status','active');
-        const { data: empRows, error: empErr } = await empQ;
-        if (empErr) { console.error('employment load', empErr); setEmployees([]); }
-        const ids = Array.from(new Set((empRows ?? []).map((r: any) => r.user_id)));
-        const { data: profs } = ids.length ? await supabase.from('profiles').select('id,full_name,display_name,email').in('id', ids) : { data: [] };
-        const nameBy = new Map<string,string>((profs ?? []).map((p: any) => [p.id, p.full_name || p.display_name || p.email || 'Unnamed']));
-        const emps: Employee[] = (empRows ?? []).map((r: any) => ({ id: r.user_id, name: nameBy.get(r.user_id) ?? 'Unnamed', roleId: r.role_id ?? null, roleName: '—' }));
+  const empQ = supabase.from('employment').select('user_id,role_id,status').eq('business_id', activeBusinessId).eq('status','active');
+  const { data: empRowsRaw, error: empErr } = await empQ;
+  if (empErr) { console.error('employment load', empErr); setEmployees([]); }
+  const empRows = (empRowsRaw ?? []) as { user_id: string; role_id?: UUID | null }[];
+  const ids = Array.from(new Set(empRows.map((r) => r.user_id)));
+  const { data: profsRaw } = ids.length ? await supabase.from('profiles').select('id,full_name,display_name,email').in('id', ids) : { data: [] };
+  const profs = (profsRaw ?? []) as { id: string; full_name?: string | null; display_name?: string | null; email?: string | null }[];
+  const nameBy = new Map<string,string>(profs.map((p) => [p.id, p.full_name || p.display_name || p.email || 'Unnamed']));
+  const emps: Employee[] = empRows.map((r) => ({ id: r.user_id, name: nameBy.get(r.user_id) ?? 'Unnamed', roleId: r.role_id ?? null, roleName: '—' }));
         if (mounted) setEmployees(emps.sort((a,b)=>a.name.localeCompare(b.name)));
       } finally { if (mounted) setLoading(false); }
     })();
@@ -176,7 +179,7 @@ export default function CreateSchedulePage(): JSX.Element {
       // debug: print payload so developer can confirm values before insert
       console.debug('Attempting to insert shifts', { userId, activeBusinessId, activeLocationId, payloadCount: shifts.length, sample: shifts[0] });
 
-      const { data: inserted, error: insertErr } = await supabase.from('shift').insert(shifts.map(s => ({
+      const { data: insertedRaw, error: insertErr } = await supabase.from('shift').insert(shifts.map(s => ({
         business_id: s.business_id,
         location_id: s.location_id,
         role_id: s.role_id,
@@ -186,19 +189,23 @@ export default function CreateSchedulePage(): JSX.Element {
         created_by: s.created_by,
       }))).select('id,start_ts,end_ts');
 
+      const inserted = (insertedRaw ?? []) as { id: string; start_ts: string; end_ts: string }[];
+
       if (insertErr) {
         console.error('shift insert error', insertErr);
-        // RLS-specific guidance
-        if ((insertErr as any)?.code === '42501') {
+        // narrow the unknown error object safely
+        const errObj = insertErr as unknown as { code?: string; message?: string };
+        if (errObj.code === '42501') {
           alert('Could not create shifts: new row violates row-level security policy for table "shift".\n\nCommon causes: the signed-in user is not a manager for this business, or the business is not verified.\nCheck that you are signed in as a manager and that the business verification_status is "verified".');
         } else {
-          alert(`Could not create shifts: ${insertErr.message || insertErr.code || 'permission denied'}`);
+          const msg = typeof errObj.message === 'string' ? errObj.message : String(insertErr);
+          alert(`Could not create shifts: ${msg}`);
         }
         return;
       }
 
       // map inserted back to drafts by index order and create assignments
-      const assignments = (inserted ?? []).map((row: any, idx: number) => ({
+      const assignments = inserted.map((row, idx) => ({
         shift_id: row.id,
         user_id: shifts[idx]._employeeId,
         assigned_by: userId,

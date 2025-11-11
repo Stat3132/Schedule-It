@@ -17,11 +17,12 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { supabase } from "@/lib/supabase";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { useRouter } from "next/navigation";
 
   export default function EmployerPage() {
     const router = useRouter();
+    const supabase = createClientComponentClient();
     const [remember, setRemember] = useState(false);
     const [formData, setFormData] = useState({
     email: '',
