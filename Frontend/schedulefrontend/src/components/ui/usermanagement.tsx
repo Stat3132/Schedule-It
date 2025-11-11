@@ -163,7 +163,7 @@ export default function UserManagement({ businessId }: Props) {
       const reqUserIds = (reqRows ?? []).map(r => r.requester_user_id);
       const userIds = [...new Set([...empUserIds, ...reqUserIds])];
 
-      let profilesById = new Map<string, CoworkerProfile>();
+      const profilesById = new Map<string, CoworkerProfile>();
       if (userIds.length) {
         const { data: profRows, error: profErr } = await supabase
           .from("profiles").select("id,email,full_name").in("id", userIds);
