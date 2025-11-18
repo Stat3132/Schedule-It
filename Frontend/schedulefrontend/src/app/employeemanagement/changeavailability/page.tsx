@@ -12,9 +12,14 @@ type WeeklyPattern = Record<DayOfWeek, AvailabilityStatus>;
 type AvailabilityRow = {
   id: string;
   user_id: string;
-  weekly_pattern_json: any;
+  weekly_pattern_json: {
+    pattern?: Partial<WeeklyPattern> | null;
+    timeRanges?: Record<DayOfWeek, { start: string | null; end: string | null }> | null;
+    reason?: string | null;
+  } | null;
   effective_from: string;
   effective_to: string | null;
+  status?: string | null;
 };
 
 const ALL_DAYS: DayOfWeek[] = [
@@ -37,29 +42,36 @@ const EMPTY_SCHEDULE: WeeklyPattern = {
   sunday: "available",
 };
 
-function normalizePattern(raw: any): WeeklyPattern {
-  const src = raw?.pattern ?? raw ?? {};
-  const out: Partial<WeeklyPattern> = {};
+function normalizePattern(raw: unknown): WeeklyPattern {
+  let src: Record<string, unknown> = {};
+  if (raw && typeof raw === "object") {
+    const r = raw as Record<string, unknown>;
+    if (r.pattern && typeof r.pattern === "object" && r.pattern !== null) {
+      src = r.pattern as Record<string, unknown>;
+    } else {
+      src = r;
+    }
+  }
 
+  const out: Partial<WeeklyPattern> = {};
   for (const day of ALL_DAYS) {
     const v = src[day];
     if (v === "available" || v === "partial" || v === "unavailable") {
-      out[day] = v;
+      out[day] = v as AvailabilityStatus;
     } else {
       out[day] = "available";
     }
   }
-
   return out as WeeklyPattern;
 }
 
-function extractReason(raw: any): string | undefined {
-  if (!raw) return undefined;
-  if (typeof raw.reason === "string" && raw.reason.trim().length > 0) {
-    return raw.reason;
-  }
-  if (raw.pattern && typeof raw.pattern.reason === "string") {
-    return raw.pattern.reason;
+function extractReason(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.reason === "string" && r.reason.trim().length > 0) return r.reason;
+  if (r.pattern && typeof r.pattern === "object") {
+    const p = r.pattern as Record<string, unknown>;
+    if (typeof p.reason === "string") return p.reason;
   }
   return undefined;
 }
@@ -127,7 +139,7 @@ export default function AvailabilityPage() {
     setHistory(rows);
 
     if (rows.length > 0) {
-      const latest = rows.find((r: any) => r.status === "approved") ?? rows[0];
+      const latest = rows.find((r) => r.status === "approved") ?? rows[0];
       setCurrentSchedule(normalizePattern(latest.weekly_pattern_json));
     } else {
       setCurrentSchedule(null);
@@ -220,7 +232,7 @@ export default function AvailabilityPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {history.map((row: any, idx) => {
+              {history.map((row: AvailabilityRow, idx) => {
                 const reason = extractReason(row.weekly_pattern_json);
                 const start = new Date(row.effective_from);
                 const end = row.effective_to ? new Date(row.effective_to) : null;

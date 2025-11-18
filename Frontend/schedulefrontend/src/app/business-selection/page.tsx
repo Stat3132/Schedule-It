@@ -27,6 +27,13 @@ type Location = {
   address?: string | null;
 };
 
+type CreateJoinParams = {
+  p_business: string;
+  p_location?: string | null;
+  p_role?: string | null;
+  p_message?: string | null;
+};
+
 export default function BusinessSelectionPage() {
   return (
     <Suspense fallback={<div className="p-6">Loading…</div>}>
@@ -260,7 +267,7 @@ function BusinessSelectionInner() {
         return null;
       }
 
-      const params = {
+      const params: CreateJoinParams = {
         p_business: selectedBusiness.id,
         p_location: selectedLocId || null,
         p_role: null,
@@ -272,7 +279,7 @@ function BusinessSelectionInner() {
 
       const { data, error } = await supabase.rpc(
         "create_join_request",
-        params as any
+        params as CreateJoinParams
       );
 
       console.log("create_join_request result", { data, error });
@@ -293,15 +300,23 @@ function BusinessSelectionInner() {
           const first = val[0];
           if (typeof first === "string") return first;
           if (typeof first === "object" && first !== null) {
-            if ("id" in (first as any)) return String((first as any).id);
-            const v = Object.values(first as Record<string, unknown>)[0];
+            const obj = first as Record<string, unknown>;
+            if (Object.prototype.hasOwnProperty.call(obj, "id")) {
+              const id = obj["id"];
+              if (typeof id === "string" || typeof id === "number") return String(id);
+            }
+            const v = Object.values(obj)[0];
             if (typeof v === "string") return v;
           }
           return null;
         }
         if (typeof val === "object" && val !== null) {
-          if ("id" in (val as any)) return String((val as any).id);
-          const v = Object.values(val as Record<string, unknown>)[0];
+          const obj = val as Record<string, unknown>;
+          if (Object.prototype.hasOwnProperty.call(obj, "id")) {
+            const id = obj["id"];
+            if (typeof id === "string" || typeof id === "number") return String(id);
+          }
+          const v = Object.values(obj)[0];
           if (typeof v === "string") return v;
         }
         return null;

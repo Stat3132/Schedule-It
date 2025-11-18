@@ -32,6 +32,8 @@ type TimeOffRow = {
   reason: string | null;
 };
 
+type SupabaseErrorObj = { code?: string; message?: string; details?: string; hint?: string } | null;
+
 /* ---------- Date helpers ---------- */
 function startOfWeek(d: Date, weekStartsOn: 0 | 1 = 0) {
   const day = d.getDay();
@@ -100,7 +102,7 @@ export default function CreateSchedulePage(): JSX.Element {
   const [loading, setLoading] = useState<boolean>(true);
   const [userId, setUserId] = useState<string | null>(null);
   const [showDebug, setShowDebug] = useState<boolean>(false);
-  const [insertErrorObj, setInsertErrorObj] = useState<any | null>(null);
+  const [insertErrorObj, setInsertErrorObj] = useState<SupabaseErrorObj>(null);
   const [contextError, setContextError] = useState<string | null>(null);
 
   // userId -> list of day indexes (0..6) where approved time off applies
