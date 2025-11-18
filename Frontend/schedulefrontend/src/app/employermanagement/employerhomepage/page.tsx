@@ -528,7 +528,7 @@ export default function EmployerHomePage() {
               </button>
               <button
                 className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() => router.push("/employermanagement/availability")}
+                onClick={() => router.push("/employermanagement/availabilityrequest")}
               >
                 <CheckSquare className="w-4 h-4" /> Availability Requests
               </button>
