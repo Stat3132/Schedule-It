@@ -16,10 +16,18 @@ import type { DayOfWeek, AvailabilityStatus } from "../../../lib/supabase";
 /* ========= Types ========= */
 type UUID = string;
 
+type DayRange = { start: string | null; end: string | null };
+
+type WeeklyPatternPayload = {
+  reason?: string | null;
+  pattern?: Partial<Record<DayOfWeek, AvailabilityStatus>>;
+  timeRanges?: Partial<Record<DayOfWeek, { start?: string | null; end?: string | null }>>;
+};
+
 type AvailabilityRow = {
   id: UUID;
   user_id: UUID;
-  weekly_pattern_json: any;
+  weekly_pattern_json: unknown;
   effective_from: string;
   effective_to: string | null;
   status: "pending" | "approved" | "denied" | "canceled";
@@ -30,8 +38,6 @@ type AvailabilityRow = {
     email: string | null;
   } | null;
 };
-
-type DayRange = { start: string | null; end: string | null };
 
 type RequestVM = {
   id: UUID;
@@ -61,8 +67,13 @@ const ALL_DAYS: DayOfWeek[] = [
 
 /* ========= Helpers ========= */
 
-function normalizeSchedule(raw: any): Record<DayOfWeek, AvailabilityStatus> {
-  const src = raw?.pattern ?? raw ?? {};
+function asWeeklyPattern(raw: unknown): WeeklyPatternPayload {
+  if (!raw || typeof raw !== "object") return {};
+  return raw as WeeklyPatternPayload;
+}
+
+function normalizeSchedule(raw: unknown): Record<DayOfWeek, AvailabilityStatus> {
+  const src = asWeeklyPattern(raw).pattern ?? {};
   const out: Partial<Record<DayOfWeek, AvailabilityStatus>> = {};
 
   for (const day of ALL_DAYS) {
@@ -77,17 +88,18 @@ function normalizeSchedule(raw: any): Record<DayOfWeek, AvailabilityStatus> {
   return out as Record<DayOfWeek, AvailabilityStatus>;
 }
 
-function normalizeTimeRanges(raw: any): Record<DayOfWeek, DayRange> {
-  const src = raw?.timeRanges ?? {};
+function normalizeTimeRanges(raw: unknown): Record<DayOfWeek, DayRange> {
+  const src = asWeeklyPattern(raw).timeRanges ?? {};
   const out: Partial<Record<DayOfWeek, DayRange>> = {};
 
   for (const day of ALL_DAYS) {
     const v = src[day];
     if (v && typeof v === "object") {
-      out[day] = {
-        start: typeof v.start === "string" && v.start.trim() ? v.start : null,
-        end: typeof v.end === "string" && v.end.trim() ? v.end : null,
-      };
+      const start =
+        typeof v.start === "string" && v.start.trim().length > 0 ? v.start : null;
+      const end =
+        typeof v.end === "string" && v.end.trim().length > 0 ? v.end : null;
+      out[day] = { start, end };
     } else {
       out[day] = { start: null, end: null };
     }
@@ -96,12 +108,18 @@ function normalizeTimeRanges(raw: any): Record<DayOfWeek, DayRange> {
   return out as Record<DayOfWeek, DayRange>;
 }
 
-function extractReason(raw: any): string {
-  if (!raw) return "";
-  if (typeof raw.reason === "string") return raw.reason;
-  if (raw.pattern && typeof raw.pattern.reason === "string") {
-    return raw.pattern.reason;
+function extractReason(raw: unknown): string {
+  const payload = asWeeklyPattern(raw);
+  if (typeof payload.reason === "string") return payload.reason;
+
+  if (
+    payload.pattern &&
+    typeof (payload as { pattern: { reason?: string } }).pattern.reason === "string"
+  ) {
+    // Handles any legacy shape where reason was nested under pattern
+    return (payload as { pattern: { reason: string } }).pattern.reason;
   }
+
   return "";
 }
 
@@ -172,9 +190,9 @@ function DayChip(props: {
   range: DayRange;
 }) {
   const label = props.day.slice(0, 3); // Mon, Tue, ...
-  let base =
+  const base =
     "inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-medium border";
-  let tint =
+  const tint =
     props.status === "available"
       ? "bg-emerald-50 border-emerald-200 text-emerald-800"
       : props.status === "unavailable"
@@ -385,24 +403,23 @@ export default function ManagerAvailabilityRequestsPage() {
     [currentMonth]
   );
 
-  const requestTouchesMonth = (r: RequestVM) => {
-    const s = new Date(r.effectiveFromISO);
-    const e = r.effectiveToISO ? new Date(r.effectiveToISO) : s;
-    const monthStart = new Date(
-      currentMonth.getFullYear(),
-      currentMonth.getMonth(),
-      1
-    );
-    const monthEnd = new Date(
-      currentMonth.getFullYear(),
-      currentMonth.getMonth() + 1,
-      0
-    );
-    return e >= monthStart && s <= monthEnd;
-  };
-
   const monthSummary = useMemo(
-    () => requests.filter(requestTouchesMonth),
+    () =>
+      requests.filter((r) => {
+        const s = new Date(r.effectiveFromISO);
+        const e = r.effectiveToISO ? new Date(r.effectiveToISO) : s;
+        const monthStart = new Date(
+          currentMonth.getFullYear(),
+          currentMonth.getMonth(),
+          1
+        );
+        const monthEnd = new Date(
+          currentMonth.getFullYear(),
+          currentMonth.getMonth() + 1,
+          0
+        );
+        return e >= monthStart && s <= monthEnd;
+      }),
     [requests, currentMonth]
   );
 
