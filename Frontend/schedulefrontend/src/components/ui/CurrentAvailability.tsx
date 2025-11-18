@@ -1,6 +1,6 @@
 "use client";
 
-import type { AvailabilityStatus, DayOfWeek } from "../../../lib/supabase";
+import type { AvailabilityStatus, DayOfWeek } from "../../lib/supabase";
 
 interface CurrentAvailabilityProps {
   schedule: Record<DayOfWeek, AvailabilityStatus>;
