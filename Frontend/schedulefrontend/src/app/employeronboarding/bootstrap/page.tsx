@@ -1,3 +1,4 @@
+// app/employeronboarding/bootstrap/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -55,22 +56,21 @@ export default function Bootstrap() {
       try {
         // find or create an Owner role for this business
         const { data: existingRole } = await supabase
-          .from('role')
-          .select('id')
-          .eq('business_id', bizId)
-          .eq('name', 'Owner')
+          .from("role")
+          .select("id")
+          .eq("business_id", bizId)
+          .eq("name", "Owner")
           .maybeSingle();
 
         let ownerRoleId = existingRole?.id;
         if (!ownerRoleId) {
           const { data: newRole, error: roleErr } = await supabase
-            .from('role')
-            .insert({ business_id: bizId, name: 'Owner', color: '#111827' })
-            .select('id')
+            .from("role")
+            .insert({ business_id: bizId, name: "Owner", color: "#111827" })
+            .select("id")
             .single();
           if (roleErr) {
-            // non-fatal: log and continue without role assignment
-            console.error('create owner role', roleErr);
+            console.error("create owner role", roleErr);
           } else {
             ownerRoleId = newRole.id;
           }
@@ -82,21 +82,20 @@ export default function Bootstrap() {
           business_id: bizId,
           location_id: null,
           role_id: ownerRoleId ?? null,
-          status: 'active',
+          status: "active",
           is_manager: true,
           is_admin: true,
           permissions: {},
         };
 
         const { error: empErr } = await supabase
-          .from('employment')
-          .upsert([ownerEmployment], { onConflict: 'user_id,business_id' });
+          .from("employment")
+          .upsert([ownerEmployment], { onConflict: "user_id,business_id" });
         if (empErr) {
-          // If RLS prevents this, it may still be fine; log error for debug
-          console.error('ensure owner employment', empErr);
+          console.error("ensure owner employment", empErr);
         }
       } catch (e) {
-        console.error('owner employment setup error', e);
+        console.error("owner employment setup error", e);
       }
 
       router.replace(`/employeronboarding/businessDocumentation/${bizId}`);

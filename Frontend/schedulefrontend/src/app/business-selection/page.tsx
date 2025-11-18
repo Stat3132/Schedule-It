@@ -55,23 +55,33 @@ function BusinessSelectionInner() {
   const [isMgr, setIsMgr] = useState<boolean | null>(null);
   const [isEmp, setIsEmp] = useState<boolean | null>(null);
   const [isBizVerified, setIsBizVerified] = useState<boolean | null>(null);
-  const [inviteBiz, setInviteBiz] = useState<{ id: string; name: string } | null>(null);
+  const [inviteBiz, setInviteBiz] = useState<{ id: string; name: string } | null>(
+    null
+  );
   const [bannerErr, setBannerErr] = useState("");
   const [bannerOk, setBannerOk] = useState("");
+  const [lastRpcResult, setLastRpcResult] = useState<unknown>(null);
+  const [lastAction, setLastAction] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const EMPLOYEE_HOME = "/employeemanagement/employeehomepage";
+  const EMPLOYER_HOME = "/employermanagement/employerhomepage";
 
   // ---------- Invite Prefill ----------
   useEffect(() => {
     let alive = true;
     (async () => {
       if (!token) return;
-      const { data, error } = await supabase.rpc("get_invite_target", { p_token: token });
+      const { data, error } = await supabase.rpc("get_invite_target", {
+        p_token: token,
+      });
       if (!alive) return;
       if (error) {
         setBannerErr(error.message);
         return;
       }
-      const row = (data as { business_id: string; business_name: string }[] | null)?.[0];
+      const row =
+        (data as { business_id: string; business_name: string }[] | null)?.[0];
       if (!row) return;
       setInviteBiz({ id: row.business_id, name: row.business_name });
       setSearchQuery(row.business_name);
@@ -119,19 +129,20 @@ function BusinessSelectionInner() {
   // ---------- Load Locations + Flags ----------
   useEffect(() => {
     let alive = true;
+
+    // reset when business changes
     setLocations([]);
-    setSelectedLocId("");
     setIsMgr(null);
     setIsEmp(null);
     setIsBizVerified(null);
     setBannerErr("");
     setBannerOk("");
+
     if (!selectedBusiness) return;
 
     (async () => {
       setLocLoading(true);
 
-      // helper to coerce various RPC return shapes into a boolean
       const normalizeRpcBool = (val: unknown) => {
         if (val == null) return false;
         if (typeof val === "boolean") return val;
@@ -144,7 +155,7 @@ function BusinessSelectionInner() {
             }
           }
         }
-        if (typeof val === "object") {
+        if (typeof val === "object" && val !== null) {
           for (const v of Object.values(val as Record<string, unknown>)) {
             if (typeof v === "boolean") return v as boolean;
           }
@@ -153,25 +164,25 @@ function BusinessSelectionInner() {
       };
 
       try {
-        const [{ data: locs, error: locErr }, mgr, emp, ver] = await Promise.all([
-          supabase
-            .from("location")
-            .select("id,name,address")
-            .eq("business_id", selectedBusiness.id)
-            .order("name", { ascending: true }),
-          supabase.rpc("is_manager", { biz: selectedBusiness.id }),
-          supabase.rpc("is_employee", { biz: selectedBusiness.id }),
-          supabase.rpc("is_verified", { biz: selectedBusiness.id }),
-        ]);
+        const [{ data: locs, error: locErr }, mgr, emp, ver] = await Promise.all(
+          [
+            supabase
+              .from("location")
+              .select("id,name,address")
+              .eq("business_id", selectedBusiness.id)
+              .order("name", { ascending: true }),
+            supabase.rpc("is_manager", { biz: selectedBusiness.id }),
+            supabase.rpc("is_employee", { biz: selectedBusiness.id }),
+            supabase.rpc("is_verified", { biz: selectedBusiness.id }),
+          ]
+        );
 
         if (!alive) return;
 
-        // debug info to help diagnose shape/values returned by RPCs
-        // eslint-disable-next-line no-console
-        console.debug("loadLocations result", {
+        console.log("loadLocations result", {
           businessId: selectedBusiness.id,
-          locs: locs,
-          locErr: locErr,
+          locs,
+          locErr,
           mgr: mgr?.data,
           emp: emp?.data,
           ver: ver?.data,
@@ -180,36 +191,27 @@ function BusinessSelectionInner() {
         setLocLoading(false);
         if (!locErr && locs) setLocations(locs as Location[]);
 
-        // coerce RPC results to booleans using the normalizer above
         setIsMgr(Boolean(normalizeRpcBool(mgr?.data)));
         setIsEmp(Boolean(normalizeRpcBool(emp?.data)));
         setIsBizVerified(Boolean(normalizeRpcBool(ver?.data)));
-
-        // If a selected location id exists but the fetched locations do not include it,
-        // clear it and show a helpful banner so the user can re-select.
-        if (selectedLocId) {
-          const found = (locs as Location[] | null)?.some((l) => l.id === selectedLocId);
-          if (!found) {
-            setSelectedLocId("");
-            setBannerErr("The previously selected location is not part of this business. Please choose a location.");
-          }
-        }
       } catch (e) {
-        // eslint-disable-next-line no-console
         console.error("loadLocations error", e);
         setLocLoading(false);
-        setBannerErr(e instanceof Error ? e.message : "Failed to load business info");
+        setBannerErr(
+          e instanceof Error ? e.message : "Failed to load business info"
+        );
       }
     })();
 
     return () => {
       alive = false;
     };
-  }, [selectedBusiness, supabase]);
+  }, [selectedBusiness, supabase]); // <- removed selectedLocId here
 
   // ---------- Actions ----------
   function handleBusinessSelect(b: Business) {
     setSelectedBusiness(b);
+    setSelectedLocId("");      // clear previous location when business changes
     setSearchQuery(b.name);
     setSearchResults([]);
   }
@@ -217,16 +219,21 @@ function BusinessSelectionInner() {
   async function acceptInviteNow() {
     setSubmitting(true);
     setBannerErr("");
-    const { error } = await supabase.rpc("accept_employee_invite", { p_token: token });
+    const { error } = await supabase.rpc("accept_employee_invite", {
+      p_token: token,
+    });
     if (error) {
       setSubmitting(false);
       setBannerErr(error.message);
       return;
     }
-    router.replace("/homepage");
+    router.replace(EMPLOYEE_HOME);
   }
 
-  async function upsertEmploymentForSelf(businessId: string, locationId: string) {
+  async function upsertEmploymentForSelf(
+    businessId: string,
+    locationId: string
+  ) {
     const { data: auth } = await supabase.auth.getUser();
     const { error: insErr } = await supabase.from("employment").insert({
       user_id: auth.user?.id,
@@ -253,21 +260,70 @@ function BusinessSelectionInner() {
         return null;
       }
 
-      const { data, error } = await supabase.rpc("create_join_request", {
+      const params = {
         p_business: selectedBusiness.id,
         p_location: selectedLocId || null,
         p_role: null,
         p_message: null,
-      });
+      };
 
-      if (error) throw error;
+      console.log("calling create_join_request", params);
+      setLastAction("calling create_join_request");
+
+      const { data, error } = await supabase.rpc(
+        "create_join_request",
+        params as any
+      );
+
+      console.log("create_join_request result", { data, error });
+      setLastAction("create_join_request result");
+      setLastRpcResult({ data, error });
+
+      if (error) {
+        const msg = error.message ?? JSON.stringify(error);
+        setBannerErr(`Failed to send join request: ${msg}`);
+        throw error;
+      }
+
+      const extractId = (val: unknown): string | null => {
+        if (!val) return null;
+        if (typeof val === "string") return val;
+        if (Array.isArray(val)) {
+          if (val.length === 0) return null;
+          const first = val[0];
+          if (typeof first === "string") return first;
+          if (typeof first === "object" && first !== null) {
+            if ("id" in (first as any)) return String((first as any).id);
+            const v = Object.values(first as Record<string, unknown>)[0];
+            if (typeof v === "string") return v;
+          }
+          return null;
+        }
+        if (typeof val === "object" && val !== null) {
+          if ("id" in (val as any)) return String((val as any).id);
+          const v = Object.values(val as Record<string, unknown>)[0];
+          if (typeof v === "string") return v;
+        }
+        return null;
+      };
+
+      const requestId = extractId(data);
+
+      if (!requestId) {
+        setBannerErr(
+          "Join request did not return an id. Check the RPC implementation and server logs."
+        );
+        return null;
+      }
+
       setBannerOk("Request sent to the business managers.");
-      return data as string;
+      setLastAction(`request succeeded, id=${requestId}`);
+      return requestId;
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setBannerErr(msg ?? "Failed to send request");
-      // eslint-disable-next-line no-console
       console.error("create_join_request error:", e);
+      setLastAction("create_join_request error");
       return null;
     } finally {
       setSubmitting(false);
@@ -289,8 +345,12 @@ function BusinessSelectionInner() {
       if (isEmp) {
         localStorage.setItem("activeBusinessId", selectedBusiness.id);
         localStorage.setItem("activeBusinessName", selectedBusiness.name);
-        localStorage.setItem("activeLocationIds", JSON.stringify([selectedLocId]));
-        router.replace("/homepage");
+        localStorage.setItem(
+          "activeLocationIds",
+          JSON.stringify([selectedLocId])
+        );
+        setLastAction("navigating to employeehomepage (isEmp)");
+        router.replace(EMPLOYEE_HOME);
         return;
       }
 
@@ -298,24 +358,38 @@ function BusinessSelectionInner() {
         await upsertEmploymentForSelf(selectedBusiness.id, selectedLocId);
         localStorage.setItem("activeBusinessId", selectedBusiness.id);
         localStorage.setItem("activeBusinessName", selectedBusiness.name);
-        localStorage.setItem("activeLocationIds", JSON.stringify([selectedLocId]));
-        router.replace("/homepage");
+        localStorage.setItem(
+          "activeLocationIds",
+          JSON.stringify([selectedLocId])
+        );
+        setLastAction(
+          "upsertEmploymentForSelf -> navigating to employerhomepage"
+        );
+        router.replace(EMPLOYER_HOME);
         return;
       }
 
-      // Default path: send join request
       const reqId = await requestJoin();
-      if (reqId) router.replace(`/employee-join-request?request_id=${reqId}`);
-      else setSubmitting(false);
+      if (reqId) {
+        setLastAction(`join request created, id=${reqId} -> employeehomepage`);
+        router.replace(EMPLOYEE_HOME);
+      } else {
+        setSubmitting(false);
+      }
     } catch (e) {
-      setBannerErr(e instanceof Error ? e.message : "Failed to save selection");
+      setBannerErr(
+        e instanceof Error ? e.message : "Failed to save selection"
+      );
       setSubmitting(false);
     }
   }
 
   // ---------- Derived ----------
   const canContinue = Boolean(selectedBusiness && selectedLocId && !submitting);
-  const showRequestBtn = useMemo(() => !isMgr && !isEmp && !token, [isMgr, isEmp, token]);
+  const showRequestBtn = useMemo(
+    () => !isMgr && !isEmp && !token,
+    [isMgr, isEmp, token]
+  );
   const willCreateRequest = !token && !isEmp && !(isMgr && isBizVerified);
   const primaryLabel = submitting
     ? "Saving…"
@@ -348,7 +422,9 @@ function BusinessSelectionInner() {
                 Join business
               </button>
             </div>
-            {bannerErr && <div className="text-red-600 text-sm mt-2">{bannerErr}</div>}
+            {bannerErr && (
+              <div className="text-red-600 text-sm mt-2">{bannerErr}</div>
+            )}
           </div>
         )}
 
@@ -360,7 +436,7 @@ function BusinessSelectionInner() {
                 <Building2 className="w-10 h-10" />
               </div>
             </div>
-            <h1 className="text-3xl font-bold">Find Your Business</h1>
+          <h1 className="text-3xl font-bold">Find Your Business</h1>
             <p className="text-primary-foreground/80 mt-2">
               Search for your registered corporation
             </p>
@@ -385,6 +461,7 @@ function BusinessSelectionInner() {
                   onChange={(e) => {
                     setSearchQuery(e.target.value);
                     setSelectedBusiness(null);
+                    setSelectedLocId("");
                     setBannerErr("");
                     setBannerOk("");
                   }}
@@ -428,7 +505,9 @@ function BusinessSelectionInner() {
                   <div className="mt-4 p-4 bg-destructive/10 border border-destructive/20 rounded-lg flex items-start gap-3">
                     <XCircle className="w-5 h-5 text-destructive mt-0.5" />
                     <div>
-                      <p className="font-semibold text-destructive">Business not found</p>
+                      <p className="font-semibold text-destructive">
+                        Business not found
+                      </p>
                       <p className="text-sm text-destructive/80 mt-1">
                         No registered businesses match {searchQuery}
                       </p>
@@ -442,14 +521,20 @@ function BusinessSelectionInner() {
                   <div className="flex items-start gap-3">
                     <CheckCircle className="w-6 h-6 text-green-600 mt-0.5" />
                     <div className="flex-1">
-                      <p className="font-semibold text-green-900 text-lg">Business Found</p>
-                      <p className="text-green-700 mt-1">{selectedBusiness.name}</p>
+                      <p className="font-semibold text-green-900 text-lg">
+                        Business Found
+                      </p>
+                      <p className="text-green-700 mt-1">
+                        {selectedBusiness.name}
+                      </p>
                       <p className="text-sm text-green-600 mt-1">
                         {selectedBusiness.timezone}
                       </p>
                       <p className="text-xs text-green-600 mt-2">
                         Registered:{" "}
-                        {new Date(selectedBusiness.created_at).toLocaleDateString()}
+                        {new Date(
+                          selectedBusiness.created_at
+                        ).toLocaleDateString()}
                       </p>
 
                       <div className="flex items-center gap-2 mt-2 text-sm">
@@ -519,7 +604,15 @@ function BusinessSelectionInner() {
                     {showRequestBtn && (
                       <button
                         className="px-4 py-2 rounded-lg border inline-flex items-center gap-2"
-                        onClick={requestJoin}
+                        onClick={async () => {
+                          const reqId = await requestJoin();
+                          if (reqId) {
+                            setLastAction(
+                              `join request (secondary button), id=${reqId} -> employeehomepage`
+                            );
+                            router.replace(EMPLOYEE_HOME);
+                          }
+                        }}
                         disabled={submitting}
                       >
                         <Send className="w-4 h-4" /> Request to join
@@ -550,8 +643,31 @@ function BusinessSelectionInner() {
                     </button>
                   </div>
 
-                  {bannerOk && <div className="text-green-700 text-sm mt-3">{bannerOk}</div>}
-                  {bannerErr && <div className="text-red-600 text-sm mt-3">{bannerErr}</div>}
+                  {bannerOk && (
+                    <div className="text-green-700 text-sm mt-3">
+                      {bannerOk}
+                    </div>
+                  )}
+                  {bannerErr && (
+                    <div className="text-red-600 text-sm mt-3">
+                      {bannerErr}
+                    </div>
+                  )}
+                  {lastRpcResult != null && (
+                    <div className="mt-3 p-3 bg-gray-50 border border-gray-200 rounded text-xs">
+                      {lastAction && (
+                        <div className="text-xs text-muted-foreground mb-1">
+                          Last action: {lastAction}
+                        </div>
+                      )}
+                      <div className="font-semibold mb-1">
+                        Debug: last RPC result
+                      </div>
+                      <pre className="whitespace-pre-wrap break-words">
+                        {JSON.stringify(lastRpcResult, null, 2)}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

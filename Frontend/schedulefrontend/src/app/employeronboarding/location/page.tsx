@@ -5,11 +5,14 @@ import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { useRouter } from "next/navigation";
 
 type Biz = { id: string; name: string; verification_status: string };
+
 type Draft = {
   business_id: string;
   name: string;
   address: string;
   tz_override: string;
+  opens_at: string;
+  closes_at: string;
   busy?: boolean;
   ok?: boolean;
   err?: string | null;
@@ -67,6 +70,8 @@ export default function AddLocationsPage() {
             name: "",
             address: "",
             tz_override: "",
+            opens_at: "09:00",
+            closes_at: "17:00",
           },
         ]);
       }
@@ -93,6 +98,8 @@ export default function AddLocationsPage() {
         name: "",
         address: "",
         tz_override: "",
+        opens_at: "09:00",
+        closes_at: "17:00",
       },
     ]);
 
@@ -108,8 +115,26 @@ export default function AddLocationsPage() {
 
   const submitOne = async (i: number) => {
     const d = drafts[i];
+
     if (!d.business_id || !d.name.trim()) {
       updateDraft(i, { err: "Business and name are required." });
+      return;
+    }
+
+    if (!d.opens_at || !d.closes_at) {
+      updateDraft(i, { err: "Open and close times are required." });
+      return;
+    }
+
+    // Basic opens_at < closes_at validation
+    const toMinutes = (t: string) => {
+      const [hh, mm] = t.split(":");
+      return Number(hh) * 60 + Number(mm);
+    };
+    if (toMinutes(d.closes_at) <= toMinutes(d.opens_at)) {
+      updateDraft(i, {
+        err: "Closing time must be later than opening time.",
+      });
       return;
     }
 
@@ -120,6 +145,8 @@ export default function AddLocationsPage() {
       name: d.name.trim(),
       address: d.address?.trim() || null,
       tz_override: d.tz_override?.trim() || null,
+      opens_at: d.opens_at,
+      closes_at: d.closes_at,
     });
 
     if (error) {
@@ -131,6 +158,8 @@ export default function AddLocationsPage() {
         name: "",
         address: "",
         tz_override: "",
+        opens_at: "09:00",
+        closes_at: "17:00",
       });
     }
   };
@@ -241,8 +270,40 @@ export default function AddLocationsPage() {
               />
             </label>
 
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="block text-sm">
+                <span className="mb-1 block">Opens At*</span>
+                <input
+                  type="time"
+                  className="w-full rounded-md border px-3 py-2"
+                  value={d.opens_at}
+                  onChange={(e) =>
+                    updateDraft(i, { opens_at: e.target.value })
+                  }
+                  required
+                />
+              </label>
+
+              <label className="block text-sm">
+                <span className="mb-1 block">Closes At*</span>
+                <input
+                  type="time"
+                  className="w-full rounded-md border px-3 py-2"
+                  value={d.closes_at}
+                  onChange={(e) =>
+                    updateDraft(i, { closes_at: e.target.value })
+                  }
+                  required
+                />
+              </label>
+            </div>
+
             {d.err && <p className="text-sm text-red-600">{d.err}</p>}
-            {d.ok && <p className="text-sm text-green-700">Location created.</p>}
+            {d.ok && (
+              <p className="text-sm text-green-700">
+                Location created.
+              </p>
+            )}
 
             <div className="pt-2">
               <button

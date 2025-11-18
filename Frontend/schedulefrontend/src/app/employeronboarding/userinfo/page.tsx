@@ -27,6 +27,7 @@ export default function UserInfo() {
     password: "",
     verifyPassword: "",
   });
+
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -44,7 +45,7 @@ export default function UserInfo() {
 
     setLoading(true);
 
-    // keep for later display if needed
+    // Keep for later display if needed
     localStorage.setItem(
       "signupDisplayName",
       `${formData.ownerFirstName} ${formData.ownerLastName}`.trim()
@@ -52,10 +53,14 @@ export default function UserInfo() {
     localStorage.setItem("pendingEmail", formData.email);
 
     const origin = window.location.origin;
-    // callback will redirect to /employeronboarding/bootstrap
-  const next = "/employeronboarding/bootstrap";
-  const emailRedirectTo = `${origin}/auth/callback?next=${encodeURIComponent(next)}`
-    
+    const next = "/employeronboarding/bootstrap";
+
+    // After confirming email, Supabase redirects here with either
+    // ?code=... or ?token_hash=...&type=signup, and our /auth/callback
+    // route turns that into a real session then forwards to `next`.
+    const emailRedirectTo = `${origin}/auth/callback?next=${encodeURIComponent(
+      next
+    )}`;
 
     const { data, error } = await supabase.auth.signUp({
       email: formData.email,
@@ -71,10 +76,8 @@ export default function UserInfo() {
       },
     });
 
-    // Debugging: log signUp response so we can see whether a session was returned or an email was sent
-    // (remove this in production)
     // eslint-disable-next-line no-console
-    console.debug("signUp result", { data, error });
+    console.debug("employer signUp result", { data, error });
 
     if (error) {
       setNotice(error.message);
@@ -83,14 +86,14 @@ export default function UserInfo() {
     }
 
     if (!data.session) {
-      // email confirmation ON → show verify prompt
+      // Email confirmation ON → wait for user to click confirm link
       setNotice("VERIFY YOUR EMAIL TO CONTINUE");
       setLoading(false);
       return;
     }
 
-    // email confirmation OFF → we already have a session
-    router.replace("/employeronboarding/bootstrap");
+    // Email confirmation OFF → session already exists, go straight to bootstrap
+    router.replace(next);
     setLoading(false);
   };
 
@@ -103,12 +106,16 @@ export default function UserInfo() {
               <Building2 className="w-7 h-7" />
             </div>
             <h1 className="text-3xl font-bold">User Registration</h1>
-            <p className="opacity-90 mt-2">We’ll create your business after sign-in</p>
+            <p className="opacity-90 mt-2">
+              We’ll create your business after sign-in
+            </p>
           </div>
 
           <form onSubmit={handleSubmit} className="px-8 py-10 space-y-6">
             <div>
-              <label className="block text-sm font-semibold mb-2">Owner First Name</label>
+              <label className="block text-sm font-semibold mb-2">
+                Owner First Name
+              </label>
               <input
                 name="ownerFirstName"
                 value={formData.ownerFirstName}
@@ -118,7 +125,9 @@ export default function UserInfo() {
               />
             </div>
             <div>
-              <label className="block text-sm font-semibold mb-2">Owner Last Name</label>
+              <label className="block text-sm font-semibold mb-2">
+                Owner Last Name
+              </label>
               <input
                 name="ownerLastName"
                 value={formData.ownerLastName}
@@ -128,7 +137,9 @@ export default function UserInfo() {
               />
             </div>
             <div>
-              <label className="block text-sm font-semibold mb-2">Email Address</label>
+              <label className="block text-sm font-semibold mb-2">
+                Email Address
+              </label>
               <input
                 type="email"
                 name="email"
@@ -139,7 +150,9 @@ export default function UserInfo() {
               />
             </div>
             <div>
-              <label className="block text-sm font-semibold mb-2">Phone Number</label>
+              <label className="block text-sm font-semibold mb-2">
+                Phone Number
+              </label>
               <input
                 name="phoneNumber"
                 value={formData.phoneNumber}
@@ -149,7 +162,9 @@ export default function UserInfo() {
               />
             </div>
             <div>
-              <label className="block text-sm font-semibold mb-2">Password</label>
+              <label className="block text-sm font-semibold mb-2">
+                Password
+              </label>
               <input
                 type="password"
                 name="password"
@@ -161,7 +176,9 @@ export default function UserInfo() {
               />
             </div>
             <div>
-              <label className="block text-sm font-semibold mb-2">Confirm Password</label>
+              <label className="block text-sm font-semibold mb-2">
+                Confirm Password
+              </label>
               <input
                 type="password"
                 name="verifyPassword"
@@ -182,7 +199,13 @@ export default function UserInfo() {
             </button>
 
             {notice && (
-              <p className={`text-center text-sm mt-3 ${/verify/i.test(notice) ? "text-red-600" : "text-foreground"}`}>
+              <p
+                className={`text-center text-sm mt-3 ${
+                  /verify/i.test(notice)
+                    ? "text-red-600"
+                    : "text-foreground"
+                }`}
+              >
                 {notice}
               </p>
             )}

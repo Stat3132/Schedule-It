@@ -1,14 +1,45 @@
-import { createClient } from '@supabase/supabase-js';
+// lib/supabase.ts
+// Shared types only – no Supabase client here.
 
-// Read public Supabase variables (these are safe for the browser)
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+/* ========= Availability Types ========= */
 
-if (!supabaseUrl || !supabaseAnonKey) {
-	throw new Error(
-		'Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY environment variables.\n' +
-			'Add them to Frontend/schedulefrontend/.env.local (do NOT commit secrets) or set them in your deployment platform.'
-	);
+export type AvailabilityStatus =
+  | "available"
+  | "partial"
+  | "unavailable";
+
+export type DayOfWeek =
+  | "monday"
+  | "tuesday"
+  | "wednesday"
+  | "thursday"
+  | "friday"
+  | "saturday"
+  | "sunday";
+
+export interface CurrentAvailability {
+  id: string;
+  user_id: string;
+  day_of_week: DayOfWeek;
+  availability_status: AvailabilityStatus;
+  updated_at: string;
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export interface AvailabilityRequest {
+  id: string;
+  user_id: string;
+  start_date: string;
+  end_date: string;
+  reason: string;
+  status: "pending" | "approved" | "rejected";
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AvailabilityDay {
+  id: string;
+  request_id: string;
+  day_of_week: DayOfWeek;
+  availability_status: AvailabilityStatus;
+  created_at: string;
+}

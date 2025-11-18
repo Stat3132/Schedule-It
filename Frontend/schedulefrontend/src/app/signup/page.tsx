@@ -1,64 +1,108 @@
+// app/employee-signup/page.tsx
 "use client";
-import { useState } from 'react';
-import { User } from 'lucide-react';
-import { useRouter } from "next/navigation";
-import {supabase} from '../../lib/supabase';
+
+import { useState } from "react";
+import { User } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
 export default function SignUp() {
   const router = useRouter();
+  const params = useSearchParams();
+  const supabase = createClientComponentClient();
+
   const [formData, setFormData] = useState({
-    firstName: '',
-    lastName: '',
-    email: '',
-    password: '',
-    verifyPassword: '',
+    firstName: "",
+    lastName: "",
+    email: "",
+    password: "",
+    verifyPassword: "",
   });
+
   const roleAtSignup: "employee" | "employer" = "employee";
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [message, setMessage] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData({
-      ...formData,
+    setFormData((prev) => ({
+      ...prev,
       [e.target.name]: e.target.value,
-    });
+    }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
     if (formData.password !== formData.verifyPassword) {
-      setMessage({ type: 'error', text: 'Passwords do not match' });
+      setMessage({ type: "error", text: "Passwords do not match" });
       return;
     }
+
     setLoading(true);
     setMessage(null);
-    try { 
-      const { error } = await supabase.auth.signUp(
-        {
-          email: formData.email,
-          password: formData.password,
-          options: {
-            data: {
+
+    try {
+      const inviteToken = params.get("token") ?? "";
+      const nextPath = `/business-selection${
+        inviteToken ? `?token=${encodeURIComponent(inviteToken)}` : ""
+      }`;
+
+      const origin = window.location.origin;
+      const emailRedirectTo = `${origin}/auth/callback?next=${encodeURIComponent(
+        nextPath
+      )}`;
+
+      const { data, error } = await supabase.auth.signUp({
+        email: formData.email,
+        password: formData.password,
+        options: {
+          emailRedirectTo,
+          data: {
             first_name: formData.firstName,
             last_name: formData.lastName,
-            role: roleAtSignup
-            }
+            role: roleAtSignup,
           },
-        }
-        );
-      const token = new URLSearchParams(window.location.search).get("token") ?? "";
-      router.push(`/business-selection${token ? `?token=${encodeURIComponent(token)}` : ""}`);
+        },
+      });
 
-      if (error) throw error;
-      setMessage({ type: 'success', text: 'User created successfully!' });
-      setFormData({firstName: '', lastName: '', email: '', password: '', verifyPassword: ''});
-      ;
-  }
-    catch (err: unknown) {
-    setMessage({ type: 'error', text: (err as { message?: string })?.message ?? 'Unexpected error' });
-  } finally {
-    setLoading(false);
-  }
+      if (error) {
+        throw error;
+      }
+
+      // If email confirmations are OFF and we already have a session,
+      // just go straight to business-selection.
+      if (data.session) {
+        router.push(nextPath);
+        return;
+      }
+
+      // Email confirmations ON: user must click the link in their email.
+      setMessage({
+        type: "success",
+        text:
+          "Account created. Check your email and click the confirmation link to continue.",
+      });
+
+      setFormData({
+        firstName: "",
+        lastName: "",
+        email: "",
+        password: "",
+        verifyPassword: "",
+      });
+    } catch (err: unknown) {
+      setMessage({
+        type: "error",
+        text:
+          (err as { message?: string })?.message ??
+          "Unexpected error during sign up",
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -81,13 +125,23 @@ export default function SignUp() {
 
           <form onSubmit={handleSubmit} className="px-8 py-10">
             {message && (
-              <div className={`mb-4 p-3 rounded ${message.type === 'success' ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-red-50 text-red-700 border border-red-100'}`}>
+              <div
+                className={`mb-4 p-3 rounded ${
+                  message.type === "success"
+                    ? "bg-green-50 text-green-700 border border-green-100"
+                    : "bg-red-50 text-red-700 border border-red-100"
+                }`}
+              >
                 {message.text}
               </div>
             )}
+
             <div className="space-y-6">
               <div>
-                <label htmlFor="firstName" className="block text-sm font-semibold text-foreground mb-2">
+                <label
+                  htmlFor="firstName"
+                  className="block text-sm font-semibold text-foreground mb-2"
+                >
                   First name
                 </label>
                 <input
@@ -98,11 +152,15 @@ export default function SignUp() {
                   onChange={handleChange}
                   required
                   className="w-full px-4 py-3 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent transition-all bg-background text-foreground"
-                  placeholder="Enter your First name"
+                  placeholder="Enter your first name"
                 />
               </div>
+
               <div>
-                <label htmlFor="lastName" className="block text-sm font-semibold text-foreground mb-2">
+                <label
+                  htmlFor="lastName"
+                  className="block text-sm font-semibold text-foreground mb-2"
+                >
                   Last name
                 </label>
                 <input
@@ -113,13 +171,16 @@ export default function SignUp() {
                   onChange={handleChange}
                   required
                   className="w-full px-4 py-3 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent transition-all bg-background text-foreground"
-                  placeholder="Enter your Last name"
+                  placeholder="Enter your last name"
                 />
               </div>
 
               <div>
-                <label htmlFor="email" className="block text-sm font-semibold text-foreground mb-2">
-                  Email Address
+                <label
+                  htmlFor="email"
+                  className="block text-sm font-semibold text-foreground mb-2"
+                >
+                  Email address
                 </label>
                 <input
                   type="email"
@@ -129,11 +190,15 @@ export default function SignUp() {
                   onChange={handleChange}
                   required
                   className="w-full px-4 py-3 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent transition-all bg-background text-foreground"
-                  placeholder="User@gmail.com"
+                  placeholder="user@gmail.com"
                 />
               </div>
+
               <div>
-                <label htmlFor="password" className="block text-sm font-semibold text-foreground mb-2">
+                <label
+                  htmlFor="password"
+                  className="block text-sm font-semibold text-foreground mb-2"
+                >
                   Password
                 </label>
                 <input
@@ -147,11 +212,17 @@ export default function SignUp() {
                   className="w-full px-4 py-3 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent transition-all bg-background text-foreground"
                   placeholder="Create a secure password"
                 />
-                <p className="text-sm text-muted-foreground mt-1">Must be at least 8 characters</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Must be at least 8 characters
+                </p>
               </div>
-                            <div>
-                <label htmlFor="verifyPassword" className="block text-sm font-semibold text-foreground mb-2">
-                  Verify Password
+
+              <div>
+                <label
+                  htmlFor="verifyPassword"
+                  className="block text-sm font-semibold text-foreground mb-2"
+                >
+                  Verify password
                 </label>
                 <input
                   type="password"
@@ -164,22 +235,26 @@ export default function SignUp() {
                   className="w-full px-4 py-3 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent transition-all bg-background text-foreground"
                   placeholder="Confirm password above"
                 />
-                <p className="text-sm text-muted-foreground mt-1">Must match above password above</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Must match the password above
+                </p>
               </div>
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              className={`w-full mt-8 bg-primary text-primary-foreground py-4 rounded-lg font-semibold hover:opacity-90 transition-opacity shadow-lg hover:shadow-xl ${loading ? 'opacity-60 cursor-not-allowed' : ''}`}
+              className={`w-full mt-8 bg-primary text-primary-foreground py-4 rounded-lg font-semibold hover:opacity-90 transition-opacity shadow-lg hover:shadow-xl ${
+                loading ? "opacity-60 cursor-not-allowed" : ""
+              }`}
             >
-              {loading ? 'Creating...' : 'Next'}
+              {loading ? "Creating..." : "Next"}
             </button>
           </form>
         </div>
 
         <p className="text-center text-muted-foreground mt-6 text-sm">
-          By registering, you agree to our terms of service and privacy policy
+          By registering, you agree to our terms of service and privacy policy.
         </p>
       </div>
     </div>

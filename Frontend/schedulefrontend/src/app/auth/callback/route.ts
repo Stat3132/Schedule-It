@@ -1,34 +1,52 @@
+// app/auth/callback/route.ts
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+import type { EmailOtpType } from "@supabase/supabase-js";
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
+
+  // Supabase may send either:
+  //  - ?code=...                    (OAuth, magic link)
+  //  - ?token_hash=...&type=signup  (email + password confirmation)
   const code = url.searchParams.get("code");
+  const token_hash = url.searchParams.get("token_hash");
+  const typeParam = url.searchParams.get("type") as EmailOtpType | null;
+
   const next = url.searchParams.get("next") ?? "/";
 
+  const supabase = createRouteHandlerClient({ cookies });
+
   if (code) {
-    const supabase = createRouteHandlerClient({ cookies }); // correct
+    // OAuth / magic link flow
     await supabase.auth.exchangeCodeForSession(code);
+  } else if (token_hash && typeParam) {
+    // Email confirmation (signup, invite, etc.)
+    const { error } = await supabase.auth.verifyOtp({
+      token_hash,
+      type: typeParam,
+    });
+    if (error) {
+      // If verification fails, just fall through to redirect
+      // The user will not have a session and your UI can show an error.
+      console.error("verifyOtp error in /auth/callback:", error);
+    }
   }
 
-  // next may be URL-encoded by the caller (eg. encodeURIComponent) and may have been
-  // encoded again by intermediate redirects. Try decoding once, then fall back to
-  // attempting a second decode if the first result still looks encoded. Use try/catch
-  // so malformed values don't throw.
+  // Decode "next" robustly (handles single / double encoding)
   const target = (() => {
     if (!next) return "/";
     try {
       const first = decodeURIComponent(next);
       try {
-        // If decoding again succeeds and changes the value, prefer the double-decoded value.
         const second = decodeURIComponent(first);
         if (second !== first) return second;
-      } catch (_e) {
-        // ignore and return first
+      } catch {
+        // ignore and use first
       }
       return first;
-    } catch (e) {
+    } catch {
       return next ?? "/";
     }
   })();

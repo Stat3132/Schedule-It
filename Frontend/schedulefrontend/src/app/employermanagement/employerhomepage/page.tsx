@@ -1,10 +1,19 @@
+// app/employermanagement/employerhomepage/page.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-import { Plus, Clock, CheckSquare, Bell, Users, Settings } from "lucide-react";
+import {
+  Plus,
+  Clock,
+  CheckSquare,
+  Bell,
+  Users,
+  Settings,
+  LogOut,
+} from "lucide-react";
 
 /* ---------- Types ---------- */
 type EmploymentRow = {
@@ -15,6 +24,7 @@ type EmploymentRow = {
   user_id?: string | null;
   location_id?: string | null;
 };
+
 type ShiftRow = {
   id: string;
   business_id: string;
@@ -24,6 +34,7 @@ type ShiftRow = {
   end_ts: string;
   status: "draft" | "published" | "canceled";
 };
+
 type AssignmentRow = { id: string; shift_id: string; user_id: string; status: string };
 type ProfileRow = { id: string; full_name: string | null };
 type BusinessOpt = { id: string; name: string | null };
@@ -40,6 +51,7 @@ function startOfWeek(d: Date, weekStartsOn: 0 | 1 = 0) {
   out.setDate(d.getDate() - diff);
   return out;
 }
+
 function endOfWeek(d: Date, weekStartsOn: 0 | 1 = 0) {
   const s = startOfWeek(d, weekStartsOn);
   const out = new Date(s);
@@ -47,6 +59,7 @@ function endOfWeek(d: Date, weekStartsOn: 0 | 1 = 0) {
   out.setMilliseconds(-1);
   return out;
 }
+
 function fmtDateMMDD(d: Date) {
   const mm = (d.getMonth() + 1).toString().padStart(2, "0");
   const dd = d.getDate().toString().padStart(2, "0");
@@ -71,9 +84,32 @@ export default function EmployerHomePage() {
   const [days, setDays] = useState<{ label: string; date: string }[]>([]);
   const [grid, setGrid] = useState<GridRow[]>([]);
 
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("activeBusinessId");
+      localStorage.removeItem("activeLocationIds");
+    }
+    router.replace("/"); // change if you have a dedicated login route
+  };
+
+  /* ---------- Seed selection from localStorage ---------- */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storedBiz = localStorage.getItem("activeBusinessId");
+    const storedLocsRaw = localStorage.getItem("activeLocationIds");
+    const storedLocs = storedLocsRaw
+      ? (JSON.parse(storedLocsRaw) as string[])
+      : [];
+
+    if (storedBiz) setSelectedBiz(storedBiz);
+    if (storedLocs[0]) setSelectedLoc(storedLocs[0]);
+  }, []);
+
   /* ---------- Bootstrap: discover accessible businesses ---------- */
   useEffect(() => {
     let cancelled = false;
+
     (async () => {
       setLoading(true);
       setErrorMsg(null);
@@ -82,6 +118,7 @@ export default function EmployerHomePage() {
         data: { user },
         error: uErr,
       } = await supabase.auth.getUser();
+
       if (uErr || !user) {
         if (!cancelled) {
           setLoading(false);
@@ -90,12 +127,13 @@ export default function EmployerHomePage() {
         return;
       }
 
-      // Manager/admin via employment
+      // manager/admin via employment
       const { data: empData, error: empError } = await supabase
         .from("employment")
         .select("business_id,is_manager,is_admin,status")
         .eq("status", "active")
         .or("is_manager.eq.true,is_admin.eq.true");
+
       if (empError) {
         if (!cancelled) {
           setLoading(false);
@@ -103,6 +141,7 @@ export default function EmployerHomePage() {
         }
         return;
       }
+
       const mgrIds = Array.from(
         new Set(
           (empData ?? [])
@@ -111,37 +150,40 @@ export default function EmployerHomePage() {
         ),
       );
 
-      // Owned businesses
+      // owned businesses
       const { data: ownedRows, error: ownedErr } = await supabase
         .from("business")
         .select("id,name")
         .eq("owner_user_id", user.id);
+
       if (ownedErr) {
-        // Not fatal; managers still proceed
         console.warn("Owned business query error:", ownedErr.message);
       }
-      const owned = (ownedRows ?? []) as { id: string; name: string | null }[];
 
-      // Union of IDs then fetch names only for those IDs to avoid RLS denials
+      const owned = (ownedRows ?? []) as { id: string; name: string | null }[];
       const idSet = new Set<string>(mgrIds);
       for (const b of owned) idSet.add(b.id);
       const idList = Array.from(idSet);
 
       let named: BusinessOpt[] = owned.map((r) => ({ id: r.id, name: r.name }));
       const needNames = idList.filter((id) => !owned.find((o) => o.id === id));
+
       if (needNames.length) {
-        // Try to read names for manager-visible businesses; may be allowed by your RLS
         const { data: bRows } = await supabase
           .from("business")
           .select("id,name")
           .in("id", needNames);
-        const extra = (bRows ?? []).map((r: { id: string; name: string | null }) => ({
-          id: r.id,
-          name: r.name ?? null,
-        }));
+
+        const extra = (bRows ?? []).map(
+          (r: { id: string; name: string | null }) => ({
+            id: r.id,
+            name: r.name ?? null,
+          }),
+        );
+
         const existingIds = new Set(named.map((x) => x.id));
         named = named.concat(extra.filter((e) => !existingIds.has(e.id)));
-        // Fill any still-unnamed with placeholder
+
         for (const id of needNames) {
           if (!named.find((n) => n.id === id)) named.push({ id, name: null });
         }
@@ -149,53 +191,83 @@ export default function EmployerHomePage() {
 
       if (!cancelled) {
         setBusinesses(named);
-        if (!selectedBiz && idList.length > 0) setSelectedBiz(idList[0]);
+        if (!selectedBiz && idList.length > 0) {
+          setSelectedBiz(idList[0]);
+        }
         setLoading(false);
       }
     })();
+
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase]);
 
-  /* ---------- Load locations when business changes ---------- */
+  /* ---------- Persist selection ---------- */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (selectedBiz) {
+      localStorage.setItem("activeBusinessId", selectedBiz);
+    }
+  }, [selectedBiz]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (selectedLoc && selectedLoc !== "ALL") {
+      localStorage.setItem("activeLocationIds", JSON.stringify([selectedLoc]));
+    } else {
+      localStorage.removeItem("activeLocationIds");
+    }
+  }, [selectedLoc]);
+
+  /* ---------- Load locations ---------- */
   useEffect(() => {
     let cancelled = false;
+
     (async () => {
       if (!selectedBiz) {
         setLocations([]);
         setSelectedLoc("ALL");
         return;
       }
+
       const { data, error } = await supabase
         .from("location")
         .select("id,name")
         .eq("business_id", selectedBiz);
 
       if (cancelled) return;
+
       if (error) {
         setErrorMsg(`Location query failed: ${error.message}`);
         setLocations([]);
         setSelectedLoc("ALL");
         return;
       }
+
       const locs = (data ?? []) as LocationOpt[];
       setLocations(locs);
+
       if (selectedLoc !== "ALL" && !locs.find((l) => l.id === selectedLoc)) {
         setSelectedLoc("ALL");
       }
     })();
+
     return () => {
       cancelled = true;
     };
   }, [selectedBiz, selectedLoc, supabase]);
 
   /* ---------- Load weekly grid ---------- */
-  const scopeKey = useMemo(() => `${selectedBiz ?? ""}|${selectedLoc}`, [selectedBiz, selectedLoc]);
+  const scopeKey = useMemo(
+    () => `${selectedBiz ?? ""}|${selectedLoc}`,
+    [selectedBiz, selectedLoc],
+  );
 
   useEffect(() => {
     let cancelled = false;
+
     (async () => {
       setLoading(true);
       setErrorMsg(null);
@@ -215,27 +287,38 @@ export default function EmployerHomePage() {
       const labels = Array.from({ length: 7 }, (_, i) => {
         const d = new Date(ws);
         d.setDate(ws.getDate() + i);
-        return { label: d.toLocaleDateString([], { weekday: "long" }), date: fmtDateMMDD(d) };
+        return {
+          label: d.toLocaleDateString([], { weekday: "long" }),
+          date: fmtDateMMDD(d),
+        };
       });
+
       const header = `Week of ${ws.toLocaleDateString([], {
         month: "long",
         day: "numeric",
-      })} - ${new Date(ws.getFullYear(), ws.getMonth(), ws.getDate() + 6).toLocaleDateString([], {
+      })} - ${new Date(
+        ws.getFullYear(),
+        ws.getMonth(),
+        ws.getDate() + 6,
+      ).toLocaleDateString([], {
         month: "long",
         day: "numeric",
         year: "numeric",
       })}`;
 
-      // Employees in scope
+      // employees in scope
       let empQ = supabase
         .from("employment")
         .select("user_id,location_id,status")
         .eq("business_id", selectedBiz)
         .eq("status", "active");
+
       if (selectedLoc !== "ALL") {
         empQ = empQ.or(`location_id.is.null,location_id.eq.${selectedLoc}`);
       }
+
       const { data: empRows, error: empErr } = await empQ;
+
       if (empErr) {
         if (!cancelled) {
           setErrorMsg(`Employment query failed: ${empErr.message}`);
@@ -245,6 +328,7 @@ export default function EmployerHomePage() {
         }
         return;
       }
+
       const employeeIds = Array.from(
         new Set(
           (empRows ?? [])
@@ -253,13 +337,14 @@ export default function EmployerHomePage() {
         ),
       );
 
-      // Profiles
+      // profile names
       let nameById = new Map<string, string>();
       if (employeeIds.length) {
         const { data: profs, error: profErr } = await supabase
           .from("profiles")
           .select("id,full_name")
           .in("id", employeeIds);
+
         if (profErr) {
           if (!cancelled) {
             setErrorMsg(`Profile query failed: ${profErr.message}`);
@@ -269,21 +354,27 @@ export default function EmployerHomePage() {
           }
           return;
         }
+
         nameById = new Map<string, string>(
           (profs as ProfileRow[]).map((p) => [p.id, p.full_name ?? ""]),
         );
       }
 
-      // Shifts
+      // shifts: include draft + published, exclude canceled
       let shiftQ = supabase
         .from("shift")
         .select("id,business_id,location_id,role_id,start_ts,end_ts,status")
         .eq("business_id", selectedBiz)
-        .eq("status", "published")
+        .neq("status", "canceled")
         .gte("start_ts", ws.toISOString())
-        .lte("start_ts", we.toISOString());
-      if (selectedLoc !== "ALL") shiftQ = shiftQ.eq("location_id", selectedLoc);
+        .lt("start_ts", we.toISOString());
+
+      if (selectedLoc !== "ALL") {
+        shiftQ = shiftQ.eq("location_id", selectedLoc);
+      }
+
       const { data: shifts, error: shErr } = await shiftQ;
+
       if (shErr) {
         if (!cancelled) {
           setErrorMsg(`Shift query failed: ${shErr.message}`);
@@ -293,10 +384,13 @@ export default function EmployerHomePage() {
         }
         return;
       }
-      const safeShifts: ShiftRow[] = Array.isArray(shifts) ? (shifts as ShiftRow[]) : [];
+
+      const safeShifts: ShiftRow[] = Array.isArray(shifts)
+        ? (shifts as ShiftRow[])
+        : [];
       const shiftIds = safeShifts.map((s) => s.id);
 
-      // Assignments
+      // assignments
       let assigns: AssignmentRow[] = [];
       if (shiftIds.length && employeeIds.length) {
         const { data: assignsRaw, error: asErr } = await supabase
@@ -304,6 +398,7 @@ export default function EmployerHomePage() {
           .select("id,shift_id,user_id,status")
           .in("shift_id", shiftIds)
           .in("user_id", employeeIds);
+
         if (asErr) {
           if (!cancelled) {
             setErrorMsg(`Assignment query failed: ${asErr.message}`);
@@ -324,15 +419,24 @@ export default function EmployerHomePage() {
           byDay: Array.from({ length: 7 }, () => ({})),
         });
       }
+
       for (const a of assigns) {
         const sh = safeShifts.find((s) => s.id === a.shift_id);
         if (!sh) continue;
-        const dow = new Date(sh.start_ts).getDay(); // 0..6 mapped to labels built from Sunday
+
+        const dow = new Date(sh.start_ts).getDay(); // 0..6
         const rec = byUser.get(a.user_id);
         if (!rec) continue;
+
         rec.byDay[dow] = {
-          start: new Date(sh.start_ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
-          end: new Date(sh.end_ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+          start: new Date(sh.start_ts).toLocaleTimeString([], {
+            hour: "numeric",
+            minute: "2-digit",
+          }),
+          end: new Date(sh.end_ts).toLocaleTimeString([], {
+            hour: "numeric",
+            minute: "2-digit",
+          }),
         };
       }
 
@@ -343,6 +447,7 @@ export default function EmployerHomePage() {
         setLoading(false);
       }
     })();
+
     return () => {
       cancelled = true;
     };
@@ -356,12 +461,14 @@ export default function EmployerHomePage() {
 
   /* ---------- Early outs ---------- */
   if (loading && !businesses.length) return <div className="p-6">Loading…</div>;
+
   if (!businesses.length)
     return (
       <div className="p-6">
         No manager access found for your user.
         <div className="mt-2 text-sm text-gray-600">
-          Ensure you either own a business or have an active employment with manager/admin rights.
+          Ensure you either own a business or have an active employment with
+          manager/admin rights.
         </div>
       </div>
     );
@@ -390,7 +497,9 @@ export default function EmployerHomePage() {
               <select
                 className="border rounded-md px-2 py-1 text-sm"
                 value={selectedLoc}
-                onChange={(e) => setSelectedLoc((e.target.value as string) || "ALL")}
+                onChange={(e) =>
+                  setSelectedLoc((e.target.value as string) || "ALL")
+                }
                 disabled={!selectedBiz}
               >
                 <option value="ALL">All locations</option>
@@ -405,13 +514,15 @@ export default function EmployerHomePage() {
             <div className="flex items-center space-x-1">
               <button
                 className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() => router.push("/employermanagement/createschedule")}
+                onClick={() =>
+                  router.push("/employermanagement/createschedule")
+                }
               >
                 <Plus className="w-4 h-4" /> Create Schedule
               </button>
               <button
                 className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() => router.push("/employermanagement/time-off")}
+                onClick={() => router.push("/employermanagement/managetimerequests")}
               >
                 <Clock className="w-4 h-4" /> Time Off Requests
               </button>
@@ -429,7 +540,11 @@ export default function EmployerHomePage() {
               </button>
               <button
                 className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() => router.push(`/employermanagement/employeeinvitemanagement/${selectedBiz}`)}
+                onClick={() =>
+                  router.push(
+                    `/employermanagement/employeeinvitemanagement/${selectedBiz}`,
+                  )
+                }
               >
                 <Users className="w-4 h-4" /> User Management
               </button>
@@ -438,6 +553,13 @@ export default function EmployerHomePage() {
                 onClick={() => router.push("/employermanagement/settings")}
               >
                 <Settings className="w-4 h-4" /> Settings
+              </button>
+              <button
+                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
+                onClick={handleLogout}
+              >
+                <LogOut className="w-4 h-4" />
+                Log out
               </button>
             </div>
           </div>
@@ -448,10 +570,13 @@ export default function EmployerHomePage() {
         <div className="mb-6">
           <h1 className="text-3xl font-bold text-gray-900">Weekly Schedule</h1>
           <p className="text-gray-600 mt-1">
-            {bizName} · {selectedLoc === "ALL" ? "All locations" : "One location"}
+            {bizName} ·{" "}
+            {selectedLoc === "ALL" ? "All locations" : "One location"}
           </p>
           <p className="text-gray-600">{weekLabel}</p>
-          {errorMsg && <p className="text-sm text-red-600 mt-2">{errorMsg}</p>}
+          {errorMsg && (
+            <p className="text-sm text-red-600 mt-2">{errorMsg}</p>
+          )}
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
@@ -462,34 +587,54 @@ export default function EmployerHomePage() {
               <thead>
                 <tr className="border-b border-gray-200 bg-gray-50">
                   <th className="px-6 py-4 text-left">
-                    <div className="text-sm font-semibold text-gray-900">Staff Member</div>
+                    <div className="text-sm font-semibold text-gray-900">
+                      Staff Member
+                    </div>
                     <div className="text-xs text-gray-500">
-                      {selectedLoc === "ALL" ? "Business scope" : "Business + Location scope"}
+                      {selectedLoc === "ALL"
+                        ? "Business scope"
+                        : "Business + Location scope"}
                     </div>
                   </th>
                   {days.map((d) => (
-                    <th key={d.label} className="px-4 py-4 text-center min-w-[140px]">
-                      <div className="text-sm font-semibold text-gray-900">{d.label}</div>
-                      <div className="text-xs text-gray-500 mt-1">{d.date}</div>
+                    <th
+                      key={d.label}
+                      className="px-4 py-4 text-center min-w-[140px]"
+                    >
+                      <div className="text-sm font-semibold text-gray-900">
+                        {d.label}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {d.date}
+                      </div>
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {grid.map((row) => (
-                  <tr key={row.userId} className="border-b border-gray-200 hover:bg-gray-50">
+                  <tr
+                    key={row.userId}
+                    className="border-b border-gray-200 hover:bg-gray-50"
+                  >
                     <td className="px-6 py-4">
-                      <div className="text-sm font-semibold text-gray-900">{row.name || row.userId}</div>
+                      <div className="text-sm font-semibold text-gray-900">
+                        {row.name || row.userId}
+                      </div>
                     </td>
                     {row.byDay.map((cell, idx) => (
                       <td key={idx} className="px-4 py-4 text-center">
                         {cell.start ? (
                           <div className="border rounded-lg p-2">
-                            <div className="text-xs font-semibold">{cell.start}</div>
+                            <div className="text-xs font-semibold">
+                              {cell.start}
+                            </div>
                             <div className="text-xs">{cell.end}</div>
                           </div>
                         ) : (
-                          <div className="text-xs text-gray-400 py-2">Off</div>
+                          <div className="text-xs text-gray-400 py-2">
+                            Off
+                          </div>
                         )}
                       </td>
                     ))}
@@ -497,8 +642,11 @@ export default function EmployerHomePage() {
                 ))}
                 {grid.length === 0 && (
                   <tr>
-                    <td className="px-6 py-8 text-sm text-gray-500" colSpan={1 + days.length}>
-                      No employees or no published shifts for this scope.
+                    <td
+                      className="px-6 py-8 text-sm text-gray-500"
+                      colSpan={1 + days.length}
+                    >
+                      No employees or no shifts for this week and scope.
                     </td>
                   </tr>
                 )}
