@@ -204,13 +204,14 @@ function normalizeTimeRanges(raw: unknown): Record<DayOfWeek, DayRange> {
   for (const day of ALL_DAY_NAMES) {
     const v = src[day];
     if (v && typeof v === "object") {
+      const obj = v as Record<string, unknown>;
       const start =
-        typeof (v as any).start === "string" && (v as any).start.trim().length > 0
-          ? (v as any).start
+        typeof obj.start === "string" && obj.start.trim().length > 0
+          ? obj.start
           : null;
       const end =
-        typeof (v as any).end === "string" && (v as any).end.trim().length > 0
-          ? (v as any).end
+        typeof obj.end === "string" && obj.end.trim().length > 0
+          ? obj.end
           : null;
       out[day] = { start, end };
     } else {

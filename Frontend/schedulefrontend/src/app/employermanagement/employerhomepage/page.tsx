@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { PostgrestError } from "@supabase/supabase-js";
+// import type { PostgrestError } from "@supabase/supabase-js"; // unused
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import {
   Plus,
@@ -62,7 +62,7 @@ type AvailabilityStatus = "available" | "partial" | "unavailable";
 type AvailabilityRow = {
   id: string;
   user_id: string;
-  weekly_pattern_json: any;
+  weekly_pattern_json: unknown;
   effective_from: string;
   effective_to: string | null;
   status?: string | null;
@@ -134,7 +134,7 @@ function toYMD(d: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-function normalizeAvailabilityPattern(raw: any): AvailabilityPattern {
+function normalizeAvailabilityPattern(raw: unknown): AvailabilityPattern {
   let src: Record<string, unknown> = {};
   if (raw && typeof raw === "object") {
     const r = raw as Record<string, unknown>;
