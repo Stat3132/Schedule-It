@@ -2,10 +2,42 @@
 
 import React, { JSX, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, X, ArrowLeft } from "lucide-react";
+import { ArrowLeft, X } from "lucide-react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
 type UUID = string;
+
+type DayOfWeek =
+  | "sunday"
+  | "monday"
+  | "tuesday"
+  | "wednesday"
+  | "thursday"
+  | "friday"
+  | "saturday";
+
+type AvailabilityStatus = "available" | "partial" | "unavailable";
+
+type DayRange = { start: string | null; end: string | null };
+
+type WeeklyPatternPayload = {
+  reason?: string | null;
+  pattern?: Partial<Record<DayOfWeek, AvailabilityStatus>>;
+  timeRanges?: Partial<
+    Record<DayOfWeek, { start?: string | null; end?: string | null }>
+  >;
+};
+
+type AvailabilityRow = {
+  id: UUID;
+  user_id: UUID;
+  weekly_pattern_json: unknown;
+  effective_from: string; // DATE (e.g. "2025-11-05")
+  effective_to: string | null; // DATE or null
+  status: "pending" | "approved" | "denied" | "canceled";
+};
+
+/* ---------- Core types ---------- */
 
 type Employee = {
   id: UUID;
@@ -17,7 +49,7 @@ type Employee = {
 type ShiftDraft = { employeeId: UUID; day: number; start: string; end: string };
 
 type DayMeta = {
-  day: number; // 0..6 index in this week
+  day: number; // 0..6 index in this week (Sun..Sat)
   label: string; // "Sun", "Mon", ...
   uiDate: string; // "11/16"
   ymd: string; // "2025-11-16"
@@ -32,7 +64,39 @@ type TimeOffRow = {
   reason: string | null;
 };
 
-type SupabaseErrorObj = { code?: string; message?: string; details?: string; hint?: string } | null;
+type SupabaseErrorObj =
+  | { code?: string; message?: string; details?: string; hint?: string }
+  | null;
+
+/** Availability window resolved for a given employee on a specific calendar day */
+type AvailabilityWindow = {
+  status: AvailabilityStatus;
+  start: string | null; // in HH:mm, for partial
+  end: string | null; // in HH:mm, for partial
+};
+
+type ShiftRowDb = {
+  id: string;
+  role_id: string;
+  start_ts: string;
+  end_ts: string;
+  status: "draft" | "published" | "canceled";
+};
+
+type ShiftAssignmentRow = {
+  shift_id: string;
+  user_id: string;
+};
+
+const ALL_DAY_NAMES: DayOfWeek[] = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+];
 
 /* ---------- Date helpers ---------- */
 function startOfWeek(d: Date, weekStartsOn: 0 | 1 = 0) {
@@ -57,27 +121,113 @@ function fmtYMD(d: Date) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function clampTimeToStore(
-  start: string,
-  end: string,
-  open = "09:00",
-  close = "17:00"
-) {
-  const toM = (t: string) => {
-    const [hh, mm] = t.split(":");
-    return Number(hh) * 60 + Number(mm);
-  };
-  const toHH = (m: number) =>
-    `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(
-      2,
-      "0"
-    )}`;
-
-  const s = Math.max(toM(open), toM(start));
-  const e = Math.min(toM(close), toM(end));
-  if (s >= e) return { start: open, end: close };
-  return { start: toHH(s), end: toHH(e) };
+function toLocalHM(date: Date) {
+  const h = date.getHours().toString().padStart(2, "0");
+  const m = date.getMinutes().toString().padStart(2, "0");
+  return `${h}:${m}`;
 }
+
+/* ---------- Time helpers ---------- */
+
+function toMinutes(t: string) {
+  const [hh, mm] = t.split(":");
+  const h = Number(hh);
+  const m = Number(mm);
+  return h * 60 + m;
+}
+
+function fromMinutes(m: number) {
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  return `${String(h).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+/** HH:mm -> h:mm AM/PM (for display only) */
+function formatTime12(t?: string | null): string {
+  if (!t) return "";
+  const [hhStr, mmStr] = t.split(":");
+  const hh = Number(hhStr);
+  if (Number.isNaN(hh)) return t;
+  const period = hh >= 12 ? "PM" : "AM";
+  const hour12 = hh % 12 === 0 ? 12 : hh % 12;
+  return `${hour12}:${mmStr} ${period}`;
+}
+
+function formatRange12(start: string, end: string): string {
+  return `${formatTime12(start)}–${formatTime12(end)}`;
+}
+
+/** Intersection of [baseStart, baseEnd] with an optional [extraStart, extraEnd] window. */
+function intersectWindow(
+  baseStart: string,
+  baseEnd: string,
+  extraStart: string | null,
+  extraEnd: string | null
+): { start: string; end: string } | null {
+  let min = toMinutes(baseStart);
+  let max = toMinutes(baseEnd);
+
+  if (extraStart) min = Math.max(min, toMinutes(extraStart));
+  if (extraEnd) max = Math.min(max, toMinutes(extraEnd));
+
+  if (min >= max) return null;
+  return { start: fromMinutes(min), end: fromMinutes(max) };
+}
+
+/* ---------- Availability JSON helpers ---------- */
+
+function asWeeklyPattern(raw: unknown): WeeklyPatternPayload {
+  if (!raw || typeof raw !== "object") return {};
+  return raw as WeeklyPatternPayload;
+}
+
+function normalizeSchedule(raw: unknown): Record<DayOfWeek, AvailabilityStatus> {
+  const src = asWeeklyPattern(raw).pattern ?? {};
+  const out: Partial<Record<DayOfWeek, AvailabilityStatus>> = {};
+
+  for (const day of ALL_DAY_NAMES) {
+    const v = src[day];
+    if (v === "available" || v === "partial" || v === "unavailable") {
+      out[day] = v;
+    } else {
+      out[day] = "available";
+    }
+  }
+
+  return out as Record<DayOfWeek, AvailabilityStatus>;
+}
+
+function normalizeTimeRanges(raw: unknown): Record<DayOfWeek, DayRange> {
+  const src = asWeeklyPattern(raw).timeRanges ?? {};
+  const out: Partial<Record<DayOfWeek, DayRange>> = {};
+
+  for (const day of ALL_DAY_NAMES) {
+    const v = src[day];
+    if (v && typeof v === "object") {
+      const start =
+        typeof (v as any).start === "string" && (v as any).start.trim().length > 0
+          ? (v as any).start
+          : null;
+      const end =
+        typeof (v as any).end === "string" && (v as any).end.trim().length > 0
+          ? (v as any).end
+          : null;
+      out[day] = { start, end };
+    } else {
+      out[day] = { start: null, end: null };
+    }
+  }
+
+  return out as Record<DayOfWeek, DayRange>;
+}
+
+function ymdToDayOfWeek(ymd: string): DayOfWeek {
+  const d = new Date(`${ymd}T12:00:00`);
+  const idx = d.getDay(); // 0..6
+  return ALL_DAY_NAMES[idx];
+}
+
+/* ---------- Page ---------- */
 
 export default function CreateSchedulePage(): JSX.Element {
   const router = useRouter();
@@ -99,14 +249,23 @@ export default function CreateSchedulePage(): JSX.Element {
   );
   const [startTime, setStartTime] = useState<string>("");
   const [endTime, setEndTime] = useState<string>("");
+
   const [loading, setLoading] = useState<boolean>(true);
   const [userId, setUserId] = useState<string | null>(null);
-  const [showDebug, setShowDebug] = useState<boolean>(false);
-  const [insertErrorObj, setInsertErrorObj] = useState<SupabaseErrorObj>(null);
   const [contextError, setContextError] = useState<string | null>(null);
 
   // userId -> list of day indexes (0..6) where approved time off applies
   const [timeOffByUser, setTimeOffByUser] = useState<Record<string, number[]>>({});
+
+  // userId -> dayIndex (0..6) -> availability window for that calendar date
+  const [availabilityByUser, setAvailabilityByUser] = useState<
+    Record<string, Record<number, AvailabilityWindow>>
+  >({});
+
+  // persisted schedule status for this week/location
+  const [scheduleStatus, setScheduleStatus] = useState<
+    "none" | "draft" | "published"
+  >("none");
 
   /* ---------- Week days for *this* week ---------- */
   const DAYS: DayMeta[] = useMemo(() => {
@@ -130,9 +289,7 @@ export default function CreateSchedulePage(): JSX.Element {
 
     const storedBiz = localStorage.getItem("activeBusinessId");
     const storedLocsRaw = localStorage.getItem("activeLocationIds");
-    const storedLocs = storedLocsRaw
-      ? (JSON.parse(storedLocsRaw) as string[])
-      : [];
+    const storedLocs = storedLocsRaw ? (JSON.parse(storedLocsRaw) as string[]) : [];
 
     if (!storedBiz) {
       setContextError(
@@ -146,7 +303,7 @@ export default function CreateSchedulePage(): JSX.Element {
     setActiveLocationId(storedLocs[0] ?? null);
   }, []);
 
-  /* ---------- Load user + business + location + employees + time off ---------- */
+  /* ---------- Load user + business + location + employees + time off + availability + existing schedule ---------- */
   useEffect(() => {
     if (!activeBusinessId) return;
     let cancelled = false;
@@ -215,7 +372,13 @@ export default function CreateSchedulePage(): JSX.Element {
 
         if (empErr) {
           console.error("employment load error", empErr);
-          if (!cancelled) setEmployees([]);
+          if (!cancelled) {
+            setEmployees([]);
+            setTimeOffByUser({});
+            setAvailabilityByUser({});
+            setScheduleStatus("none");
+            setDrafts([]);
+          }
           return;
         }
 
@@ -260,13 +423,21 @@ export default function CreateSchedulePage(): JSX.Element {
           setEmployees(emps.sort((a, b) => a.name.localeCompare(b.name)));
         }
 
-        // Time off for this week (approved only)
-        if (!cancelled && ids.length > 0) {
-          const weekStartDate = new Date(`${DAYS[0].ymd}T00:00:00`);
-          const weekEndDate = new Date(`${DAYS[6].ymd}T23:59:59`);
-          const weekStartISO = weekStartDate.toISOString();
-          const weekEndISO = weekEndDate.toISOString();
+        // If there are no employees, clear context maps (still allow shifts, but unlikely).
+        if (!ids.length) {
+          if (!cancelled) {
+            setTimeOffByUser({});
+            setAvailabilityByUser({});
+          }
+        }
 
+        const weekStartDate = new Date(`${DAYS[0].ymd}T00:00:00`);
+        const weekEndDate = new Date(`${DAYS[6].ymd}T23:59:59`);
+        const weekStartISO = weekStartDate.toISOString();
+        const weekEndISO = weekEndDate.toISOString();
+
+        // ---- Time off for this week (approved only) ----
+        if (ids.length) {
           const { data: toRowsRaw, error: toErr } = await supabase
             .from("time_off_request")
             .select("id,user_id,start_ts,end_ts,status,reason")
@@ -297,15 +468,178 @@ export default function CreateSchedulePage(): JSX.Element {
             }
           }
 
-          const plain: Record<string, number[]> = {};
+          const plainTimeOff: Record<string, number[]> = {};
           for (const [uid, set] of Object.entries(offByUser)) {
-            plain[uid] = Array.from(set.values());
+            plainTimeOff[uid] = Array.from(set.values());
           }
 
-          console.debug("Time off map for week", plain);
-          setTimeOffByUser(plain);
-        } else if (!cancelled) {
-          setTimeOffByUser({});
+          if (!cancelled) {
+            console.debug("Time off map for week", plainTimeOff);
+            setTimeOffByUser(plainTimeOff);
+          }
+        } else {
+          if (!cancelled) setTimeOffByUser({});
+        }
+
+        // ---- Availability (approved patterns) ----
+        if (ids.length) {
+          const { data: availRowsRaw, error: availErr } = await supabase
+            .from("availability")
+            .select(
+              "id,user_id,weekly_pattern_json,effective_from,effective_to,status"
+            )
+            .in("user_id", ids)
+            .eq("status", "approved");
+
+          if (availErr) {
+            console.error("availability load error", availErr);
+            if (!cancelled) setAvailabilityByUser({});
+          } else {
+            const availRows = (availRowsRaw ?? []) as AvailabilityRow[];
+
+            // Build user -> dayIndex -> {window,effectiveFrom} so latest pattern wins
+            const internal: Record<
+              string,
+              Record<number, { window: AvailabilityWindow; effectiveFrom: Date }>
+            > = {};
+
+            for (const row of availRows) {
+              // Convert DATE strings to actual Date objects (00:00 local)
+              const effStart = new Date(`${row.effective_from}T00:00:00`);
+              effStart.setHours(0, 0, 0, 0);
+              const effEnd =
+                row.effective_to != null
+                  ? new Date(`${row.effective_to}T23:59:59`)
+                  : null;
+
+              const schedule = normalizeSchedule(row.weekly_pattern_json);
+              const ranges = normalizeTimeRanges(row.weekly_pattern_json);
+
+              for (const d of DAYS) {
+                const dayDate = new Date(`${d.ymd}T12:00:00`);
+
+                // Only apply this availability row if the day falls in its effective window
+                if (dayDate < effStart) continue;
+                if (effEnd && dayDate > effEnd) continue;
+
+                const dow = ymdToDayOfWeek(d.ymd);
+                const status = schedule[dow];
+                const range = ranges[dow];
+
+                const win: AvailabilityWindow = {
+                  status,
+                  start: range.start,
+                  end: range.end,
+                };
+
+                const userMap = (internal[row.user_id] ||= {});
+                const existing = userMap[d.day];
+                if (!existing || effStart > existing.effectiveFrom) {
+                  userMap[d.day] = { window: win, effectiveFrom: effStart };
+                }
+              }
+            }
+
+            const finalAvail: Record<string, Record<number, AvailabilityWindow>> =
+              {};
+            for (const [uid, byDayInternal] of Object.entries(internal)) {
+              finalAvail[uid] = {};
+              for (const [dayIdxStr, entry] of Object.entries(byDayInternal)) {
+                const idx = Number(dayIdxStr);
+                finalAvail[uid][idx] = entry.window;
+              }
+            }
+
+            if (!cancelled) {
+              console.debug("Availability map for week", finalAvail);
+              setAvailabilityByUser(finalAvail);
+            }
+          }
+        } else {
+          if (!cancelled) setAvailabilityByUser({});
+        }
+
+        // ---- Existing schedule for this week (draft or published) ----
+        if (activeLocationId) {
+          const { data: shiftRowsRaw, error: shiftErr } = await supabase
+            .from("shift")
+            .select("id,role_id,start_ts,end_ts,status")
+            .eq("business_id", activeBusinessId)
+            .eq("location_id", activeLocationId)
+            .gte("start_ts", weekStartISO)
+            .lte("end_ts", weekEndISO);
+
+          if (shiftErr) {
+            console.error("shift load error", shiftErr);
+            if (!cancelled) {
+              setScheduleStatus("none");
+              setDrafts([]);
+            }
+          } else {
+            const shiftRows = (shiftRowsRaw ?? []) as ShiftRowDb[];
+            const shiftIds = shiftRows.map((s) => s.id);
+
+            let assignmentRows: ShiftAssignmentRow[] = [];
+            if (shiftIds.length) {
+              const { data: asRowsRaw, error: asErr } = await supabase
+                .from("shift_assignment")
+                .select("shift_id,user_id")
+                .in("shift_id", shiftIds);
+
+              if (asErr) {
+                console.error("shift_assignment load error", asErr);
+              } else {
+                assignmentRows = (asRowsRaw ?? []) as ShiftAssignmentRow[];
+              }
+            }
+
+            const assignmentsByShift: Record<string, string[]> = {};
+            for (const as of assignmentRows) {
+              (assignmentsByShift[as.shift_id] ||= []).push(as.user_id);
+            }
+
+            const weekDrafts: ShiftDraft[] = [];
+            const statusSet = new Set<"draft" | "published">();
+
+            for (const s of shiftRows) {
+              if (s.status === "canceled") continue;
+              const users = assignmentsByShift[s.id] ?? [];
+              if (!users.length) continue;
+
+              const startDate = new Date(s.start_ts);
+              const endDate = new Date(s.end_ts);
+
+              const ymdLocal = fmtYMD(startDate);
+              const dayMeta = DAYS.find((d) => d.ymd === ymdLocal);
+              if (!dayMeta) continue;
+
+              const employeeId = users[0]; // assume single-assignment per shift
+              weekDrafts.push({
+                employeeId,
+                day: dayMeta.day,
+                start: toLocalHM(startDate),
+                end: toLocalHM(endDate),
+              });
+
+              if (s.status === "draft" || s.status === "published") {
+                statusSet.add(s.status);
+              }
+            }
+
+            let status: "none" | "draft" | "published" = "none";
+            if (statusSet.has("published")) status = "published";
+            else if (statusSet.has("draft")) status = "draft";
+
+            if (!cancelled) {
+              setDrafts(weekDrafts);
+              setScheduleStatus(status);
+            }
+          }
+        } else {
+          if (!cancelled) {
+            setScheduleStatus("none");
+            setDrafts([]);
+          }
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -318,6 +652,7 @@ export default function CreateSchedulePage(): JSX.Element {
   }, [activeBusinessId, activeLocationId, supabase, DAYS]);
 
   /* ---------- Helpers ---------- */
+
   const getDraft = (empId: string, day: number) =>
     drafts.find((d) => d.employeeId === empId && d.day === day);
 
@@ -327,40 +662,83 @@ export default function CreateSchedulePage(): JSX.Element {
     return Array.isArray(arr) && arr.includes(day);
   };
 
+  const getAvailabilityWindow = (
+    empId: string,
+    day: number | null
+  ): AvailabilityWindow | null => {
+    if (day == null) return null;
+    const byDay = availabilityByUser[empId];
+    if (!byDay) return null;
+    return byDay[day] ?? null;
+  };
+
+  /** Store-hours ∩ availability for a given employee/day, or null if fully blocked. */
+  const computeAllowedWindowForDay = (
+    empId: string,
+    day: number | null
+  ): { start: string; end: string } | null => {
+    if (day == null) return null;
+    if (isEmployeeOffOnDay(empId, day)) return null;
+
+    const avail = getAvailabilityWindow(empId, day);
+
+    if (!avail || avail.status === "available") {
+      // No additional restriction beyond store hours
+      return { start: openHH, end: closeHH };
+    }
+
+    if (avail.status === "unavailable") {
+      return null;
+    }
+
+    // Partial availability: intersect store hours with the partial window
+    const window = intersectWindow(openHH, closeHH, avail.start, avail.end);
+    return window;
+  };
+
   function openEditor(empId: string, day: number) {
-    if (isEmployeeOffOnDay(empId, day)) {
-      // Safety guard; UI should already prevent this.
+    const allowed = computeAllowedWindowForDay(empId, day);
+    if (!allowed) {
+      // Either approved time off or unavailable for that day; do nothing.
       return;
     }
-    const d = getDraft(empId, day);
-    if (d) {
-      setStartTime(d.start);
-      setEndTime(d.end);
+
+    const existing = getDraft(empId, day);
+    if (existing) {
+      const clampedExisting =
+        intersectWindow(allowed.start, allowed.end, existing.start, existing.end) ??
+        allowed;
+      setStartTime(clampedExisting.start);
+      setEndTime(clampedExisting.end);
     } else {
-      setStartTime(openHH);
-      setEndTime(closeHH);
+      setStartTime(allowed.start);
+      setEndTime(allowed.end);
     }
     setEditing({ employeeId: empId, day });
   }
 
-  function saveDraft() {
+  function saveDraftLocal() {
     if (!editing) return;
-    if (isEmployeeOffOnDay(editing.employeeId, editing.day)) {
-      // Just in case; do not allow saving if time off.
+
+    const allowed = computeAllowedWindowForDay(editing.employeeId, editing.day);
+    if (!allowed) {
+      // Safety guard: day is blocked; do not save
       setEditing(null);
       return;
     }
 
-    const clamped = clampTimeToStore(startTime, endTime, openHH, closeHH);
+    const chosen =
+      intersectWindow(allowed.start, allowed.end, startTime, endTime) ?? allowed;
+
     setDrafts((prev) => {
       const idx = prev.findIndex(
         (p) => p.employeeId === editing.employeeId && p.day === editing.day
       );
-      const next = {
+      const next: ShiftDraft = {
         employeeId: editing.employeeId,
         day: editing.day,
-        start: clamped.start,
-        end: clamped.end,
+        start: chosen.start,
+        end: chosen.end,
       };
       if (idx >= 0) {
         const copy = prev.slice();
@@ -378,7 +756,7 @@ export default function CreateSchedulePage(): JSX.Element {
     );
   }
 
-  async function handleConfirm() {
+  async function persistSchedule(targetStatus: "draft" | "published") {
     if (!activeBusinessId) {
       alert("No business selected (context missing).");
       return;
@@ -392,16 +770,20 @@ export default function CreateSchedulePage(): JSX.Element {
       return;
     }
 
-    // Filter out any drafts that fall on approved time off
-    const validDrafts = drafts.filter(
-      (d) => !isEmployeeOffOnDay(d.employeeId, d.day)
-    );
+    // Filter out drafts that are blocked by time off or availability
+    const validDrafts = drafts.filter((d) => {
+      const allowed = computeAllowedWindowForDay(d.employeeId, d.day);
+      if (!allowed) return false;
+      const clamped =
+        intersectWindow(allowed.start, allowed.end, d.start, d.end) ?? null;
+      return clamped !== null;
+    });
 
     if (validDrafts.length === 0) {
       alert(
         drafts.length === 0
           ? "No shifts to create."
-          : "All drafted shifts conflict with approved time off."
+          : "All drafted shifts conflict with approved time off or availability."
       );
       return;
     }
@@ -423,8 +805,57 @@ export default function CreateSchedulePage(): JSX.Element {
       return;
     }
 
+    const weekStartDate = new Date(`${DAYS[0].ymd}T00:00:00`);
+    const weekEndDate = new Date(`${DAYS[6].ymd}T23:59:59`);
+    const weekStartISO = weekStartDate.toISOString();
+    const weekEndISO = weekEndDate.toISOString();
+
     setLoading(true);
     try {
+      // Delete existing shifts for this week/location (both draft and published)
+      const { data: existingShiftsRaw, error: existingErr } = await supabase
+        .from("shift")
+        .select("id")
+        .eq("business_id", activeBusinessId)
+        .eq("location_id", activeLocationId)
+        .gte("start_ts", weekStartISO)
+        .lte("end_ts", weekEndISO);
+
+      if (existingErr) {
+        console.error("existing shift load error", existingErr);
+        alert("Could not update existing schedule. See console for details.");
+        return;
+      }
+
+      const existingShifts = (existingShiftsRaw ?? []) as { id: string }[];
+      const existingIds = existingShifts.map((s) => s.id);
+
+      if (existingIds.length) {
+        const { error: delAssignErr } = await supabase
+          .from("shift_assignment")
+          .delete()
+          .in("shift_id", existingIds);
+
+        if (delAssignErr) {
+          console.error("shift_assignment delete error", delAssignErr);
+          alert(
+            "Could not clear existing assignments for this week. See console for details."
+          );
+          return;
+        }
+
+        const { error: delShiftErr } = await supabase
+          .from("shift")
+          .delete()
+          .in("id", existingIds);
+
+        if (delShiftErr) {
+          console.error("shift delete error", delShiftErr);
+          alert("Could not clear existing shifts for this week. See console.");
+          return;
+        }
+      }
+
       const shifts = validDrafts.map((d) => {
         const dayObj = DAYS.find((x) => x.day === d.day)!;
         const dateStr = dayObj.ymd;
@@ -436,7 +867,7 @@ export default function CreateSchedulePage(): JSX.Element {
           role_id: employees.find((e) => e.id === d.employeeId)!.roleId!,
           start_ts: startISO,
           end_ts: endISO,
-          status: "published" as const,
+          status: targetStatus,
           created_by: userId,
           _employeeId: d.employeeId,
         };
@@ -447,6 +878,7 @@ export default function CreateSchedulePage(): JSX.Element {
         activeBusinessId,
         activeLocationId,
         count: shifts.length,
+        status: targetStatus,
         sample: shifts[0],
       });
 
@@ -467,20 +899,15 @@ export default function CreateSchedulePage(): JSX.Element {
 
       if (insertErr) {
         console.error("shift insert error", insertErr);
-        setInsertErrorObj(insertErr ?? { message: String(insertErr) });
-        const errObj = insertErr as {
-          code?: string;
-          message?: string;
-          details?: string;
-        };
+        const errObj = insertErr as SupabaseErrorObj;
         const extra =
           errObj?.code === "42501"
             ? " This looks like a row-level security (RLS) denial."
             : "";
         alert(
           `Could not create shifts: ${
-            errObj.message ?? String(insertErr)
-          }${errObj.code ? " (code: " + errObj.code + ")" : ""}${extra}`
+            errObj?.message ?? String(insertErr)
+          }${errObj?.code ? " (code: " + errObj.code + ")" : ""}${extra}`
         );
         return;
       }
@@ -491,16 +918,17 @@ export default function CreateSchedulePage(): JSX.Element {
         end_ts: string;
       }[];
 
-      const assignments = inserted.map((row, idx) => ({
-        shift_id: row.id,
-        user_id: shifts[idx]._employeeId,
-        assigned_by: userId!,
-        assigned_at: new Date().toISOString(),
-        status: "assigned" as const,
-        source: "manager" as const,
-      }));
+      // Create assignments for both draft and published schedules so we can restore the week.
+      if (inserted.length) {
+        const assignments = inserted.map((row, idx) => ({
+          shift_id: row.id,
+          user_id: shifts[idx]._employeeId,
+          assigned_by: userId!,
+          assigned_at: new Date().toISOString(),
+          status: "assigned" as const,
+          source: "manager" as const,
+        }));
 
-      if (assignments.length) {
         const { error: asErr } = await supabase
           .from("shift_assignment")
           .insert(assignments);
@@ -510,39 +938,46 @@ export default function CreateSchedulePage(): JSX.Element {
         }
       }
 
-      alert("Schedule created.");
-      setDrafts([]);
-      router.replace("/employermanagement/employerhomepage");
+      if (targetStatus === "draft") {
+        alert("Draft schedule saved. You can come back to publish it later.");
+      } else {
+        alert("Schedule published.");
+        router.replace("/employermanagement/employerhomepage");
+      }
+
+      setScheduleStatus(targetStatus);
     } finally {
       setLoading(false);
     }
   }
 
-  const activeMeta: DayMeta | null =
-    activeDay == null ? null : DAYS.find((d) => d.day === activeDay) ?? null;
+  /* ---------- Preview data ---------- */
 
-  const shiftsPreview = useMemo(() => {
-    if (!activeBusinessId || !activeLocationId || !userId) return [];
-    const valid = drafts.filter((d) => !isEmployeeOffOnDay(d.employeeId, d.day));
-    return valid.map((d) => {
-      const dayObj = DAYS.find((x) => x.day === d.day)!;
-      const dateStr = dayObj.ymd;
-      const startISO = new Date(`${dateStr}T${d.start}:00`).toISOString();
-      const endISO = new Date(`${dateStr}T${d.end}:00`).toISOString();
-      return {
-        business_id: activeBusinessId,
-        location_id: activeLocationId,
-        role_id: employees.find((e) => e.id === d.employeeId)?.roleId ?? null,
-        start_ts: startISO,
-        end_ts: endISO,
-        status: "published",
-        created_by: userId,
-        _employeeId: d.employeeId,
-      };
-    });
-  }, [drafts, activeBusinessId, activeLocationId, employees, userId, DAYS, timeOffByUser]);
+  const previewByDay: Record<
+    number,
+    { employeeName: string; roleName: string; start: string; end: string }[]
+  > = useMemo(() => {
+    const map: Record<
+      number,
+      { employeeName: string; roleName: string; start: string; end: string }[]
+    > = {};
+    for (const d of drafts) {
+      const emp = employees.find((e) => e.id === d.employeeId);
+      if (!emp) continue;
+      (map[d.day] ||= []).push({
+        employeeName: emp.name,
+        roleName: emp.roleName ?? "—",
+        start: d.start,
+        end: d.end,
+      });
+    }
+    for (const dayKey of Object.keys(map)) {
+      const day = Number(dayKey);
+      map[day].sort((a, b) => toMinutes(a.start) - toMinutes(b.start));
+    }
+    return map;
+  }, [drafts, employees]);
 
-  /* ---------- Early-outs ---------- */
   if (contextError && !activeBusinessId) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 px-4">
@@ -568,7 +1003,7 @@ export default function CreateSchedulePage(): JSX.Element {
     return <div className="py-8 text-center">Loading…</div>;
   }
 
-  /* ---------- Render ---------- */
+  /* ---------- Render: Employee × Day Grid ---------- */
   return (
     <div className="min-h-screen bg-gray-50">
       {/* top bar */}
@@ -590,227 +1025,309 @@ export default function CreateSchedulePage(): JSX.Element {
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-4 pt-6">
-        <h1 className="text-3xl font-bold text-gray-900">
-          Create Weekly Schedule
-        </h1>
-        <p className="text-gray-600 mt-1">
-          Pick a day, see approved time off, and add shifts within store hours.
-        </p>
-      </div>
+      <div className="max-w-6xl mx-auto px-4 pt-6 pb-10">
+        {/* Header */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">
+              Create Weekly Schedule
+            </h1>
+            <p className="text-gray-600 mt-1">
+              Use the grid to assign shifts by employee and day. Time off and
+              availability are built in.
+            </p>
+            <p className="text-sm text-gray-600 mt-1">
+              <span className="font-medium">Business: </span>
+              {businessName ?? "—"} ·{" "}
+              <span className="font-medium">Location: </span>
+              {locationName ?? "—"} ·{" "}
+              <span className="font-medium">Store hours: </span>
+              {formatTime12(openHH)}–{formatTime12(closeHH)}
+            </p>
+          </div>
+          <div className="mt-2 sm:mt-0 text-sm text-gray-600">
+            <span className="font-medium mr-1">Current week status:</span>
+            <span
+              className={
+                scheduleStatus === "published"
+                  ? "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-800 border border-green-200"
+                  : scheduleStatus === "draft"
+                  ? "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200"
+                  : "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-700 border border-gray-200"
+              }
+            >
+              {scheduleStatus === "none"
+                ? "No saved schedule"
+                : scheduleStatus === "draft"
+                ? "Draft (manager-only)"
+                : "Published"}
+            </span>
+          </div>
+        </div>
 
-      {/* day tabs */}
-      <div className="sticky top-14 z-30 bg-gray-50/90 backdrop-blur border-b border-gray-200 mt-4">
-        <div className="max-w-6xl mx-auto px-2">
-          <div className="flex overflow-x-auto no-scrollbar gap-2 py-2">
-            {DAYS.map((d) => {
-              const isActive = activeDay === d.day;
-              return (
+        {/* Weekly preview card */}
+        {drafts.length > 0 && (
+          <div className="mt-4 border border-gray-200 rounded-2xl bg-white shadow-sm p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-900">
+                  {scheduleStatus === "draft"
+                    ? "Draft schedule preview"
+                    : "Schedule preview (this week)"}
+                </h2>
+                <p className="text-xs text-gray-500">
+                  Quick glance at who&apos;s working each day.
+                </p>
+              </div>
+            </div>
+            <div className="grid md:grid-cols-4 gap-3">
+              {DAYS.map((d) => {
+                const items = previewByDay[d.day] ?? [];
+                return (
+                  <div
+                    key={d.day}
+                    className="border border-gray-100 rounded-xl bg-gray-50/60 p-3 min-h-[64px]"
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-semibold text-gray-800">
+                        {d.label}
+                      </span>
+                      <span className="text-xs text-gray-500">{d.uiDate}</span>
+                    </div>
+                    {items.length === 0 ? (
+                      <p className="text-[11px] text-gray-400">No shifts</p>
+                    ) : (
+                      <ul className="space-y-1">
+                        {items.map((item, idx) => (
+                          <li
+                            key={idx}
+                            className="text-[11px] text-gray-700 flex flex-col"
+                          >
+                            <span className="font-medium truncate">
+                              {item.employeeName}
+                            </span>
+                            <span className="truncate text-gray-500">
+                              {item.roleName} ·{" "}
+                              {formatRange12(item.start, item.end)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Grid controls */}
+        <div className="mt-6 flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+              Off / unavailable
+            </span>
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200">
+              Has shift
+            </span>
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 border border-gray-200">
+              Click to add / edit
+            </span>
+          </div>
+          <div className="hidden sm:flex items-center gap-1 text-xs text-gray-500">
+            <span>Highlight day:</span>
+            <div className="inline-flex rounded-lg border border-gray-200 bg-white overflow-hidden">
+              {DAYS.map((d) => (
                 <button
                   key={d.day}
-                  onClick={() => setActiveDay(isActive ? null : d.day)}
-                  className={`${
-                    isActive
-                      ? "bg-white border-blue-500 text-blue-700 shadow-sm"
-                      : "bg-white border-gray-200 text-gray-700 hover:border-gray-300"
-                  } relative shrink-0 px-4 py-2 rounded-xl border text-sm transition-all`}
+                  onClick={() => setActiveDay(d.day)}
+                  className={`px-2 py-1 text-[11px] font-medium border-l border-gray-200 first:border-l-0 ${
+                    activeDay === d.day
+                      ? "bg-blue-50 text-blue-700"
+                      : "text-gray-600 hover:bg-gray-50"
+                  }`}
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold">{d.label}</span>
-                    <span className="text-gray-500">{d.uiDate}</span>
-                    <ChevronDown
-                      className={`w-4 h-4 transition-transform ${
-                        isActive ? "rotate-180" : ""
-                      }`}
-                    />
-                  </div>
+                  {d.label}
                 </button>
-              );
-            })}
+              ))}
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* day panel */}
-      <div className="max-w-6xl mx-auto px-4">
-        <div
-          role="region"
-          aria-hidden={activeDay == null}
-          className={`${
-            activeDay == null
-              ? "max-h-0 opacity-0 -translate-y-2"
-              : "max-h-[65vh] opacity-100 translate-y-0"
-          } overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition-[max-height,opacity,transform] duration-300 ease-out mt-4`}
-        >
-          <div className="px-5 pt-4 pb-3 flex items-start justify-between sticky top-0 bg-white">
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">
-                {activeMeta ? `${activeMeta.label} — ${activeMeta.uiDate}` : ""}
-              </h2>
-              <p className="text-sm text-gray-600">
-                Business:{" "}
-                <span className="font-medium">{businessName ?? "—"}</span>
-              </p>
-              <p className="text-sm text-gray-600">
-                Location:{" "}
-                <span className="font-medium">{locationName ?? "—"}</span>
-              </p>
-              <p className="text-sm text-gray-600">
-                Store Hours:{" "}
-                <span className="font-medium">
-                  {openHH} – {closeHH}
-                </span>
-              </p>
-            </div>
-            <button
-              onClick={() => setActiveDay(null)}
-              className="p-2 rounded-lg hover:bg-gray-100 text-gray-600"
-              aria-label="Close panel"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-
-          {activeDay != null && (
-            <div className="px-5 pb-5 max-h-[55vh] overflow-y-auto">
-              <div className="space-y-3">
-                {employees.length === 0 && (
-                  <p className="text-sm text-gray-500">
-                    No active employees found for this business (or RLS blocked
-                    the query). Check that you and your employees have active
-                    employment rows for this business.
-                  </p>
-                )}
-                {employees.map((e) => {
-                  const d = getDraft(e.id, activeDay!);
-                  const isOff = isEmployeeOffOnDay(e.id, activeDay);
-                  return (
-                    <div
-                      key={e.id}
-                      className={`bg-white border rounded-xl p-4 flex items-center justify-between ${
-                        isOff ? "border-amber-200 bg-amber-50/40" : "border-gray-200"
-                      }`}
-                    >
-                      <div className="min-w-0">
-                        <p className="font-semibold text-gray-900 truncate">
-                          {e.name}
-                        </p>
-                        <p className="text-sm text-gray-500 truncate">
-                          {e.roleName}
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        {isOff ? (
-                          <>
-                            <span className="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200">
-                              Approved time off
-                            </span>
-                          </>
-                        ) : d ? (
-                          <div className="text-right">
-                            <p className="text-sm font-semibold text-gray-900">
-                              {d.start} – {d.end}
-                            </p>
-                          </div>
-                        ) : (
-                          <p className="text-sm text-gray-400">No shift</p>
-                        )}
-
-                        {!isOff && (
-                          <button
-                            onClick={() => openEditor(e.id, activeDay!)}
-                            className="px-3 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700"
-                          >
-                            {d ? "Edit" : "Add"}
-                          </button>
-                        )}
-                        {d && !isOff && (
-                          <button
-                            onClick={() => removeDraft(e.id, activeDay!)}
-                            className="px-2 py-2 text-gray-600 hover:bg-gray-100 rounded-lg"
-                            aria-label="Remove"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+        {/* Grid */}
+        <div className="mt-3 rounded-2xl border border-gray-200 bg-white shadow-sm overflow-x-auto">
+          <div className="min-w-[720px]">
+            {/* Header row */}
+            <div className="grid grid-cols-[minmax(220px,0.9fr)_repeat(7,minmax(90px,1fr))] border-b border-gray-200 bg-gray-50 text-xs font-semibold text-gray-700">
+              <div className="px-4 py-2 flex items-center justify-between">
+                <span>Employee</span>
+                <span className="text-[11px] text-gray-400">Role</span>
               </div>
-            </div>
-          )}
-        </div>
-
-        {/* Debug panel */}
-        <div className="mt-6 mb-4">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-sm text-gray-600">Debug: payload preview</div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowDebug((s) => !s)}
-                className="px-3 py-1 text-sm border rounded-lg bg-white"
-              >
-                {showDebug ? "Hide" : "Show"}
-              </button>
-              <button
-                onClick={() => {
-                  navigator.clipboard?.writeText(
-                    JSON.stringify(shiftsPreview, null, 2)
-                  );
-                }}
-                className="px-3 py-1 text-sm bg-gray-100 rounded-lg"
-              >
-                Copy
-              </button>
-            </div>
-          </div>
-          {showDebug && (
-            <pre className="max-h-60 overflow-auto p-3 bg-slate-900 text-slate-50 rounded-lg text-xs">
-              {shiftsPreview.length
-                ? JSON.stringify(shiftsPreview, null, 2)
-                : "No payload: ensure a business, location, and at least one valid (non-time-off) draft shift exist."}
-            </pre>
-          )}
-          {insertErrorObj && (
-            <div className="mt-4">
-              <div className="text-sm text-rose-600 mb-1">
-                Insert error details
-              </div>
-              <pre className="max-h-40 overflow-auto p-3 bg-rose-900 text-rose-50 rounded-lg text-xs">
-                {JSON.stringify(insertErrorObj, null, 2)}
-              </pre>
-              <div className="flex gap-2 mt-2 justify-end">
+              {DAYS.map((d) => (
                 <button
-                  onClick={() =>
-                    navigator.clipboard?.writeText(
-                      JSON.stringify(insertErrorObj, null, 2)
-                    )
-                  }
-                  className="px-3 py-1 text-sm bg-gray-100 rounded-lg"
+                  key={d.day}
+                  onClick={() => setActiveDay(d.day)}
+                  className={`px-3 py-2 border-l border-gray-200 text-left flex flex-col ${
+                    activeDay === d.day ? "bg-blue-50" : ""
+                  }`}
                 >
-                  Copy
+                  <span className="text-[11px] font-semibold">{d.label}</span>
+                  <span className="text-[11px] text-gray-500">{d.uiDate}</span>
                 </button>
-              </div>
+              ))}
             </div>
-          )}
+
+            {/* Rows */}
+            {employees.length === 0 ? (
+              <div className="px-4 py-4 text-sm text-gray-500">
+                No active employees found for this business (or RLS blocked the
+                query). Check that you and your employees have active employment
+                rows for this business.
+              </div>
+            ) : (
+              employees.map((e, rowIdx) => (
+                <div
+                  key={e.id}
+                  className={`grid grid-cols-[minmax(220px,0.9fr)_repeat(7,minmax(90px,1fr))] text-xs ${
+                    rowIdx % 2 === 0 ? "bg-white" : "bg-gray-50/60"
+                  } border-t border-gray-100`}
+                >
+                  {/* Employee cell */}
+                  <div className="px-4 py-2 flex flex-col justify-center">
+                    <span className="text-sm font-semibold text-gray-900 truncate">
+                      {e.name}
+                    </span>
+                    <span className="text-[11px] text-gray-500 truncate">
+                      {e.roleName}
+                    </span>
+                  </div>
+
+                  {/* Day cells */}
+                  {DAYS.map((d) => {
+                    const draft = getDraft(e.id, d.day);
+                    const isOff = isEmployeeOffOnDay(e.id, d.day);
+                    const availWindow = getAvailabilityWindow(e.id, d.day);
+                    const allowedWindow = computeAllowedWindowForDay(e.id, d.day);
+                    const isUnavailableByAvail =
+                      availWindow?.status === "unavailable";
+                    const isPartial = availWindow?.status === "partial";
+
+                    const isBlocked = isOff || isUnavailableByAvail || !allowedWindow;
+
+                    let label: string;
+                    if (isOff) {
+                      label = "Time off";
+                    } else if (isUnavailableByAvail) {
+                      label = "Unavailable";
+                    } else if (draft) {
+                      label = formatRange12(draft.start, draft.end);
+                    } else if (!allowedWindow) {
+                      label = "Blocked";
+                    } else {
+                      label = "Add shift";
+                    }
+
+                    const partialStart = availWindow?.start ?? null;
+                    const partialEnd = availWindow?.end ?? null;
+
+                    const availHint = isPartial
+                      ? `Partial availability ${formatTime12(
+                          partialStart
+                        )}–${formatTime12(partialEnd)}`
+                      : availWindow
+                      ? "Available"
+                      : "";
+
+                    return (
+                      <button
+                        key={d.day}
+                        disabled={isOff || isUnavailableByAvail || !allowedWindow}
+                        onClick={() => openEditor(e.id, d.day)}
+                        className={`px-2 py-2 border-l border-gray-200 text-left flex flex-col justify-center transition-colors ${
+                          draft
+                            ? "bg-blue-50 hover:bg-blue-100"
+                            : isBlocked
+                            ? "bg-amber-50/70 text-amber-800 cursor-not-allowed"
+                            : "hover:bg-gray-100"
+                        }`}
+                      >
+                        <span
+                          className={`text-[11px] font-medium ${
+                            draft
+                              ? "text-blue-800"
+                              : isBlocked
+                              ? "text-amber-800"
+                              : "text-gray-700"
+                          }`}
+                        >
+                          {label}
+                        </span>
+                        {draft && (
+                          <span className="text-[10px] text-gray-500 mt-0.5">
+                            Click to edit ·{" "}
+                            {/* span instead of nested button to avoid button-in-button */}
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                removeDraft(e.id, d.day);
+                              }}
+                              onKeyDown={(ev) => {
+                                if (ev.key === "Enter" || ev.key === " ") {
+                                  ev.preventDefault();
+                                  ev.stopPropagation();
+                                  removeDraft(e.id, d.day);
+                                }
+                              }}
+                              className="underline hover:text-gray-700 cursor-pointer"
+                            >
+                              remove
+                            </span>
+                          </span>
+                        )}
+                        {!draft && availHint && !isBlocked && (
+                          <span className="text-[10px] text-gray-400 mt-0.5">
+                            {availHint}
+                          </span>
+                        )}
+                        {isBlocked && !isOff && !isUnavailableByAvail && (
+                          <span className="text-[10px] text-amber-700 mt-0.5">
+                            Outside availability / hours
+                          </span>
+                        )}
+                        {isOff && (
+                          <span className="text-[10px] text-amber-700 mt-0.5">
+                            Approved time off
+                          </span>
+                        )}
+                        {isUnavailableByAvail && (
+                          <span className="text-[10px] text-amber-700 mt-0.5">
+                            Marked unavailable
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))
+            )}
+          </div>
         </div>
 
-        <div className="mt-6 mb-10 flex justify-end gap-3">
+        {/* Actions */}
+        <div className="mt-6 flex flex-col sm:flex-row justify-end gap-3">
           <button
-            onClick={() =>
-              router.replace("/employermanagement/employerhomepage")
-            }
-            className="px-6 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50"
+            onClick={() => persistSchedule("draft")}
+            className="px-6 py-2 border border-gray-300 text-gray-800 font-medium rounded-lg hover:bg-gray-50"
           >
-            Back to Home
+            Save as Draft
           </button>
           <button
-            onClick={handleConfirm}
+            onClick={() => persistSchedule("published")}
             className="px-6 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700"
           >
-            Confirm Schedule
+            Publish Schedule
           </button>
         </div>
       </div>
@@ -868,7 +1385,7 @@ export default function CreateSchedulePage(): JSX.Element {
                   Cancel
                 </button>
                 <button
-                  onClick={saveDraft}
+                  onClick={saveDraftLocal}
                   className="flex-1 px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700"
                 >
                   Save
@@ -876,8 +1393,12 @@ export default function CreateSchedulePage(): JSX.Element {
               </div>
 
               <p className="text-xs text-gray-500 pt-2">
-                Shifts are constrained to store hours ({openHH}–{closeHH}) and
-                cannot be created on approved time off days.
+                Shifts are constrained to store hours ({formatTime12(
+                  openHH
+                )}
+                –{formatTime12(closeHH)}) and the employee&apos;s approved
+                availability. Days with time off or &quot;unavailable&quot; cannot
+                be scheduled.
               </p>
             </div>
           </div>

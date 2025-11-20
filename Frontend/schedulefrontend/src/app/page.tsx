@@ -1,5 +1,4 @@
 "use client";
-// removed unused imports
 import "./globals.css";
 
 import { Card, CardContent } from "@/components/ui/card";
@@ -17,13 +16,13 @@ export default function Page() {
   return (
     <div className="size-full bg-background p-8">
 
-      {/* Main Content */}
+      {}
       <div className="flex flex-col items-center justify-center">
         <h2 className="mb-12 text-foreground">Pick a role:</h2>
 
-        {/* Role Cards */}
+        {}
         <div className="flex gap-8 flex-wrap justify-center">
-          {/* Employer Card */}
+          {}
           <Card
             className="w-64 cursor-pointer transition-all hover:shadow-xl hover:scale-105 border-2 hover:border-primary"
             onClick={() => handleRoleSelection("employer")}
@@ -36,7 +35,7 @@ export default function Page() {
             </CardContent>
           </Card>
 
-          {/* Employee Card */}
+          {}
           <Card
             className="w-64 cursor-pointer transition-all hover:shadow-xl hover:scale-105 border-2 hover:border-secondary"
             onClick={() => handleRoleSelection("employee")}

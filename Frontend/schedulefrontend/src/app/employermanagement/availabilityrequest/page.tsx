@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   ChevronLeft,
   ChevronRight,
@@ -219,6 +220,7 @@ function DayChip(props: {
 
 export default function ManagerAvailabilityRequestsPage() {
   const supabase = createClientComponentClient();
+  const router = useRouter();
 
   const [requests, setRequests] = useState<RequestVM[]>([]);
   const [loading, setLoading] = useState(true);
@@ -440,18 +442,26 @@ export default function ManagerAvailabilityRequestsPage() {
       <div className="max-w-6xl mx-auto px-4 space-y-8">
         {/* Header */}
         <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-slate-100 text-xs font-medium text-slate-700 mb-2">
-              <ShieldCheck className="w-3 h-3" />
-              Manager · Availability
+          <div className="flex items-start gap-4">
+            <button
+              onClick={() => router.replace("/employermanagement/employerhomepage")}
+              className="px-3 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+            >
+              Back to Home
+            </button>
+            <div>
+              <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-slate-100 text-xs font-medium text-slate-700 mb-2">
+                <ShieldCheck className="w-3 h-3" />
+                Manager · Availability
+              </div>
+              <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
+                Availability Requests
+              </h1>
+              <p className="mt-1 text-sm text-slate-600">
+                Review employees’ requested availability patterns, including partial-day
+                windows, and approve or deny changes.
+              </p>
             </div>
-            <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
-              Availability Requests
-            </h1>
-            <p className="mt-1 text-sm text-slate-600">
-              Review employees’ requested availability patterns, including partial-day
-              windows, and approve or deny changes.
-            </p>
           </div>
 
           <div className="flex items-center gap-2">

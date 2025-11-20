@@ -1,4 +1,3 @@
-// app/employermanagement/employerhomepage/page.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -39,7 +38,65 @@ type AssignmentRow = { id: string; shift_id: string; user_id: string; status: st
 type ProfileRow = { id: string; full_name: string | null };
 type BusinessOpt = { id: string; name: string | null };
 type LocationOpt = { id: string; name: string };
-type DayCell = { start?: string; end?: string };
+
+type TORow = {
+  id: string;
+  user_id: string;
+  start_ts: string;
+  end_ts: string;
+  reason?: string | null;
+  status: "pending" | "approved" | "denied" | "canceled";
+};
+
+type DayOfWeek =
+  | "monday"
+  | "tuesday"
+  | "wednesday"
+  | "thursday"
+  | "friday"
+  | "saturday"
+  | "sunday";
+
+type AvailabilityStatus = "available" | "partial" | "unavailable";
+
+type AvailabilityRow = {
+  id: string;
+  user_id: string;
+  weekly_pattern_json: any;
+  effective_from: string;
+  effective_to: string | null;
+  status?: string | null;
+};
+
+type AvailabilityPattern = Record<DayOfWeek, AvailabilityStatus>;
+
+const ALL_DAYS: DayOfWeek[] = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+];
+
+const DAY_KEYS: DayOfWeek[] = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+];
+
+type DayCell = {
+  start?: string;
+  end?: string;
+  timeOffStatus?: TORow["status"];
+  unavailable?: boolean;
+};
+
 type GridRow = { userId: string; name: string; byDay: DayCell[] };
 
 /* ---------- Date helpers ---------- */
@@ -66,6 +123,40 @@ function fmtDateMMDD(d: Date) {
   return `${mm}/${dd}`;
 }
 
+function normalizeToLocalDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function toYMD(d: Date): string {
+  const year = d.getFullYear();
+  const month = `${d.getMonth() + 1}`.padStart(2, "0");
+  const day = `${d.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeAvailabilityPattern(raw: any): AvailabilityPattern {
+  let src: Record<string, unknown> = {};
+  if (raw && typeof raw === "object") {
+    const r = raw as Record<string, unknown>;
+    if (r.pattern && typeof r.pattern === "object" && r.pattern !== null) {
+      src = r.pattern as Record<string, unknown>;
+    } else {
+      src = r;
+    }
+  }
+
+  const out: Partial<AvailabilityPattern> = {};
+  for (const day of ALL_DAYS) {
+    const v = src[day];
+    if (v === "available" || v === "partial" || v === "unavailable") {
+      out[day] = v as AvailabilityStatus;
+    } else {
+      out[day] = "available";
+    }
+  }
+  return out as AvailabilityPattern;
+}
+
 /* ---------- Component ---------- */
 export default function EmployerHomePage() {
   const supabase = useRef(createClientComponentClient()).current;
@@ -90,7 +181,7 @@ export default function EmployerHomePage() {
       localStorage.removeItem("activeBusinessId");
       localStorage.removeItem("activeLocationIds");
     }
-    router.replace("/"); // change if you have a dedicated login route
+    router.replace("/");
   };
 
   /* ---------- Seed selection from localStorage ---------- */
@@ -360,7 +451,7 @@ export default function EmployerHomePage() {
         );
       }
 
-      // shifts: include draft + published, exclude canceled
+      // shifts: draft + published, exclude canceled
       let shiftQ = supabase
         .from("shift")
         .select("id,business_id,location_id,role_id,start_ts,end_ts,status")
@@ -411,12 +502,79 @@ export default function EmployerHomePage() {
         assigns = (assignsRaw ?? []) as AssignmentRow[];
       }
 
+      // --- Time off requests for employees in this business (for the week) ---
+      const timeOffByUserDay = new Map<string, Map<string, TORow["status"]>>();
+      if (employeeIds.length) {
+        const { data: torRaw, error: torErr } = await supabase
+          .from("time_off_request")
+          .select("id,user_id,start_ts,end_ts,status")
+          .in("user_id", employeeIds);
+
+        if (torErr) {
+          console.error("Time off query failed:", torErr);
+        } else if (torRaw) {
+          const rows = torRaw as TORow[];
+          for (const r of rows) {
+            if (r.status !== "pending" && r.status !== "approved") continue;
+
+            const startLocal = normalizeToLocalDay(new Date(r.start_ts));
+            const endExclusive = normalizeToLocalDay(new Date(r.end_ts));
+            const lastIncluded = new Date(endExclusive.getTime() - 1);
+
+            for (
+              let d = new Date(startLocal);
+              d <= lastIncluded;
+              d.setDate(d.getDate() + 1)
+            ) {
+              const ymd = toYMD(d);
+              const existing = timeOffByUserDay.get(r.user_id) ?? new Map();
+              existing.set(ymd, r.status);
+              timeOffByUserDay.set(r.user_id, existing);
+            }
+          }
+        }
+      }
+
+      // --- Availability patterns per user (latest/approved) ---
+      const availByUser = new Map<string, AvailabilityPattern>();
+      if (employeeIds.length) {
+        const { data: avRaw, error: avErr } = await supabase
+          .from("availability")
+          .select(
+            "id,user_id,weekly_pattern_json,effective_from,effective_to,status",
+          )
+          .in("user_id", employeeIds)
+          .order("effective_from", { ascending: false });
+
+        if (avErr) {
+          console.error("Availability query failed:", avErr);
+        } else if (avRaw) {
+          const rows = avRaw as AvailabilityRow[];
+          const byUser: Record<string, AvailabilityRow[]> = {};
+          for (const r of rows) {
+            if (!byUser[r.user_id]) byUser[r.user_id] = [];
+            byUser[r.user_id].push(r);
+          }
+          for (const uid of Object.keys(byUser)) {
+            const list = byUser[uid];
+            const latest =
+              list.find((r) => r.status === "approved") ?? list[0] ?? null;
+            if (!latest) continue;
+            availByUser.set(
+              uid,
+              normalizeAvailabilityPattern(latest.weekly_pattern_json),
+            );
+          }
+        }
+      }
+
+      // Build grid
       const byUser = new Map<string, GridRow>();
       for (const uid of employeeIds) {
         byUser.set(uid, {
           userId: uid,
           name: nameById.get(uid) ?? uid,
-          byDay: Array.from({ length: 7 }, () => ({})),
+          byDay: Array.from({ length: 7 }, () => ({} as DayCell)),
         });
       }
 
@@ -429,6 +587,7 @@ export default function EmployerHomePage() {
         if (!rec) continue;
 
         rec.byDay[dow] = {
+          ...(rec.byDay[dow] ?? {}),
           start: new Date(sh.start_ts).toLocaleTimeString([], {
             hour: "numeric",
             minute: "2-digit",
@@ -438,6 +597,38 @@ export default function EmployerHomePage() {
             minute: "2-digit",
           }),
         };
+      }
+
+      // Overlay time-off and availability into each cell
+      for (const uid of employeeIds) {
+        const row = byUser.get(uid);
+        if (!row) continue;
+
+        const availPattern = availByUser.get(uid) ?? null;
+        const torMap = timeOffByUserDay.get(uid);
+
+        for (let i = 0; i < 7; i++) {
+          const date = new Date(ws);
+          date.setDate(ws.getDate() + i);
+          const ymd = toYMD(date);
+          const cell = row.byDay[i] || ({} as DayCell);
+
+          if (torMap) {
+            const status = torMap.get(ymd);
+            if (status) {
+              cell.timeOffStatus = status;
+            }
+          }
+
+          if (availPattern) {
+            const dayKey = DAY_KEYS[i];
+            if (availPattern[dayKey] === "unavailable") {
+              cell.unavailable = true;
+            }
+          }
+
+          row.byDay[i] = cell;
+        }
       }
 
       if (!cancelled) {
@@ -451,7 +642,7 @@ export default function EmployerHomePage() {
     return () => {
       cancelled = true;
     };
-  }, [scopeKey, supabase]);
+  }, [scopeKey, supabase, selectedBiz, selectedLoc]);
 
   /* ---------- Derived ---------- */
   const bizName = useMemo(() => {
@@ -522,19 +713,25 @@ export default function EmployerHomePage() {
               </button>
               <button
                 className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() => router.push("/employermanagement/managetimerequests")}
+                onClick={() =>
+                  router.push("/employermanagement/managetimerequests")
+                }
               >
                 <Clock className="w-4 h-4" /> Time Off Requests
               </button>
               <button
                 className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() => router.push("/employermanagement/availabilityrequest")}
+                onClick={() =>
+                  router.push("/employermanagement/availabilityrequest")
+                }
               >
                 <CheckSquare className="w-4 h-4" /> Availability Requests
               </button>
               <button
                 className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() => router.push("/employermanagement/announcements")}
+                onClick={() =>
+                  router.push("/employermanagement/announcements")
+                }
               >
                 <Bell className="w-4 h-4" /> Announcements
               </button>
@@ -630,11 +827,29 @@ export default function EmployerHomePage() {
                               {cell.start}
                             </div>
                             <div className="text-xs">{cell.end}</div>
+                            {(cell.timeOffStatus || cell.unavailable) && (
+                              <div className="mt-1 text-[11px] text-amber-700">
+                                {cell.timeOffStatus &&
+                                  (cell.timeOffStatus === "pending"
+                                    ? "Time off requested (pending)"
+                                    : "Time off approved")}
+                                {cell.timeOffStatus && cell.unavailable && " • "}
+                                {cell.unavailable && "Marked unavailable"}
+                              </div>
+                            )}
+                          </div>
+                        ) : cell.timeOffStatus ? (
+                          <div className="border border-amber-200 bg-amber-50 rounded-lg p-2 text-xs text-amber-900">
+                            {cell.timeOffStatus === "pending"
+                              ? "Time off requested (pending)"
+                              : "Time off approved"}
+                          </div>
+                        ) : cell.unavailable ? (
+                          <div className="border border-gray-200 bg-gray-50 rounded-lg p-2 text-xs text-gray-600">
+                            Unavailable
                           </div>
                         ) : (
-                          <div className="text-xs text-gray-400 py-2">
-                            Off
-                          </div>
+                          <div className="text-xs text-gray-400 py-2">Off</div>
                         )}
                       </td>
                     ))}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   ChevronLeft,
   ChevronRight,
@@ -49,6 +50,7 @@ type FilterKey = "all" | "pending" | "approved" | "denied" | "canceled";
 /* ========= Page ========= */
 export default function ManagerTimeOffRequestsPage() {
   const supabase = createClientComponentClient();
+  const router = useRouter();
 
   const [requests, setRequests] = useState<RequestVM[]>([]);
   const [loading, setLoading] = useState(true);
@@ -311,18 +313,26 @@ export default function ManagerTimeOffRequestsPage() {
       <div className="max-w-6xl mx-auto px-4 space-y-8">
         {/* Header */}
         <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-slate-100 text-xs font-medium text-slate-700 mb-2">
-              <ShieldCheck className="w-3 h-3" />
-              Manager · Time Off
+          <div className="flex items-start gap-4">
+            <button
+              onClick={() => router.replace("/employermanagement/employerhomepage")}
+              className="px-3 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+            >
+              Back to Home
+            </button>
+            <div>
+              <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-slate-100 text-xs font-medium text-slate-700 mb-2">
+                <ShieldCheck className="w-3 h-3" />
+                Manager · Time Off
+              </div>
+              <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
+                Time Off Requests
+              </h1>
+              <p className="mt-1 text-sm text-slate-600">
+                Review, approve, or deny time off for your team. Decisions are tracked for
+                audit history.
+              </p>
             </div>
-            <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
-              Time Off Requests
-            </h1>
-            <p className="mt-1 text-sm text-slate-600">
-              Review, approve, or deny time off for your team. Decisions are tracked for
-              audit history.
-            </p>
           </div>
 
           <div className="flex items-center gap-2">

@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-import { Calendar, Clock, Bell, Settings, LogOut } from "lucide-react";
+import { Calendar, Clock, Bell, Settings, LogOut, AlertCircle } from "lucide-react";
 
 // ---- Types ----
 type Employment = {
@@ -56,6 +56,69 @@ type ShiftTemplateRow = {
   end_time: string; // "HH:MM:SS"
 };
 
+// NOTE: For this page we only ever query "pending" + "approved"
+type TORowLite = {
+  start_ts: string;
+  end_ts: string;
+  status: "pending" | "approved";
+};
+
+type AvailabilityStatus = "available" | "partial" | "unavailable";
+type DayOfWeek =
+  | "monday"
+  | "tuesday"
+  | "wednesday"
+  | "thursday"
+  | "friday"
+  | "saturday"
+  | "sunday";
+
+type WeeklyPattern = Record<DayOfWeek, AvailabilityStatus>;
+
+type AvailabilityRowLite = {
+  weekly_pattern_json: unknown;
+  effective_from: string;
+  effective_to: string | null;
+  status?: string | null;
+};
+
+const WEEKDAY_LABELS = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+] as const;
+
+const DAY_KEYS: DayOfWeek[] = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+];
+
+type DayBucket = {
+  dayIndex: number;
+  date: Date;
+  shifts: Array<{
+    role: string;
+    start: string;
+    end: string;
+    color?: string | null;
+  }>;
+};
+
+type DayFlags = {
+  hasTimeOff: boolean;
+  timeOffStatus?: "pending" | "approved";
+  isUnavailableByAvailability: boolean;
+};
+
 // ---- Helpers ----
 function startOfWeek(d: Date, weekStartsOn: 0 | 1 = 0): Date {
   const day = d.getDay();
@@ -85,27 +148,44 @@ function fmtTimeLocal(iso: string): string {
   return dt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-const WEEKDAY_LABELS = [
-  "Sunday",
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-] as const;
+function normalizeToLocalDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
 
-type DayBucket = {
-  dayIndex: number;
-  date: Date;
-  shifts: Array<{
-    role: string;
-    start: string;
-    end: string;
-    color?: string | null;
-  }>;
-};
+function normalizePattern(raw: unknown): WeeklyPattern {
+  const ALL_DAYS: DayOfWeek[] = [
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+  ];
 
+  let src: Record<string, unknown> = {};
+  if (raw && typeof raw === "object") {
+    const r = raw as Record<string, unknown>;
+    if (r.pattern && typeof r.pattern === "object" && r.pattern !== null) {
+      src = r.pattern as Record<string, unknown>;
+    } else {
+      src = r;
+    }
+  }
+
+  const out: Partial<WeeklyPattern> = {};
+  for (const day of ALL_DAYS) {
+    const v = src[day];
+    if (v === "available" || v === "partial" || v === "unavailable") {
+      out[day] = v as AvailabilityStatus;
+    } else {
+      out[day] = "available";
+    }
+  }
+  return out as WeeklyPattern;
+}
+
+// ---- Component ----
 export default function EmployeeHomePage() {
   const supabase = createClientComponentClient();
   const router = useRouter();
@@ -114,6 +194,7 @@ export default function EmployeeHomePage() {
   const [weekLabel, setWeekLabel] = useState<string>("");
   const [days, setDays] = useState<DayBucket[]>([]);
   const [hadRealAssignments, setHadRealAssignments] = useState<boolean>(false);
+  const [dayFlags, setDayFlags] = useState<Record<number, DayFlags>>({});
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -121,7 +202,7 @@ export default function EmployeeHomePage() {
       localStorage.removeItem("activeBusinessId");
       localStorage.removeItem("activeLocationIds");
     }
-    router.replace("/"); // change if you have a dedicated login route
+    router.replace("/");
   };
 
   useEffect(() => {
@@ -138,6 +219,7 @@ export default function EmployeeHomePage() {
           setDays(defaultEmptyWeek());
           setWeekLabel(labelForWeek(new Date()));
           setHadRealAssignments(false);
+          setDayFlags({});
           setLoading(false);
         }
         return;
@@ -159,6 +241,7 @@ export default function EmployeeHomePage() {
           setDays(defaultEmptyWeek());
           setWeekLabel(labelForWeek(new Date()));
           setHadRealAssignments(false);
+          setDayFlags({});
           setLoading(false);
         }
         return;
@@ -171,13 +254,107 @@ export default function EmployeeHomePage() {
       const weekEnd = endOfWeek(now, 0);
       const label = labelForWeek(now);
 
+      // Initialize per-day flags for this week (0..6)
+      const flagsByIndex: Record<number, DayFlags> = {};
+      for (let i = 0; i < 7; i++) {
+        flagsByIndex[i] = {
+          hasTimeOff: false,
+          isUnavailableByAvailability: false,
+        };
+      }
+
+      const todayISODate = now.toISOString().split("T")[0];
+
+      // 3a) Availability for this user, effective today
+      try {
+        const { data: availRows, error: availErr } = await supabase
+          .from("availability")
+          .select(
+            "weekly_pattern_json,effective_from,effective_to,status",
+          )
+          .eq("user_id", uid)
+          .lte("effective_from", todayISODate)
+          .or(`effective_to.is.null,effective_to.gte.${todayISODate}`)
+          .order("effective_from", { ascending: false });
+
+        if (!availErr && availRows && availRows.length > 0) {
+          const rows = availRows as AvailabilityRowLite[];
+          const current =
+            rows.find((r) => r.status === "approved") ?? rows[0];
+
+          const pattern = normalizePattern(current.weekly_pattern_json);
+
+          for (let i = 0; i < 7; i++) {
+            const key = DAY_KEYS[i];
+            const statusForDay = pattern[key];
+            if (statusForDay === "unavailable") {
+              flagsByIndex[i].isUnavailableByAvailability = true;
+            }
+          }
+        }
+      } catch (e) {
+        console.error("[EmployeeHome] availability load error", e);
+      }
+
+      // 3b) Time off requests for this user that intersect this week (pending/approved)
+      try {
+        const { data: torRows, error: torErr } = await supabase
+          .from("time_off_request")
+          .select("start_ts,end_ts,status")
+          .eq("user_id", uid)
+          .in("status", ["pending", "approved"]);
+
+        if (!torErr && torRows && torRows.length > 0) {
+          const rows = torRows as TORowLite[];
+
+          for (const r of rows) {
+            const startRaw = new Date(r.start_ts);
+            const endRaw = new Date(r.end_ts); // exclusive
+            const lastIncluded = new Date(endRaw.getTime() - 1);
+
+            let cur = normalizeToLocalDay(startRaw);
+            const lastDay = normalizeToLocalDay(lastIncluded);
+
+            while (cur <= lastDay) {
+              const curMs = cur.getTime();
+              if (
+                curMs >= normalizeToLocalDay(weekStart).getTime() &&
+                curMs <= normalizeToLocalDay(weekEnd).getTime()
+              ) {
+                const idx = cur.getDay(); // 0..6
+                const existing = flagsByIndex[idx];
+
+                if (!existing.hasTimeOff) {
+                  flagsByIndex[idx].hasTimeOff = true;
+                  flagsByIndex[idx].timeOffStatus = r.status;
+                } else if (
+                  existing.timeOffStatus === "pending" &&
+                  r.status === "approved"
+                ) {
+                  flagsByIndex[idx].timeOffStatus = "approved";
+                }
+              }
+
+              cur = new Date(cur);
+              cur.setDate(cur.getDate() + 1);
+            }
+          }
+        }
+      } catch (e) {
+        console.error("[EmployeeHome] time off load error", e);
+      }
+
       // 4) Assignments for user → shift_ids
       const { data: saRows, error: saErr } = await supabase
         .from("shift_assignment")
         .select("id,shift_id,user_id,assigned_by,assigned_at,status")
         .eq("user_id", uid);
 
-      console.debug("[EmployeeHome] assignments", { saErr, saCount: saRows?.length, saRows });
+      console.debug("[EmployeeHome] assignments", {
+        saErr,
+        saCount: saRows?.length,
+        saRows,
+      });
 
       if (!saErr && saRows && saRows.length > 0) {
         const shiftIds: string[] = saRows.map(
@@ -202,7 +379,6 @@ export default function EmployeeHomePage() {
         });
 
         if (!shErr && shifts && shifts.length > 0) {
-          // Load role names and colors
           const roleIds = Array.from(new Set(shifts.map((s) => s.role_id)));
           const locIds = Array.from(new Set(shifts.map((s) => s.location_id)));
 
@@ -231,11 +407,12 @@ export default function EmployeeHomePage() {
             }),
           );
 
-          const buckets = buildBucketsFromShifts(withMeta, weekStart);
+          const buckets = buildBucketsFromShifts(withMeta);
           if (!cancelled) {
             setDays(buckets);
             setWeekLabel(label);
             setHadRealAssignments(true);
+            setDayFlags(flagsByIndex);
             setLoading(false);
           }
           return;
@@ -282,6 +459,7 @@ export default function EmployeeHomePage() {
           setWeekLabel(label);
         }
         setHadRealAssignments(false);
+        setDayFlags(flagsByIndex);
         setLoading(false);
       }
     })();
@@ -289,6 +467,9 @@ export default function EmployeeHomePage() {
       cancelled = true;
     };
   }, [supabase]);
+
+  const todayIdx = new Date().getDay();
+  const todayFlags = dayFlags[todayIdx];
 
   // ---- Render ----
   return (
@@ -307,10 +488,12 @@ export default function EmployeeHomePage() {
                 <Clock className="w-4 h-4" />
                 Request Time Off
               </button>
-              <button className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-2"
-              onClick={() =>
+              <button
+                className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-2"
+                onClick={() =>
                   router.push("/employeemanagement/changeavailability")
-                }>
+                }
+              >
                 <Calendar className="w-4 h-4" />
                 Change Availability
               </button>
@@ -341,48 +524,105 @@ export default function EmployeeHomePage() {
             {loading ? "Loading…" : weekLabel}
             {!loading && !hadRealAssignments ? " • no assigned shifts" : ""}
           </p>
+
+          {/* Today banner for time off / availability */}
+          {!loading &&
+            todayFlags &&
+            (todayFlags.hasTimeOff || todayFlags.isUnavailableByAvailability) && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {todayFlags.hasTimeOff && (
+                  <div className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800">
+                    <AlertCircle className="w-3 h-3 mr-1" />
+                    You have{" "}
+                    {todayFlags.timeOffStatus === "approved"
+                      ? "approved time off"
+                      : "a time off request"}{" "}
+                    today.
+                  </div>
+                )}
+                {todayFlags.isUnavailableByAvailability && (
+                  <div className="inline-flex items-center rounded-full border border-purple-200 bg-purple-50 px-3 py-1 text-xs font-medium text-purple-800">
+                    <AlertCircle className="w-3 h-3 mr-1" />
+                    You are marked unavailable today in your availability.
+                  </div>
+                )}
+              </div>
+            )}
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <div className="grid grid-cols-7 gap-px bg-gray-200">
-            {days.map((bucket: DayBucket) => (
-              <div key={bucket.dayIndex} className="bg-white p-4 min-h-[180px]">
-                <div className="text-center mb-3">
-                  <div className="text-sm font-semibold text-gray-900">
-                    {WEEKDAY_LABELS[bucket.dayIndex]}
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">
-                    {fmtDateMMDD(bucket.date)}
-                  </div>
-                </div>
+            {days.map((bucket: DayBucket) => {
+              const flags = dayFlags[bucket.dayIndex];
 
-                <div className="space-y-2">
-                  {bucket.shifts.length > 0 ? (
-                    bucket.shifts.map((s, i) => (
-                      <div
-                        key={`${bucket.dayIndex}-${i}`}
-                        className="bg-teal-50 border border-teal-200 rounded-lg p-3"
-                        style={
-                          s.color ? { borderColor: s.color } : undefined
-                        }
-                      >
-                        <div className="text-xs font-semibold text-teal-900 mb-1">
-                          {s.role}
+              return (
+                <div
+                  key={bucket.dayIndex}
+                  className="bg-white p-4 min-h-[200px] flex flex-col"
+                >
+                  <div className="text-center mb-2">
+                    <div className="text-sm font-semibold text-gray-900">
+                      {WEEKDAY_LABELS[bucket.dayIndex]}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      {fmtDateMMDD(bucket.date)}
+                    </div>
+                  </div>
+
+                  {/* Day-level badges */}
+                  {flags &&
+                    (flags.hasTimeOff || flags.isUnavailableByAvailability) && (
+                      <div className="mb-3 space-y-1">
+                        {flags.hasTimeOff && (
+                          <div className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-medium text-amber-800">
+                            Time off{" "}
+                            {flags.timeOffStatus === "approved"
+                              ? "(approved)"
+                              : "(requested)"}
+                          </div>
+                        )}
+                        {flags.isUnavailableByAvailability && (
+                          <div className="inline-flex items-center rounded-full border border-purple-200 bg-purple-50 px-2.5 py-0.5 text-[11px] font-medium text-purple-800">
+                            Unavailable (availability)
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                  <div className="space-y-2 flex-1">
+                    {bucket.shifts.length > 0 ? (
+                      bucket.shifts.map((s, i) => (
+                        <div
+                          key={`${bucket.dayIndex}-${i}`}
+                          className="bg-teal-50 border border-teal-200 rounded-lg p-3"
+                          style={s.color ? { borderColor: s.color } : undefined}
+                        >
+                          <div className="text-xs font-semibold text-teal-900 mb-1">
+                            {s.role}
+                          </div>
+                          <div className="text-xs text-teal-700 flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {s.start} - {s.end}
+                          </div>
                         </div>
-                        <div className="text-xs text-teal-700 flex items-center gap-1">
-                          <Clock className="w-3 h-3" />
-                          {s.start} - {s.end}
+                      ))
+                    ) : (
+                      <div className="text-center py-4">
+                        <div className="text-xs text-gray-400">
+                          {flags?.hasTimeOff
+                            ? flags.timeOffStatus === "approved"
+                              ? "Time off (approved)"
+                              : "Time off requested"
+                            : flags?.isUnavailableByAvailability
+                            ? "Unavailable"
+                            : "Off"}
                         </div>
                       </div>
-                    ))
-                  ) : (
-                    <div className="text-center py-4">
-                      <div className="text-xs text-gray-400">Off</div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </main>
@@ -419,7 +659,6 @@ function labelForWeek(reference: Date): string {
 
 function buildBucketsFromShifts(
   rows: ShiftWithMeta[],
-  _weekStart: Date,
 ): DayBucket[] {
   const buckets = defaultEmptyWeek();
   for (const r of rows) {
@@ -452,9 +691,19 @@ function buildBucketsFromTemplates(
     const [sh, sm] = t.start_time.split(":").map((n) => parseInt(n, 10));
     const [eh, em] = t.end_time.split(":").map((n) => parseInt(n, 10));
     const s = new Date(dayDate);
-    s.setHours(Number.isFinite(sh) ? sh : 0, Number.isFinite(sm) ? sm : 0, 0, 0);
+    s.setHours(
+      Number.isFinite(sh) ? sh : 0,
+      Number.isFinite(sm) ? sm : 0,
+      0,
+      0,
+    );
     const e = new Date(dayDate);
-    e.setHours(Number.isFinite(eh) ? eh : 0, Number.isFinite(em) ? em : 0, 0, 0);
+    e.setHours(
+      Number.isFinite(eh) ? eh : 0,
+      Number.isFinite(em) ? em : 0,
+      0,
+      0,
+    );
     buckets[t.weekday].shifts.push({
       role: "Typical shift",
       start: s.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),

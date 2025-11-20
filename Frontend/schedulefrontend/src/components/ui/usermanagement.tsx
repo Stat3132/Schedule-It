@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { Check, X, ChevronDown } from "lucide-react";
@@ -64,6 +65,7 @@ function cx(...parts: Array<string | false | null | undefined>) {
 
 export default function UserManagement({ businessId }: Props) {
   const supabase = createClientComponentClient();
+  const router = useRouter();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -321,7 +323,15 @@ export default function UserManagement({ businessId }: Props) {
     <main className="relative min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 pb-12">
         <header className="mb-6">
-          <h1 className="text-2xl font-semibold tracking-tight">User management</h1>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => router.replace("/employermanagement/employerhomepage")}
+              className="px-3 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+            >
+              Back to Home
+            </button>
+            <h1 className="text-2xl font-semibold tracking-tight">User management</h1>
+          </div>
           {biz && (
             <div className="mt-1 text-sm text-gray-600">
               <span className="font-medium">{biz.name}</span>

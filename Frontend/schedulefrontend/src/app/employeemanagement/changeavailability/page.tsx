@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Plus, Calendar as CalendarIcon } from "lucide-react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import type { DayOfWeek, AvailabilityStatus } from "../../../lib/supabase";
@@ -78,6 +79,7 @@ function extractReason(raw: unknown): string | undefined {
 
 export default function AvailabilityPage() {
   const supabase = createClientComponentClient();
+  const router = useRouter();
 
   const [currentSchedule, setCurrentSchedule] =
     useState<WeeklyPattern | null>(null);
@@ -199,9 +201,17 @@ export default function AvailabilityPage() {
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-4xl mx-auto p-6 space-y-6">
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">Availability</h1>
-            <p className="text-gray-600 mt-1">Manage your work schedule</p>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => router.replace("/employeemanagement/employeehomepage")}
+              className="px-3 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+            >
+              Back to Home
+            </button>
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">Availability</h1>
+              <p className="text-gray-600 mt-1">Manage your work schedule</p>
+            </div>
           </div>
           <CalendarIcon className="w-8 h-8 text-gray-400" />
         </div>
