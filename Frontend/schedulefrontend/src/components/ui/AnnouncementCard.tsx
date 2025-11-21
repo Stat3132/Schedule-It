@@ -1,5 +1,5 @@
 import { Trash2, Calendar } from 'lucide-react';
-import { Announcement } from '../lib/supabase';
+import { Announcement } from '../../lib/supabase';
 
 interface AnnouncementCardProps {
   announcement: Announcement;
