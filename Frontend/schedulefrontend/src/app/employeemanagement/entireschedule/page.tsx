@@ -299,8 +299,9 @@ export default function EmployeeSchedulePage() {
       if (pickupRes.error) throw pickupRes.error;
       if (scheduleRes.error) throw scheduleRes.error;
 
-      const droppedData = (droppedRes.data ?? []) as unknown[];
-      const myDroppedData = (myDroppedRes.data ?? []) as unknown[];
+      type RawDropRow = { shift: { start_ts: string }; [key: string]: unknown };
+      const droppedData = (droppedRes.data ?? []) as unknown as RawDropRow[];
+      const myDroppedData = (myDroppedRes.data ?? []) as unknown as RawDropRow[];
 
       droppedData.sort(
         (a, b) =>

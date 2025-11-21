@@ -1,56 +1,67 @@
 "use client";
 
-import { useEffect, useState } from 'react';
-import { Megaphone } from 'lucide-react';
-import { supabase, Announcement } from '../../../lib/supabase';
-import { AnnouncementForm } from '../../../components/ui/AnnouncementForm';
-import { AnnouncementCard } from '../../../components/ui/AnnouncementCard';
+import { useEffect, useState } from "react";
+import { Megaphone } from "lucide-react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
-function App() {
+import type { Announcement } from "../../../lib/supabase";
+import { AnnouncementForm } from "../../../components/ui/AnnouncementForm";
+import { AnnouncementCard } from "../../../components/ui/AnnouncementCard";
+
+function AnnouncementsPage() {
+  const supabase = createClientComponentClient();
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchAnnouncements();
+    void fetchAnnouncements();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchAnnouncements = async () => {
     try {
       const { data, error } = await supabase
-        .from('announcements')
-        .select('*')
-        .order('created_at', { ascending: false });
+        .from("announcements")
+        .select("*")
+        .order("created_at", { ascending: false });
 
       if (error) throw error;
       setAnnouncements(data || []);
     } catch (error) {
-      console.error('Error fetching announcements:', error);
+      console.error("Error fetching announcements:", error);
     } finally {
       setLoading(false);
     }
   };
 
   const handleCreateAnnouncement = async (title: string, content: string) => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError) {
+      console.error("Error getting user:", userError);
+    }
+
+    console.log("Current user in announcements page:", user);
 
     if (!user) {
-      alert('You must be logged in to create announcements');
+      alert("You must be logged in to create announcements");
       return;
     }
 
-    const { error } = await supabase
-      .from('announcements')
-      .insert([
-        {
-          title,
-          content,
-          created_by: user.id,
-        },
-      ]);
+    const { error } = await supabase.from("announcements").insert([
+      {
+        title,
+        content,
+        created_by: user.id,
+      },
+    ]);
 
     if (error) {
-      console.error('Error creating announcement:', error);
-      alert('Failed to create announcement');
+      console.error("Error creating announcement:", error);
+      alert("Failed to create announcement");
       return;
     }
 
@@ -59,13 +70,13 @@ function App() {
 
   const handleDeleteAnnouncement = async (id: string) => {
     const { error } = await supabase
-      .from('announcements')
+      .from("announcements")
       .delete()
-      .eq('id', id);
+      .eq("id", id);
 
     if (error) {
-      console.error('Error deleting announcement:', error);
-      alert('Failed to delete announcement');
+      console.error("Error deleting announcement:", error);
+      alert("Failed to delete announcement");
       return;
     }
 
@@ -93,7 +104,7 @@ function App() {
 
         {loading ? (
           <div className="text-center py-12">
-            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
             <p className="text-gray-600 mt-4">Loading announcements...</p>
           </div>
         ) : announcements.length === 0 ? (
@@ -122,4 +133,4 @@ function App() {
   );
 }
 
-export default App;
+export default AnnouncementsPage;
