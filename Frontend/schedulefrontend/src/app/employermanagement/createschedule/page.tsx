@@ -4,7 +4,6 @@ import React, { JSX, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, X } from "lucide-react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-import EmployerTopNav from "@/components/EmployerTopNav";
 
 type UUID = string;
 
@@ -1160,7 +1159,6 @@ export default function CreateSchedulePage(): JSX.Element {
   /* ---------- Render ---------- */
   return (
     <div className="min-h-screen bg-gray-50">
-      <EmployerTopNav />
 
       <div className="max-w-6xl mx-auto px-4 pt-6 pb-10 space-y-6">
         {/* Header */}

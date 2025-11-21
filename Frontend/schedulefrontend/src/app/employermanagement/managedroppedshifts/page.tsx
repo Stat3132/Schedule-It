@@ -1,22 +1,11 @@
+// app/employermanagement/droppedshifts/page.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-import {
-  AlertTriangle,
-  Check,
-  X,
-  Clock,
-  Plus,
-  CheckSquare,
-  Bell,
-  Users,
-  Settings,
-  LogOut,
-} from "lucide-react";
+import { AlertTriangle, Check, X, Clock, LogOut } from "lucide-react";
 
-/* ---------- Types ---------- */
 type BusinessOpt = { id: string; name: string | null };
 type LocationOpt = { id: string; name: string | null };
 
@@ -46,6 +35,15 @@ type AssignmentRow = {
   responded_at?: string | null;
 };
 
+type PickupRow = {
+  id: string;
+  shift_assignment_id: string;
+  requester_user_id: string;
+  reason: string | null;
+  status: "pending" | "approved" | "denied" | "canceled";
+  created_at: string;
+};
+
 type ProfileRow = {
   id: string;
   full_name: string | null;
@@ -59,17 +57,20 @@ type LocationRow = { id: string; name: string | null };
 type DropRequest = {
   assignmentId: string;
   shiftId: string;
-  employeeId: string;
-  employeeName: string;
+  dropperId: string;
+  dropperName: string;
+  pickerId: string | null;
+  pickerName: string | null;
+  pickerStatus: "pending" | "approved" | "denied" | "canceled" | null;
   roleName: string;
   locationName: string;
   start_ts: string;
   end_ts: string;
   drop_reason: string;
+  pickup_reason: string | null;
   requested_at: string | null;
 };
 
-/* ---------- Helpers ---------- */
 function startOfWeek(d: Date, weekStartsOn: 0 | 1 = 0) {
   const day = d.getDay();
   const diff = (day < weekStartsOn ? 7 : 0) + day - weekStartsOn;
@@ -78,6 +79,7 @@ function startOfWeek(d: Date, weekStartsOn: 0 | 1 = 0) {
   out.setDate(d.getDate() - diff);
   return out;
 }
+
 function endOfWeek(d: Date, weekStartsOn: 0 | 1 = 0) {
   const s = startOfWeek(d, weekStartsOn);
   const out = new Date(s);
@@ -85,6 +87,7 @@ function endOfWeek(d: Date, weekStartsOn: 0 | 1 = 0) {
   out.setMilliseconds(-1);
   return out;
 }
+
 function fmtDateTime(iso: string) {
   const dt = new Date(iso);
   return dt.toLocaleString([], {
@@ -95,15 +98,10 @@ function fmtDateTime(iso: string) {
   });
 }
 
-/* ========================================================================== */
-/*                      DROPPED SHIFTS MANAGEMENT PAGE                        */
-/* ========================================================================== */
-
 export default function ManageDroppedShiftsPage() {
   const supabase = useRef(createClientComponentClient()).current;
   const router = useRouter();
 
-  /* ---------- State ---------- */
   const [loading, setLoading] = useState(true);
   const [busyActionId, setBusyActionId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -117,17 +115,7 @@ export default function ManageDroppedShiftsPage() {
   const [weekLabel, setWeekLabel] = useState("");
   const [requests, setRequests] = useState<DropRequest[]>([]);
 
-  /* ---------- Logout ---------- */
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    if (typeof window !== "undefined") {
-      localStorage.removeItem("activeBusinessId");
-      localStorage.removeItem("activeLocationIds");
-    }
-    router.replace("/");
-  };
-
-  /* ---------- LocalStorage Seeds ---------- */
+  // Restore last-selected business/location from localStorage
   useEffect(() => {
     if (typeof window === "undefined") return;
     const storedBiz = localStorage.getItem("activeBusinessId");
@@ -138,7 +126,7 @@ export default function ManageDroppedShiftsPage() {
     if (locs[0]) setSelectedLoc(locs[0]);
   }, []);
 
-  /* ---------- Business Bootstrap ---------- */
+  // Load businesses user manages/owns
   useEffect(() => {
     let cancelled = false;
 
@@ -157,7 +145,6 @@ export default function ManageDroppedShiftsPage() {
         return;
       }
 
-      // Manager/admin through employment
       const { data: empRows } = await supabase
         .from("employment")
         .select("business_id,is_manager,is_admin,status")
@@ -168,25 +155,20 @@ export default function ManageDroppedShiftsPage() {
         new Set(
           (empRows ?? [])
             .filter((e: EmploymentRow) => e.is_manager || e.is_admin)
-            .map((e) => e.business_id),
+            .map((e: EmploymentRow) => e.business_id),
         ),
       );
 
-      // Owned businesses
       const { data: ownedRows } = await supabase
         .from("business")
         .select("id,name")
         .eq("owner_user_id", user.id);
 
-      const named: BusinessOpt[] = (ownedRows ?? []).map((b) => ({
-        id: b.id,
-        name: b.name,
-      }));
+      const named: BusinessOpt[] = (ownedRows ?? []) as BusinessOpt[];
 
       const idSet = new Set([...mgrBizIds, ...named.map((b) => b.id)]);
       const bizIds = Array.from(idSet);
 
-      // Fetch missing business names
       const missing = bizIds.filter((id) => !named.find((b) => b.id === id));
       let extra: BusinessOpt[] = [];
       if (missing.length) {
@@ -195,10 +177,7 @@ export default function ManageDroppedShiftsPage() {
           .select("id,name")
           .in("id", missing);
 
-        extra = (bRows2 ?? []).map((b) => ({
-          id: b.id,
-          name: b.name ?? null,
-        }));
+        extra = (bRows2 ?? []) as BusinessOpt[];
       }
 
       const merged = [...named, ...extra];
@@ -215,48 +194,49 @@ export default function ManageDroppedShiftsPage() {
     };
   }, [supabase]);
 
-  /* ---------- Persist Biz/Loc Selection ---------- */
-  useEffect(() => {
-    if (!selectedBiz) return;
-    if (typeof window !== "undefined")
-      localStorage.setItem("activeBusinessId", selectedBiz);
-  }, [selectedBiz]);
-
+  // Persist selected business
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (selectedLoc !== "ALL") {
+    if (selectedBiz) {
+      localStorage.setItem("activeBusinessId", selectedBiz);
+    }
+  }, [selectedBiz]);
+
+  // Persist selected location
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (selectedLoc && selectedLoc !== "ALL") {
       localStorage.setItem("activeLocationIds", JSON.stringify([selectedLoc]));
     } else {
       localStorage.removeItem("activeLocationIds");
     }
   }, [selectedLoc]);
 
-  /* ---------- Load Locations ---------- */
+  // Load locations for selected business
   useEffect(() => {
-    if (!selectedBiz) return;
-
+    if (!selectedBiz) {
+      setLocations([]);
+      setSelectedLoc("ALL");
+      return;
+    }
     supabase
       .from("location")
       .select("id,name")
       .eq("business_id", selectedBiz)
       .then(({ data }) => {
         setLocations((data ?? []) as LocationOpt[]);
-        if (
-          selectedLoc !== "ALL" &&
-          !(data ?? []).find((l) => l.id === selectedLoc)
-        ) {
+        if (selectedLoc !== "ALL" && !(data ?? []).find((l) => l.id === selectedLoc)) {
           setSelectedLoc("ALL");
         }
       });
   }, [selectedBiz]);
 
-  /* ---------- Key for scope ---------- */
   const scopeKey = useMemo(
     () => `${selectedBiz ?? ""}|${selectedLoc}`,
     [selectedBiz, selectedLoc],
   );
 
-  /* ---------- Load Dropped Shift Requests ---------- */
+  // Load dropped shifts + pickup requests for the week
   useEffect(() => {
     let cancelled = false;
 
@@ -264,12 +244,14 @@ export default function ManageDroppedShiftsPage() {
       setLoading(true);
       setRequests([]);
 
-      if (!selectedBiz) return;
+      if (!selectedBiz) {
+        setLoading(false);
+        return;
+      }
 
       const now = new Date();
-      const ws = startOfWeek(now);
-      const we = endOfWeek(now);
-
+      const ws = startOfWeek(now, 0);
+      const we = endOfWeek(now, 0);
       const header = `Week of ${ws.toLocaleDateString([], {
         month: "long",
         day: "numeric",
@@ -283,7 +265,7 @@ export default function ManageDroppedShiftsPage() {
         year: "numeric",
       })}`;
 
-      // Load shifts in this scope + week
+      // 1) shifts in this business/location/week
       let shiftQ = supabase
         .from("shift")
         .select("id,business_id,location_id,role_id,start_ts,end_ts,status")
@@ -307,7 +289,7 @@ export default function ManageDroppedShiftsPage() {
         return;
       }
 
-      // Load dropped assignments
+      // 2) dropped assignments for those shifts
       const { data: assignRows } = await supabase
         .from("shift_assignment")
         .select("id,shift_id,user_id,status,drop_reason,responded_at")
@@ -316,21 +298,45 @@ export default function ManageDroppedShiftsPage() {
 
       const assigns = (assignRows ?? []) as AssignmentRow[];
       if (!assigns.length) {
-        setRequests([]);
-        setWeekLabel(header);
-        setLoading(false);
+        if (!cancelled) {
+          setRequests([]);
+          setWeekLabel(header);
+          setLoading(false);
+        }
         return;
       }
 
-      const userIds = Array.from(new Set(assigns.map((a) => a.user_id)));
-      const roleIds = Array.from(
-        new Set(shifts.map((s) => s.role_id).filter(Boolean)),
-      );
-      const locIds = Array.from(
-        new Set(shifts.map((s) => s.location_id).filter(Boolean)),
+      const assignmentIds = assigns.map((a) => a.id);
+
+      // 3) pickup requests for those dropped assignments
+      const { data: pickupRows } = await supabase
+        .from("shift_pickup_request")
+        .select(
+          "id,shift_assignment_id,requester_user_id,reason,status,created_at",
+        )
+        .in("shift_assignment_id", assignmentIds);
+
+      const pickups = (pickupRows ?? []) as PickupRow[];
+
+      // 4) pre-load related names
+      const userIds = Array.from(
+        new Set([
+          ...assigns.map((a) => a.user_id),
+          ...pickups.map((p) => p.requester_user_id),
+        ]),
       );
 
-      // Profiles
+      const roleIds = Array.from(
+        new Set(
+          shifts.map((s) => s.role_id).filter(Boolean) as string[],
+        ),
+      );
+      const locIds = Array.from(
+        new Set(
+          shifts.map((s) => s.location_id).filter(Boolean) as string[],
+        ),
+      );
+
       const { data: profRows } = await supabase
         .from("profiles")
         .select("id,full_name,display_name,email")
@@ -343,7 +349,6 @@ export default function ManageDroppedShiftsPage() {
         ]),
       );
 
-      // Roles
       const { data: roleRows } = await supabase
         .from("role")
         .select("id,name")
@@ -353,7 +358,6 @@ export default function ManageDroppedShiftsPage() {
         (roleRows ?? []).map((r: RoleRow) => [r.id, r.name ?? "Role"]),
       );
 
-      // Locations
       const { data: locRows } = await supabase
         .from("location")
         .select("id,name")
@@ -368,13 +372,29 @@ export default function ManageDroppedShiftsPage() {
 
       const shiftById = new Map(shifts.map((s) => [s.id, s]));
 
+      // For each assignment, pick the most recent pickup request (if any)
+      const pickupByAssignment = new Map<string, PickupRow>();
+      pickups.forEach((p) => {
+        const existing = pickupByAssignment.get(p.shift_assignment_id);
+        if (!existing || p.created_at > existing.created_at) {
+          pickupByAssignment.set(p.shift_assignment_id, p);
+        }
+      });
+
       const final: DropRequest[] = assigns.map((a) => {
         const sh = shiftById.get(a.shift_id)!;
+        const pickup = pickupByAssignment.get(a.id) ?? null;
+
         return {
           assignmentId: a.id,
           shiftId: a.shift_id,
-          employeeId: a.user_id,
-          employeeName: nameById.get(a.user_id) ?? "Unknown",
+          dropperId: a.user_id,
+          dropperName: nameById.get(a.user_id) ?? "Unknown",
+          pickerId: pickup?.requester_user_id ?? null,
+          pickerName: pickup
+            ? nameById.get(pickup.requester_user_id) ?? "Unknown"
+            : null,
+          pickerStatus: pickup?.status ?? null,
           roleName: sh.role_id
             ? roleById.get(sh.role_id) ?? "Role"
             : "Role",
@@ -384,7 +404,8 @@ export default function ManageDroppedShiftsPage() {
           start_ts: sh.start_ts,
           end_ts: sh.end_ts,
           drop_reason: a.drop_reason ?? "",
-          requested_at: a.responded_at ?? null,
+          pickup_reason: pickup?.reason ?? null,
+          requested_at: pickup?.created_at ?? null,
         };
       });
 
@@ -400,64 +421,224 @@ export default function ManageDroppedShiftsPage() {
     return () => {
       cancelled = true;
     };
-  }, [scopeKey, supabase]);
+  }, [scopeKey, supabase, selectedBiz, selectedLoc]);
 
   const bizName = useMemo(() => {
     const found = businesses.find((b) => b.id === selectedBiz);
-    return found?.name ?? selectedBiz ?? "";
+    return found?.name ?? (selectedBiz ? selectedBiz.slice(0, 8) + "…" : "");
   }, [businesses, selectedBiz]);
 
-  /* ---------- Approve / Deny Drop ---------- */
+  // Approve: mark pickup request as approved, reassign shift to requester, and
+  // close out original assignment.
   const handleApprove = async (assignmentId: string) => {
     setBusyActionId(assignmentId);
-    const { error } = await supabase
-      .from("shift_assignment")
-      .update({
-        status: "declined", // remove from schedule
-        responded_at: new Date().toISOString(),
-      })
-      .eq("id", assignmentId);
+    setErrorMsg(null);
 
-    if (!error) {
+    try {
+      const {
+        data: { user },
+        error: userErr,
+      } = await supabase.auth.getUser();
+      if (userErr || !user) {
+        setErrorMsg("Unable to load current user.");
+        return;
+      }
+      const managerId = user.id;
+
+      // Load the original assignment
+      const { data: assignment, error: aErr } = await supabase
+        .from("shift_assignment")
+        .select("id,shift_id,user_id")
+        .eq("id", assignmentId)
+        .single();
+
+      if (aErr || !assignment) {
+        setErrorMsg("Original assignment not found.");
+        return;
+      }
+
+      // Load the latest pending pickup request for this assignment
+      const { data: pickup, error: pErr } = await supabase
+        .from("shift_pickup_request")
+        .select("id,requester_user_id,status")
+        .eq("shift_assignment_id", assignmentId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (pErr || !pickup || pickup.status !== "pending") {
+        setErrorMsg("No pending pickup request found for this shift.");
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      const shiftId: string = assignment.shift_id;
+      const pickerId: string = pickup.requester_user_id;
+
+      // Ensure the picker has an assignment row for this shift with source 'swap'
+      const { data: existingNew, error: exErr } = await supabase
+        .from("shift_assignment")
+        .select("id,status")
+        .eq("shift_id", shiftId)
+        .eq("user_id", pickerId)
+        .maybeSingle();
+
+      if (exErr) {
+        setErrorMsg(`Error checking existing assignment: ${exErr.message}`);
+        return;
+      }
+
+      if (existingNew) {
+        // Update existing assignment for picker
+        const { error: updNewErr } = await supabase
+          .from("shift_assignment")
+          .update({
+            status: "assigned",
+            source: "swap",
+            assigned_by: managerId,
+            responded_at: nowIso,
+          })
+          .eq("id", existingNew.id);
+
+        if (updNewErr) {
+          setErrorMsg(`Failed to update pickup assignment: ${updNewErr.message}`);
+          return;
+        }
+      } else {
+        // Insert new assignment for picker
+        const { error: insErr } = await supabase.from("shift_assignment").insert({
+          shift_id: shiftId,
+          user_id: pickerId,
+          assigned_by: managerId,
+          status: "assigned",
+          source: "swap",
+          responded_at: nowIso,
+        });
+
+        if (insErr) {
+          setErrorMsg(`Failed to create pickup assignment: ${insErr.message}`);
+          return;
+        }
+      }
+
+      // Mark the original assignment as declined (no longer active)
+      const { error: updOrigErr } = await supabase
+        .from("shift_assignment")
+        .update({
+          status: "declined",
+          responded_at: nowIso,
+        })
+        .eq("id", assignmentId);
+
+      if (updOrigErr) {
+        setErrorMsg(`Failed to close original assignment: ${updOrigErr.message}`);
+        return;
+      }
+
+      // Mark pickup request as approved
+      const { error: updPickupErr } = await supabase
+        .from("shift_pickup_request")
+        .update({
+          status: "approved",
+          decided_by: managerId,
+          decided_at: nowIso,
+        })
+        .eq("id", pickup.id);
+
+      if (updPickupErr) {
+        setErrorMsg(`Failed to update pickup request: ${updPickupErr.message}`);
+        return;
+      }
+
+      // Remove the row from list
       setRequests((prev) =>
         prev.filter((r) => r.assignmentId !== assignmentId),
       );
-    } else {
-      setErrorMsg("Approve failed: " + error.message);
+    } catch (e) {
+      if (e instanceof Error) setErrorMsg(`Approve failed: ${e.message}`);
+      else setErrorMsg("Approve failed.");
+    } finally {
+      setBusyActionId(null);
     }
-    setBusyActionId(null);
   };
 
+  // Deny: keep original assignment, mark pickup request as denied
   const handleDeny = async (assignmentId: string) => {
     setBusyActionId(assignmentId);
-    const { error } = await supabase
-      .from("shift_assignment")
-      .update({
-        status: "assigned", // restore shift
-        responded_at: new Date().toISOString(),
-      })
-      .eq("id", assignmentId);
+    setErrorMsg(null);
+    try {
+      const {
+        data: { user },
+        error: userErr,
+      } = await supabase.auth.getUser();
+      if (userErr || !user) {
+        setErrorMsg("Unable to load current user.");
+        return;
+      }
+      const managerId = user.id;
+      const nowIso = new Date().toISOString();
 
-    if (!error) {
+      // Reset original assignment back to assigned
+      const { error: updAssignErr } = await supabase
+        .from("shift_assignment")
+        .update({
+          status: "assigned",
+          responded_at: nowIso,
+        })
+        .eq("id", assignmentId);
+
+      if (updAssignErr) {
+        setErrorMsg(`Deny failed (assignment): ${updAssignErr.message}`);
+        return;
+      }
+
+      // Mark latest pickup request as denied, if any
+      const { data: pickup, error: pErr } = await supabase
+        .from("shift_pickup_request")
+        .select("id,status")
+        .eq("shift_assignment_id", assignmentId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!pErr && pickup && pickup.status === "pending") {
+        const { error: updPickupErr } = await supabase
+          .from("shift_pickup_request")
+          .update({
+            status: "denied",
+            decided_by: managerId,
+            decided_at: nowIso,
+          })
+          .eq("id", pickup.id);
+
+        if (updPickupErr) {
+          setErrorMsg(`Deny failed (pickup): ${updPickupErr.message}`);
+          return;
+        }
+      }
+
       setRequests((prev) =>
         prev.filter((r) => r.assignmentId !== assignmentId),
       );
-    } else {
-      setErrorMsg("Deny failed: " + error.message);
+    } catch (e) {
+      if (e instanceof Error) setErrorMsg(`Deny failed: ${e.message}`);
+      else setErrorMsg("Deny failed.");
+    } finally {
+      setBusyActionId(null);
     }
-    setBusyActionId(null);
   };
 
-  /* ====================================================================== */
-  /*                                RENDER                                 */
-  /* ====================================================================== */
+  if (loading && !businesses.length) {
+    return <div className="p-6">Loading…</div>;
+  }
 
-  if (!businesses.length && !loading) {
+  if (!businesses.length) {
     return (
       <div className="p-6">
-        No manager access found.
-        <div className="text-sm text-gray-600 mt-2">
-          You must own a business or be assigned manager/admin.
+        No manager access found for your user.
+        <div className="mt-2 text-sm text-gray-600">
+          Ensure you either own a business or have an active employment with
+          manager/admin rights.
         </div>
       </div>
     );
@@ -465,146 +646,33 @@ export default function ManageDroppedShiftsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* ================================================================== */}
-      {/*                          EMPLOYER NAV BAR                         */}
-      {/* ================================================================== */}
-
-      <nav className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-
-            {/* Business + Location Selectors */}
-            <div className="flex items-center gap-3">
-              <select
-                className="border rounded-md px-2 py-1 text-sm"
-                value={selectedBiz ?? ""}
-                onChange={(e) => setSelectedBiz(e.target.value || null)}
-              >
-                {businesses.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name ?? b.id}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                className="border rounded-md px-2 py-1 text-sm"
-                value={selectedLoc}
-                onChange={(e) =>
-                  setSelectedLoc((e.target.value as string) || "ALL")
-                }
-                disabled={!selectedBiz}
-              >
-                <option value="ALL">All locations</option>
-                {locations.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name ?? "Location"}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Navigation Buttons */}
-            <div className="flex items-center space-x-1">
-              <button
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() =>
-                  router.push("/employermanagement/createschedule")
-                }
-              >
-                <Plus className="w-4 h-4" /> Create Schedule
-              </button>
-
-              <button
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() =>
-                  router.push("/employermanagement/managetimerequests")
-                }
-              >
-                <Clock className="w-4 h-4" /> Time Off Requests
-              </button>
-
-              {/* Availability Requests */}
-              <button
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() =>
-                  router.push("/employermanagement/availabilityrequest")
-                }
-              >
-                <CheckSquare className="w-4 h-4" /> Availability Requests
-              </button>
-
-              {/* DROPPED SHIFTS — NEW BUTTON (THIS PAGE) */}
-              <button
-                className="px-4 py-2 text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-2"
-              >
-                <AlertTriangle className="w-4 h-4" /> Dropped Shifts
-              </button>
-
-              <button
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() =>
-                  router.push("/employermanagement/announcements")
-                }
-              >
-                <Bell className="w-4 h-4" /> Announcements
-              </button>
-
-              <button
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() =>
-                  router.push(
-                    `/employermanagement/employeeinvitemanagement/${selectedBiz}`,
-                  )
-                }
-              >
-                <Users className="w-4 h-4" /> User Management
-              </button>
-
-              <button
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() => router.push("/employermanagement/settings")}
-              >
-                <Settings className="w-4 h-4" /> Settings
-              </button>
-
-              <button
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={handleLogout}
-              >
-                <LogOut className="w-4 h-4" /> Log out
-              </button>
-            </div>
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
+              <AlertTriangle className="w-6 h-6 text-amber-500" />
+              Dropped Shifts
+            </h1>
+            <p className="text-gray-600 mt-1">
+              {bizName} ·{" "}
+              {selectedLoc === "ALL" ? "All locations" : "One location"}
+            </p>
+            <p className="text-gray-600">{weekLabel}</p>
+            {errorMsg && (
+              <p className="text-sm text-red-600 mt-2">{errorMsg}</p>
+            )}
           </div>
         </div>
-      </nav>
 
-      {/* ================================================================== */}
-      {/*                               CONTENT                              */}
-      {/* ================================================================== */}
-
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <AlertTriangle className="w-6 h-6 text-amber-500" />
-            Dropped Shifts
-          </h1>
-          <p className="text-gray-600">{bizName}</p>
-          <p className="text-gray-600">{weekLabel}</p>
-          {errorMsg && (
-            <p className="text-sm text-red-600 mt-2">{errorMsg}</p>
-          )}
-        </div>
-
-        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200">
           {loading ? (
             <div className="p-6 text-sm text-gray-600 flex items-center gap-2">
-              <Clock className="w-4 h-4 animate-spin" />
-              Loading dropped shifts…
+              <Clock className="w-4 h-4 animate-spin" /> Loading dropped
+              shifts…
             </div>
           ) : requests.length === 0 ? (
             <div className="p-6 text-sm text-gray-500">
-              No dropped shift requests for this week.
+              No dropped shift requests for this week and scope.
             </div>
           ) : (
             <ul className="divide-y divide-gray-200">
@@ -615,40 +683,72 @@ export default function ManageDroppedShiftsPage() {
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-semibold">
-                        {r.employeeName}
+                      <span className="text-sm font-semibold text-gray-900">
+                        {r.roleName}
                       </span>
                       <span className="text-xs text-gray-500">
-                        {r.roleName} · {r.locationName}
+                        · {r.locationName}
                       </span>
                     </div>
 
-                    <div className="mt-1 text-xs text-gray-700">
-                      {fmtDateTime(r.start_ts)} – {fmtDateTime(r.end_ts)}
+                    <div className="mt-1 text-xs text-gray-700 flex flex-wrap gap-2 items-center">
+                      <span>
+                        {fmtDateTime(r.start_ts)} – {fmtDateTime(r.end_ts)}
+                      </span>
+                      {r.requested_at && (
+                        <span className="text-gray-500">
+                          · Pickup requested: {fmtDateTime(r.requested_at)}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="mt-2 text-xs text-gray-700 flex flex-col gap-1">
+                      <div>
+                        <span className="font-semibold">Dropped by:</span>{" "}
+                        {r.dropperName}
+                      </div>
+                      <div>
+                        <span className="font-semibold">Pickup by:</span>{" "}
+                        {r.pickerName ?? "No pickup request yet"}
+                        {r.pickerStatus && r.pickerName && (
+                          <span className="ml-1 text-[10px] uppercase tracking-wide text-gray-500">
+                            ({r.pickerStatus})
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     {r.drop_reason && (
-                      <div className="mt-2 text-xs bg-amber-50 border border-amber-200 px-3 py-2 rounded-md">
-                        <span className="font-medium">Reason: </span>
+                      <div className="mt-2 text-xs text-gray-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                        <span className="font-medium">Drop reason: </span>
                         {r.drop_reason}
+                      </div>
+                    )}
+
+                    {r.pickup_reason && (
+                      <div className="mt-2 text-xs text-gray-800 bg-blue-50 border border-blue-200 rounded-md px-3 py-2">
+                        <span className="font-medium">Pickup note: </span>
+                        {r.pickup_reason}
                       </div>
                     )}
                   </div>
 
-                  <div className="flex flex-col sm:items-end gap-2">
+                  <div className="flex items-center gap-2 sm:flex-col sm:items-end">
                     <button
+                      type="button"
                       onClick={() => handleApprove(r.assignmentId)}
                       disabled={busyActionId === r.assignmentId}
-                      className="bg-emerald-600 text-white text-xs px-3 py-1.5 rounded-md hover:bg-emerald-700 disabled:opacity-60 flex items-center gap-1"
+                      className="inline-flex items-center justify-center rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
                     >
-                      <Check className="w-3 h-3" /> Approve Drop
+                      <Check className="w-3 h-3 mr-1" /> Approve pickup
                     </button>
                     <button
+                      type="button"
                       onClick={() => handleDeny(r.assignmentId)}
                       disabled={busyActionId === r.assignmentId}
-                      className="bg-red-600 text-white text-xs px-3 py-1.5 rounded-md hover:bg-red-700 disabled:opacity-60 flex items-center gap-1"
+                      className="inline-flex items-center justify-center rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-60"
                     >
-                      <X className="w-3 h-3" /> Deny Drop
+                      <X className="w-3 h-3 mr-1" /> Deny pickup
                     </button>
                   </div>
                 </li>

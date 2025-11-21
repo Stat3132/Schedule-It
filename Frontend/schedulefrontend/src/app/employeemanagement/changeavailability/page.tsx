@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Calendar as CalendarIcon } from "lucide-react";
-import EmployeeTopNav from "../../../components/EmployeeTopNav";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import type { DayOfWeek, AvailabilityStatus } from "../../../lib/supabase";
 import { CurrentAvailability } from "../../../components/ui/CurrentAvailability";
@@ -200,8 +199,6 @@ export default function AvailabilityPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <EmployeeTopNav />
-
       <div className="max-w-4xl mx-auto p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">

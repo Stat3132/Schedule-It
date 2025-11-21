@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { Home, Clock, Calendar, Bell, Settings, LogOut } from "lucide-react";
 
@@ -18,6 +18,23 @@ export default function EmployeeTopNav() {
     router.replace("/");
   };
 
+  const pathname = usePathname() ?? "/";
+
+  const base = "px-4 py-2 text-sm rounded-lg flex items-center gap-2";
+  const inactive = "text-gray-700 hover:bg-gray-100";
+  const active = "bg-blue-50 border border-blue-200 text-blue-700";
+
+  const btn = (label: string, icon: React.ReactNode, href: string, matchPrefix = href) => {
+    const isActive = pathname.startsWith(matchPrefix);
+    const cls = `${base} ${isActive ? active : inactive}`;
+    return (
+      <button key={label} className={cls} onClick={() => router.push(href)}>
+        {icon}
+        {label}
+      </button>
+    );
+  };
+
   return (
     <nav className="bg-white border-b border-gray-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -28,44 +45,12 @@ export default function EmployeeTopNav() {
           {/* center/right: unified action group so Home sits with other actions */}
           <div className="flex items-center justify-center w-full">
             <div className="flex flex-wrap items-center justify-center gap-2">
-              <button
-                onClick={() => router.replace("/employeemanagement/employeehomepage")}
-                aria-label="Home"
-                title="Home"
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-              >
-                <Home className="w-4 h-4" /> Home
-              </button>
-
-              <button
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() => router.push("/employeemanagement/timeoffrequest")}
-              >
-                <Clock className="w-4 h-4" /> Request Time Off
-              </button>
-
-              <button
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() => router.push("/employeemanagement/changeavailability")}
-              >
-                <Calendar className="w-4 h-4" /> Change Availability
-              </button>
-
-              <button className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2">
-                <Bell className="w-4 h-4" /> Announcements
-              </button>
-
-              <button
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() => router.push("/employeemanagement/settings")}
-              >
-                <Settings className="w-4 h-4" /> Settings
-              </button>
-
-              <button
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={handleLogout}
-              >
+              {btn("Home", <Home className="w-4 h-4" />, "/employeemanagement/employeehomepage", "/employeemanagement/employeehomepage")}
+              {btn("Request Time Off", <Clock className="w-4 h-4" />, "/employeemanagement/timeoffrequest")}
+              {btn("Change Availability", <Calendar className="w-4 h-4" />, "/employeemanagement/changeavailability")}
+              {btn("Announcements", <Bell className="w-4 h-4" />, "/employeemanagement/announcements")}
+              {btn("Settings", <Settings className="w-4 h-4" />, "/employeemanagement/settings")}
+              <button className={`${base} ${inactive}`} onClick={handleLogout}>
                 <LogOut className="w-4 h-4" /> Log out
               </button>
             </div>

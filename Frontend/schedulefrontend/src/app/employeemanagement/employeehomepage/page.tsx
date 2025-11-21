@@ -1,10 +1,10 @@
+// app/employeemanagement/employeehomepage/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { Calendar, Clock, Bell, Settings, LogOut, AlertCircle } from "lucide-react";
-import EmployeeTopNav from "../../../components/EmployeeTopNav";
 
 // ---- Types ----
 type Employment = {
@@ -35,6 +35,7 @@ type ShiftAssignmentRow = {
   assigned_by: string | null;
   assigned_at: string;
   status: "assigned" | "offered" | "accepted" | "declined" | "dropped";
+  source: "manager" | "autofill" | "swap";
   drop_reason?: string | null;
   responded_at?: string | null;
 };
@@ -58,7 +59,6 @@ type ShiftTemplateRow = {
   end_time: string; // "HH:MM:SS"
 };
 
-// NOTE: For this page we only ever query "pending" + "approved"
 type TORowLite = {
   start_ts: string;
   end_ts: string;
@@ -113,6 +113,7 @@ type BucketShift = {
   color?: string | null;
   locationName?: string | null;
   isDropPending?: boolean;
+  isPickedUp?: boolean;
 };
 
 type DayBucket = {
@@ -144,7 +145,12 @@ type Coworker = {
   name: string;
 };
 
-type ProfileRow = { id: string; full_name?: string | null; display_name?: string | null; email?: string | null };
+type ProfileRow = {
+  id: string;
+  full_name?: string | null;
+  display_name?: string | null;
+  email?: string | null;
+};
 
 type SelectedShift = {
   shiftId: string;
@@ -402,7 +408,9 @@ export default function EmployeeHomePage() {
       // 4) Assignments for user → shift_ids (all statuses)
       const { data: saRows, error: saErr } = await supabase
         .from("shift_assignment")
-        .select("id,shift_id,user_id,assigned_by,assigned_at,status,drop_reason,responded_at")
+        .select(
+          "id,shift_id,user_id,assigned_by,assigned_at,status,source,drop_reason,responded_at",
+        )
         .eq("user_id", uid);
 
       if (!saErr && saRows && saRows.length > 0) {
@@ -464,7 +472,6 @@ export default function EmployeeHomePage() {
             const color = roleById[s.role_id]?.color ?? null;
             const locationName = locById[s.location_id]?.name ?? null;
 
-            // Always keep dropped in schedule until manager approves
             if (a.status === "dropped") {
               dropped.push({
                 assignmentId: a.id,
@@ -479,7 +486,6 @@ export default function EmployeeHomePage() {
               });
               activeShiftRows.push(s);
             } else if (a.status !== "declined") {
-              // Treat assigned/offered/accepted as active for schedule
               activeShiftRows.push(s);
             }
           }
@@ -696,8 +702,6 @@ export default function EmployeeHomePage() {
   // ---- Render ----
   return (
     <div className="min-h-screen bg-gray-50">
-      <EmployeeTopNav />
-
       <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-6">
           <h1 className="text-3xl font-bold text-gray-900">Your Schedule</h1>
@@ -787,11 +791,18 @@ export default function EmployeeHomePage() {
                               {s.role}
                               {s.locationName ? ` · ${s.locationName}` : ""}
                             </span>
-                            {s.isDropPending && (
-                              <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800">
-                                Drop requested
-                              </span>
-                            )}
+                            <span className="flex gap-1">
+                              {s.isPickedUp && (
+                                <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-800">
+                                  Picked up
+                                </span>
+                              )}
+                              {s.isDropPending && (
+                                <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800">
+                                  Drop requested
+                                </span>
+                              )}
+                            </span>
                           </div>
                           <div className="text-xs text-teal-700 flex items-center gap-1">
                             <Clock className="w-3 h-3" />
@@ -988,7 +999,6 @@ function buildBucketsFromShifts(
   const buckets = defaultEmptyWeek();
   for (const r of rows) {
     const s = new Date(r.shift.start_ts);
-    const e = new Date(r.shift.end_ts);
     const idx = s.getDay();
     const roleName = r.role?.name ?? "Shift";
     const color = r.role?.color ?? null;
@@ -1004,6 +1014,7 @@ function buildBucketsFromShifts(
       color,
       locationName,
       isDropPending: assignment?.status === "dropped",
+      isPickedUp: assignment?.source === "swap",
     });
   }
   for (const b of buckets) {

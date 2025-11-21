@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-import { Home, Plus, Clock, CheckSquare, Bell, Users, Settings, LogOut } from "lucide-react";
+import { Home, Plus, Clock, CheckSquare, Bell, Users, Settings, LogOut, AlertTriangle } from "lucide-react";
 
 type BusinessOpt = { id: string; name: string | null };
 type LocationOpt = { id: string; name: string };
@@ -13,6 +14,7 @@ type BusinessRow = { id: string; name: string | null };
 export default function EmployerTopNav() {
   const supabase = useRef(createClientComponentClient()).current;
   const router = useRouter();
+  const pathname = usePathname() ?? "/";
 
   const [businesses, setBusinesses] = useState<BusinessOpt[]>([]);
   const [selectedBiz, setSelectedBiz] = useState<string | null>(null);
@@ -159,48 +161,38 @@ export default function EmployerTopNav() {
           </div>
 
           <div className="flex items-center space-x-1">
-            <button
-              className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-              onClick={() => router.push("/employermanagement/createschedule")}
-            >
-              <Plus className="w-4 h-4" /> Create Schedule
-            </button>
-            <button
-              className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-              onClick={() => router.push("/employermanagement/managetimerequests")}
-            >
-              <Clock className="w-4 h-4" /> Time Off Requests
-            </button>
-            <button
-              className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-              onClick={() => router.push("/employermanagement/availabilityrequest")}
-            >
-              <CheckSquare className="w-4 h-4" /> Availability Requests
-            </button>
-            <button
-              className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-              onClick={() => router.push("/employermanagement/announcements")}
-            >
-              <Bell className="w-4 h-4" /> Announcements
-            </button>
-            <button
-              className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-              onClick={() => router.push(`/employermanagement/employeeinvitemanagement/${selectedBiz}`)}
-            >
-              <Users className="w-4 h-4" /> User Management
-            </button>
-            <button
-              className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-              onClick={() => router.push("/employermanagement/settings")}
-            >
-              <Settings className="w-4 h-4" /> Settings
-            </button>
-            <button
-              className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-              onClick={handleLogout}
-            >
-              <LogOut className="w-4 h-4" /> Log out
-            </button>
+            {/* compute active state and apply blue highlight */}
+            {(() => {
+              const base = "px-4 py-2 text-sm rounded-lg flex items-center gap-2";
+              const inactive = "text-gray-700 hover:bg-gray-100";
+              const active = "bg-blue-50 border border-blue-200 text-blue-700";
+
+              const btn = (label: string, icon: React.ReactNode, href: string, matchPrefix = href) => {
+                const isActive = pathname.startsWith(matchPrefix);
+                const cls = `${base} ${isActive ? active : inactive}`;
+                return (
+                  <button key={label} className={cls} onClick={() => router.push(href)}>
+                    {icon}
+                    {label}
+                  </button>
+                );
+              };
+
+              return (
+                <>
+                  {btn("Create Schedule", <Plus className="w-4 h-4" />, "/employermanagement/createschedule")}
+                  {btn("Time Off Requests", <Clock className="w-4 h-4" />, "/employermanagement/managetimerequests")}
+                  {btn("Availability Requests", <CheckSquare className="w-4 h-4" />, "/employermanagement/availabilityrequest")}
+                  {btn("Dropped Shifts", <AlertTriangle className="w-4 h-4" />, "/employermanagement/managedroppedshifts")}
+                  {btn("Announcements", <Bell className="w-4 h-4" />, "/employermanagement/announcements")}
+                  {btn("User Management", <Users className="w-4 h-4" />, "/employermanagement/employeeinvitemanagement", "/employermanagement/employeeinvitemanagement")}
+                  {btn("Settings", <Settings className="w-4 h-4" />, "/employermanagement/settings")}
+                  <button className={`${base} ${inactive}`} onClick={handleLogout}>
+                    <LogOut className="w-4 h-4" /> Log out
+                  </button>
+                </>
+              );
+            })()}
           </div>
         </div>
       </div>

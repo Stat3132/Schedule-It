@@ -1,18 +1,8 @@
+// app/employermanagement/employerhomepage/page.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-import {
-  Plus,
-  Clock,
-  CheckSquare,
-  Bell,
-  Users,
-  Settings,
-  LogOut,
-  AlertTriangle,
-} from "lucide-react";
 
 /* ---------- Types ---------- */
 type EmploymentRow = {
@@ -34,7 +24,14 @@ type ShiftRow = {
   status: "draft" | "published" | "canceled";
 };
 
-type AssignmentRow = { id: string; shift_id: string; user_id: string; status: string };
+type AssignmentRow = {
+  id: string;
+  shift_id: string;
+  user_id: string;
+  status: "assigned" | "offered" | "accepted" | "declined" | "dropped";
+  source: "manager" | "autofill" | "swap";
+};
+
 type ProfileRow = { id: string; full_name: string | null };
 type BusinessOpt = { id: string; name: string | null };
 type LocationOpt = { id: string; name: string };
@@ -96,6 +93,7 @@ type DayCell = {
   timeOffStatus?: TORow["status"];
   unavailable?: boolean;
   isDropPending?: boolean;
+  isPickedUp?: boolean;
 };
 
 type GridRow = { userId: string; name: string; byDay: DayCell[] };
@@ -161,7 +159,6 @@ function normalizeAvailabilityPattern(raw: unknown): AvailabilityPattern {
 /* ---------- Component ---------- */
 export default function EmployerHomePage() {
   const supabase = useRef(createClientComponentClient()).current;
-  const router = useRouter();
 
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -175,15 +172,6 @@ export default function EmployerHomePage() {
   const [weekLabel, setWeekLabel] = useState("");
   const [days, setDays] = useState<{ label: string; date: string }[]>([]);
   const [grid, setGrid] = useState<GridRow[]>([]);
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    if (typeof window !== "undefined") {
-      localStorage.removeItem("activeBusinessId");
-      localStorage.removeItem("activeLocationIds");
-    }
-    router.replace("/");
-  };
 
   /* ---------- Seed selection from localStorage ---------- */
   useEffect(() => {
@@ -219,7 +207,6 @@ export default function EmployerHomePage() {
         return;
       }
 
-      // manager/admin via employment
       const { data: empData, error: empError } = await supabase
         .from("employment")
         .select("business_id,is_manager,is_admin,status")
@@ -242,7 +229,6 @@ export default function EmployerHomePage() {
         ),
       );
 
-      // owned businesses
       const { data: ownedRows, error: ownedErr } = await supabase
         .from("business")
         .select("id,name")
@@ -398,7 +384,6 @@ export default function EmployerHomePage() {
         year: "numeric",
       })}`;
 
-      // employees in scope
       let empQ = supabase
         .from("employment")
         .select("user_id,location_id,status")
@@ -429,7 +414,6 @@ export default function EmployerHomePage() {
         ),
       );
 
-      // profile names
       let nameById = new Map<string, string>();
       if (employeeIds.length) {
         const { data: profs, error: profErr } = await supabase
@@ -452,7 +436,6 @@ export default function EmployerHomePage() {
         );
       }
 
-      // shifts: draft + published, exclude canceled
       let shiftQ = supabase
         .from("shift")
         .select("id,business_id,location_id,role_id,start_ts,end_ts,status")
@@ -482,12 +465,11 @@ export default function EmployerHomePage() {
         : [];
       const shiftIds = safeShifts.map((s) => s.id);
 
-      // assignments (include dropped so managers still see them on the grid; exclude declined)
       let assigns: AssignmentRow[] = [];
       if (shiftIds.length && employeeIds.length) {
         const { data: assignsRaw, error: asErr } = await supabase
           .from("shift_assignment")
-          .select("id,shift_id,user_id,status")
+          .select("id,shift_id,user_id,status,source")
           .in("shift_id", shiftIds)
           .in("user_id", employeeIds);
 
@@ -506,7 +488,6 @@ export default function EmployerHomePage() {
         );
       }
 
-      // --- Time off requests for employees in this business (for the week) ---
       const timeOffByUserDay = new Map<string, Map<string, TORow["status"]>>();
       if (employeeIds.length) {
         const { data: torRaw, error: torErr } = await supabase
@@ -539,7 +520,6 @@ export default function EmployerHomePage() {
         }
       }
 
-      // --- Availability patterns per user (latest/approved) ---
       const availByUser = new Map<string, AvailabilityPattern>();
       if (employeeIds.length) {
         const { data: avRaw, error: avErr } = await supabase
@@ -572,7 +552,6 @@ export default function EmployerHomePage() {
         }
       }
 
-      // Build grid
       const byUser = new Map<string, GridRow>();
       for (const uid of employeeIds) {
         byUser.set(uid, {
@@ -586,7 +565,7 @@ export default function EmployerHomePage() {
         const sh = safeShifts.find((s) => s.id === a.shift_id);
         if (!sh) continue;
 
-        const dow = new Date(sh.start_ts).getDay(); // 0..6
+        const dow = new Date(sh.start_ts).getDay();
         const rec = byUser.get(a.user_id);
         if (!rec) continue;
 
@@ -604,12 +583,13 @@ export default function EmployerHomePage() {
 
         if (a.status === "dropped") {
           baseCell.isDropPending = true;
+        } else if (a.source === "swap") {
+          baseCell.isPickedUp = true;
         }
 
         rec.byDay[dow] = baseCell;
       }
 
-      // Overlay time-off and availability into each cell
       for (const uid of employeeIds) {
         const row = byUser.get(uid);
         if (!row) continue;
@@ -674,227 +654,171 @@ export default function EmployerHomePage() {
       </div>
     );
 
-  /* ---------- Render ---------- */
+  /* ---------- Main content ---------- */
   return (
-    <div className="min-h-screen bg-gray-50">
-      <nav className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center gap-3">
-              {/* Business selector */}
-              <select
-                className="border rounded-md px-2 py-1 text-sm"
-                value={selectedBiz ?? ""}
-                onChange={(e) => setSelectedBiz(e.target.value || null)}
-              >
-                {businesses.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name ?? b.id}
-                  </option>
-                ))}
-              </select>
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold text-gray-900">Weekly Schedule</h1>
+        <p className="text-gray-600 mt-1">
+          {bizName} · {selectedLoc === "ALL" ? "All locations" : "One location"}
+        </p>
+        <p className="text-gray-600">{weekLabel}</p>
+        {errorMsg && <p className="text-sm text-red-600 mt-2">{errorMsg}</p>}
+      </div>
 
-              {/* Location selector */}
-              <select
-                className="border rounded-md px-2 py-1 text-sm"
-                value={selectedLoc}
-                onChange={(e) =>
-                  setSelectedLoc((e.target.value as string) || "ALL")
-                }
-                disabled={!selectedBiz}
-              >
-                <option value="ALL">All locations</option>
-                {locations.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex items-center space-x-1">
-              <button
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() =>
-                  router.push("/employermanagement/createschedule")
-                }
-              >
-                <Plus className="w-4 h-4" /> Create Schedule
-              </button>
-              <button
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() =>
-                  router.push("/employermanagement/managetimerequests")
-                }
-              >
-                <Clock className="w-4 h-4" /> Time Off Requests
-              </button>
-              <button
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() =>
-                  router.push("/employermanagement/availabilityrequest")
-                }
-              >
-                <CheckSquare className="w-4 h-4" /> Availability Requests
-              </button>
-              <button
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() =>
-                  router.push("/employermanagement/announcements")
-                }
-              >
-                <Bell className="w-4 h-4" /> Announcements
-              </button>
-              <button
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() =>
-                  router.push("/employermanagement/managedroppedshifts")
-                }
-              >
-                <AlertTriangle className="w-4 h-4" /> Dropped Shifts
-              </button>
-              <button
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() =>
-                  router.push(
-                    `/employermanagement/employeeinvitemanagement/${selectedBiz}`,
-                  )
-                }
-              >
-                <Users className="w-4 h-4" /> User Management
-              </button>
-              <button
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={() => router.push("/employermanagement/settings")}
-              >
-                <Settings className="w-4 h-4" /> Settings
-              </button>
-              <button
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
-                onClick={handleLogout}
-              >
-                <LogOut className="w-4 h-4" />
-                Log out
-              </button>
-            </div>
+      {/* Scope controls */}
+      <div className="mb-6 flex flex-wrap gap-3 items-center">
+        <div className="space-y-1">
+          <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+            Business
           </div>
-        </div>
-      </nav>
-
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">Weekly Schedule</h1>
-          <p className="text-gray-600 mt-1">
-            {bizName} ·{" "}
-            {selectedLoc === "ALL" ? "All locations" : "One location"}
-          </p>
-          <p className="text-gray-600">{weekLabel}</p>
-          {errorMsg && (
-            <p className="text-sm text-red-600 mt-2">{errorMsg}</p>
-          )}
+          <select
+            className="border rounded-md px-2 py-1 text-sm bg-white"
+            value={selectedBiz ?? ""}
+            onChange={(e) => setSelectedBiz(e.target.value || null)}
+          >
+            {businesses.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name ?? b.id}
+              </option>
+            ))}
+          </select>
         </div>
 
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
-          {loading ? (
-            <div className="p-6">Loading…</div>
-          ) : (
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-200 bg-gray-50">
-                  <th className="px-6 py-4 text-left">
+        <div className="space-y-1">
+          <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+            Location
+          </div>
+          <select
+            className="border rounded-md px-2 py-1 text-sm bg-white"
+            value={selectedLoc}
+            onChange={(e) =>
+              setSelectedLoc((e.target.value as string) || "ALL")
+            }
+            disabled={!selectedBiz}
+          >
+            <option value="ALL">All locations</option>
+            {locations.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* Full-width schedule card */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 w-full">
+        {loading ? (
+          <div className="p-6">Loading…</div>
+        ) : (
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-gray-200 bg-gray-50">
+                <th className="px-6 py-4 text-left">
+                  <div className="text-sm font-semibold text-gray-900">
+                    Staff Member
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    {selectedLoc === "ALL"
+                      ? "Business scope"
+                      : "Business + Location scope"}
+                  </div>
+                </th>
+                {days.map((d) => (
+                  <th
+                    key={d.label}
+                    className="px-3 py-4 text-center min-w-[110px]"
+                  >
                     <div className="text-sm font-semibold text-gray-900">
-                      Staff Member
+                      {d.label}
                     </div>
-                    <div className="text-xs text-gray-500">
-                      {selectedLoc === "ALL"
-                        ? "Business scope"
-                        : "Business + Location scope"}
+                    <div className="text-xs text-gray-500 mt-1">
+                      {d.date}
                     </div>
                   </th>
-                  {days.map((d) => (
-                    <th
-                      key={d.label}
-                      className="px-4 py-4 text-center min-w-[140px]"
-                    >
-                      <div className="text-sm font-semibold text-gray-900">
-                        {d.label}
-                      </div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {d.date}
-                      </div>
-                    </th>
+                ))}
+              </tr>
+            </thead>
+
+            <tbody>
+              {grid.map((row) => (
+                <tr
+                  key={row.userId}
+                  className="border-b border-gray-200 hover:bg-gray-50"
+                >
+                  <td className="px-6 py-4">
+                    <div className="text-sm font-semibold text-gray-900">
+                      {row.name || row.userId}
+                    </div>
+                  </td>
+                  {row.byDay.map((cell, idx) => (
+                    <td key={idx} className="px-3 py-4 text-center">
+                      {cell.start ? (
+                        <div className="border rounded-lg p-2">
+                          <div className="text-xs font-semibold">
+                            {cell.start}
+                          </div>
+                          <div className="text-xs">{cell.end}</div>
+                          {(cell.timeOffStatus ||
+                            cell.unavailable ||
+                            cell.isDropPending ||
+                            cell.isPickedUp) && (
+                            <div className="mt-1 text-[11px] text-amber-700">
+                              {(() => {
+                                const parts: string[] = [];
+                                if (cell.timeOffStatus) {
+                                  parts.push(
+                                    cell.timeOffStatus === "pending"
+                                      ? "Time off requested (pending)"
+                                      : "Time off approved",
+                                  );
+                                }
+                                if (cell.unavailable) {
+                                  parts.push("Marked unavailable");
+                                }
+                                if (cell.isDropPending) {
+                                  parts.push("Drop requested (pending review)");
+                                } else if (cell.isPickedUp) {
+                                  parts.push("Picked up shift");
+                                }
+                                return parts.join(" • ");
+                              })()}
+                            </div>
+                          )}
+                        </div>
+                      ) : cell.timeOffStatus ? (
+                        <div className="border border-amber-200 bg-amber-50 rounded-lg p-2 text-xs text-amber-900">
+                          {cell.timeOffStatus === "pending"
+                            ? "Time off requested (pending)"
+                            : "Time off approved"}
+                        </div>
+                      ) : cell.unavailable ? (
+                        <div className="border border-gray-200 bg-gray-50 rounded-lg p-2 text-xs text-gray-600">
+                          Unavailable
+                        </div>
+                      ) : (
+                        <div className="text-xs text-gray-400 py-2">Off</div>
+                      )}
+                    </td>
                   ))}
                 </tr>
-              </thead>
-              <tbody>
-                {grid.map((row) => (
-                  <tr
-                    key={row.userId}
-                    className="border-b border-gray-200 hover:bg-gray-50"
+              ))}
+
+              {grid.length === 0 && (
+                <tr>
+                  <td
+                    className="px-6 py-8 text-sm text-gray-500"
+                    colSpan={1 + days.length}
                   >
-                    <td className="px-6 py-4">
-                      <div className="text-sm font-semibold text-gray-900">
-                        {row.name || row.userId}
-                      </div>
-                    </td>
-                    {row.byDay.map((cell, idx) => (
-                      <td key={idx} className="px-4 py-4 text-center">
-                        {cell.start ? (
-                          <div className="border rounded-lg p-2">
-                            <div className="text-xs font-semibold">
-                              {cell.start}
-                            </div>
-                            <div className="text-xs">{cell.end}</div>
-                            {(cell.timeOffStatus ||
-                              cell.unavailable ||
-                              cell.isDropPending) && (
-                              <div className="mt-1 text-[11px] text-amber-700">
-                                {cell.timeOffStatus &&
-                                  (cell.timeOffStatus === "pending"
-                                    ? "Time off requested (pending)"
-                                    : "Time off approved")}
-                                {cell.timeOffStatus &&
-                                  (cell.unavailable || cell.isDropPending) &&
-                                  " • "}
-                                {cell.unavailable && "Marked unavailable"}
-                                {cell.unavailable && cell.isDropPending && " • "}
-                                {cell.isDropPending &&
-                                  "Drop requested (pending review)"}
-                              </div>
-                            )}
-                          </div>
-                        ) : cell.timeOffStatus ? (
-                          <div className="border border-amber-200 bg-amber-50 rounded-lg p-2 text-xs text-amber-900">
-                            {cell.timeOffStatus === "pending"
-                              ? "Time off requested (pending)"
-                              : "Time off approved"}
-                          </div>
-                        ) : cell.unavailable ? (
-                          <div className="border border-gray-200 bg-gray-50 rounded-lg p-2 text-xs text-gray-600">
-                            Unavailable
-                          </div>
-                        ) : (
-                          <div className="text-xs text-gray-400 py-2">Off</div>
-                        )}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-                {grid.length === 0 && (
-                  <tr>
-                    <td
-                      className="px-6 py-8 text-sm text-gray-500"
-                      colSpan={1 + days.length}
-                    >
-                      No employees or no shifts for this week and scope.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </main>
+                    No employees or no shifts for this week and scope.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 }
