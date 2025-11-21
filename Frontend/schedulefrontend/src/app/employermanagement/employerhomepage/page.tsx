@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-// import type { PostgrestError } from "@supabase/supabase-js"; // unused
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import {
   Plus,
@@ -12,6 +11,7 @@ import {
   Users,
   Settings,
   LogOut,
+  AlertTriangle,
 } from "lucide-react";
 
 /* ---------- Types ---------- */
@@ -26,7 +26,7 @@ type EmploymentRow = {
 
 type ShiftRow = {
   id: string;
-  business_id: string;
+  business_id: string | null;
   location_id: string | null;
   role_id: string | null;
   start_ts: string;
@@ -95,6 +95,7 @@ type DayCell = {
   end?: string;
   timeOffStatus?: TORow["status"];
   unavailable?: boolean;
+  isDropPending?: boolean;
 };
 
 type GridRow = { userId: string; name: string; byDay: DayCell[] };
@@ -481,7 +482,7 @@ export default function EmployerHomePage() {
         : [];
       const shiftIds = safeShifts.map((s) => s.id);
 
-      // assignments
+      // assignments (include dropped so managers still see them on the grid; exclude declined)
       let assigns: AssignmentRow[] = [];
       if (shiftIds.length && employeeIds.length) {
         const { data: assignsRaw, error: asErr } = await supabase
@@ -499,7 +500,10 @@ export default function EmployerHomePage() {
           }
           return;
         }
-        assigns = (assignsRaw ?? []) as AssignmentRow[];
+
+        assigns = ((assignsRaw ?? []) as AssignmentRow[]).filter(
+          (a) => a.status !== "declined",
+        );
       }
 
       // --- Time off requests for employees in this business (for the week) ---
@@ -586,7 +590,7 @@ export default function EmployerHomePage() {
         const rec = byUser.get(a.user_id);
         if (!rec) continue;
 
-        rec.byDay[dow] = {
+        const baseCell: DayCell = {
           ...(rec.byDay[dow] ?? {}),
           start: new Date(sh.start_ts).toLocaleTimeString([], {
             hour: "numeric",
@@ -597,6 +601,12 @@ export default function EmployerHomePage() {
             minute: "2-digit",
           }),
         };
+
+        if (a.status === "dropped") {
+          baseCell.isDropPending = true;
+        }
+
+        rec.byDay[dow] = baseCell;
       }
 
       // Overlay time-off and availability into each cell
@@ -738,6 +748,14 @@ export default function EmployerHomePage() {
               <button
                 className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
                 onClick={() =>
+                  router.push("/employermanagement/managedroppedshifts")
+                }
+              >
+                <AlertTriangle className="w-4 h-4" /> Dropped Shifts
+              </button>
+              <button
+                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2"
+                onClick={() =>
                   router.push(
                     `/employermanagement/employeeinvitemanagement/${selectedBiz}`,
                   )
@@ -827,14 +845,21 @@ export default function EmployerHomePage() {
                               {cell.start}
                             </div>
                             <div className="text-xs">{cell.end}</div>
-                            {(cell.timeOffStatus || cell.unavailable) && (
+                            {(cell.timeOffStatus ||
+                              cell.unavailable ||
+                              cell.isDropPending) && (
                               <div className="mt-1 text-[11px] text-amber-700">
                                 {cell.timeOffStatus &&
                                   (cell.timeOffStatus === "pending"
                                     ? "Time off requested (pending)"
                                     : "Time off approved")}
-                                {cell.timeOffStatus && cell.unavailable && " • "}
+                                {cell.timeOffStatus &&
+                                  (cell.unavailable || cell.isDropPending) &&
+                                  " • "}
                                 {cell.unavailable && "Marked unavailable"}
+                                {cell.unavailable && cell.isDropPending && " • "}
+                                {cell.isDropPending &&
+                                  "Drop requested (pending review)"}
                               </div>
                             )}
                           </div>

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, X, Plus } from "lucide-react";
+import EmployeeTopNav from "../../../components/EmployeeTopNav";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
 /* ========= Types ========= */
@@ -294,15 +295,11 @@ export default function TimeOffRequestsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">
+      <EmployeeTopNav />
+
       <div className="max-w-6xl mx-auto px-4">
         <div className="mb-8 flex justify-between items-center">
           <div className="flex items-center gap-4">
-            <button
-              onClick={() => router.replace("/employeemanagement/employeehomepage")}
-              className="px-3 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
-            >
-              Back to Home
-            </button>
             <div>
               <h1 className="text-3xl font-bold text-gray-900">Time Off Requests</h1>
               <p className="text-gray-600 mt-1">

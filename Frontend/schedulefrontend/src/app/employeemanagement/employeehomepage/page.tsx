@@ -1,10 +1,10 @@
-// app/employeemanagement/employeehomepage/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { Calendar, Clock, Bell, Settings, LogOut, AlertCircle } from "lucide-react";
+import EmployeeTopNav from "../../../components/EmployeeTopNav";
 
 // ---- Types ----
 type Employment = {
@@ -35,6 +35,8 @@ type ShiftAssignmentRow = {
   assigned_by: string | null;
   assigned_at: string;
   status: "assigned" | "offered" | "accepted" | "declined" | "dropped";
+  drop_reason?: string | null;
+  responded_at?: string | null;
 };
 
 type RoleRow = { id: string; name: string; color: string | null };
@@ -102,21 +104,57 @@ const DAY_KEYS: DayOfWeek[] = [
   "saturday",
 ];
 
+type BucketShift = {
+  shiftId?: string;
+  assignmentId?: string | null;
+  role: string;
+  start: string;
+  end: string;
+  color?: string | null;
+  locationName?: string | null;
+  isDropPending?: boolean;
+};
+
 type DayBucket = {
   dayIndex: number;
   date: Date;
-  shifts: Array<{
-    role: string;
-    start: string;
-    end: string;
-    color?: string | null;
-  }>;
+  shifts: BucketShift[];
 };
 
 type DayFlags = {
   hasTimeOff: boolean;
   timeOffStatus?: "pending" | "approved";
   isUnavailableByAvailability: boolean;
+};
+
+type DroppedShift = {
+  assignmentId: string;
+  shiftId: string;
+  date: Date;
+  weekdayIndex: number;
+  role: string;
+  locationName: string | null;
+  start: string;
+  end: string;
+  status: "dropped";
+};
+
+type Coworker = {
+  id: string;
+  name: string;
+};
+
+type ProfileRow = { id: string; full_name?: string | null; display_name?: string | null; email?: string | null };
+
+type SelectedShift = {
+  shiftId: string;
+  assignmentId: string | null;
+  date: Date;
+  weekdayIndex: number;
+  role: string;
+  locationName: string | null;
+  start: string;
+  end: string;
 };
 
 // ---- Helpers ----
@@ -190,11 +228,27 @@ export default function EmployeeHomePage() {
   const supabase = createClientComponentClient();
   const router = useRouter();
 
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [employmentState, setEmploymentState] = useState<Employment | null>(
+    null,
+  );
+
   const [loading, setLoading] = useState<boolean>(true);
   const [weekLabel, setWeekLabel] = useState<string>("");
   const [days, setDays] = useState<DayBucket[]>([]);
   const [hadRealAssignments, setHadRealAssignments] = useState<boolean>(false);
   const [dayFlags, setDayFlags] = useState<Record<number, DayFlags>>({});
+  const [droppedShifts, setDroppedShifts] = useState<DroppedShift[]>([]);
+
+  const [selectedShift, setSelectedShift] = useState<SelectedShift | null>(
+    null,
+  );
+  const [coworkers, setCoworkers] = useState<Coworker[]>([]);
+  const [coworkersLoading, setCoworkersLoading] = useState(false);
+  const [dropReason, setDropReason] = useState("");
+  const [dropSubmitting, setDropSubmitting] = useState(false);
+  const [dropError, setDropError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -213,13 +267,14 @@ export default function EmployeeHomePage() {
       // 1) Auth
       const { data: auth } = await supabase.auth.getUser();
       const uid: string | undefined = auth.user?.id;
-      console.debug("[EmployeeHome] auth user", uid);
+      setCurrentUserId(uid ?? null);
       if (!uid) {
         if (!cancelled) {
           setDays(defaultEmptyWeek());
           setWeekLabel(labelForWeek(new Date()));
           setHadRealAssignments(false);
           setDayFlags({});
+          setDroppedShifts([]);
           setLoading(false);
         }
         return;
@@ -234,19 +289,19 @@ export default function EmployeeHomePage() {
         .eq("user_id", uid)
         .eq("status", "active");
 
-      console.debug("[EmployeeHome] employment", { empErr, emps });
-
       if (empErr || !emps || emps.length === 0) {
         if (!cancelled) {
           setDays(defaultEmptyWeek());
           setWeekLabel(labelForWeek(new Date()));
           setHadRealAssignments(false);
           setDayFlags({});
+          setDroppedShifts([]);
           setLoading(false);
         }
         return;
       }
       const employment: Employment = emps[0];
+      setEmploymentState(employment);
 
       // 3) Week window
       const now = new Date();
@@ -344,24 +399,21 @@ export default function EmployeeHomePage() {
         console.error("[EmployeeHome] time off load error", e);
       }
 
-      // 4) Assignments for user → shift_ids
+      // 4) Assignments for user → shift_ids (all statuses)
       const { data: saRows, error: saErr } = await supabase
         .from("shift_assignment")
-        .select("id,shift_id,user_id,assigned_by,assigned_at,status")
+        .select("id,shift_id,user_id,assigned_by,assigned_at,status,drop_reason,responded_at")
         .eq("user_id", uid);
 
-      console.debug("[EmployeeHome] assignments", {
-        saErr,
-        saCount: saRows?.length,
-        saRows,
-      });
-
       if (!saErr && saRows && saRows.length > 0) {
-        const shiftIds: string[] = saRows.map(
-          (r: ShiftAssignmentRow) => r.shift_id,
+        const assignments = saRows as ShiftAssignmentRow[];
+
+        // All shift ids for this user (any status)
+        const shiftIds: string[] = Array.from(
+          new Set(assignments.map((r) => r.shift_id)),
         );
 
-        // 5) Shifts in this week (draft + published, exclude canceled)
+        // 5) Shifts in this week (published, exclude canceled)
         const { data: shifts, error: shErr } = await supabase
           .from("shift")
           .select("id,business_id,location_id,role_id,start_ts,end_ts,status")
@@ -370,17 +422,11 @@ export default function EmployeeHomePage() {
           .gte("start_ts", weekStart.toISOString())
           .lte("start_ts", weekEnd.toISOString());
 
-        console.debug("[EmployeeHome] shifts", {
-          shErr,
-          shiftCount: shifts?.length,
-          sample: shifts?.[0],
-          weekStart: weekStart.toISOString(),
-          weekEnd: weekEnd.toISOString(),
-        });
-
         if (!shErr && shifts && shifts.length > 0) {
-          const roleIds = Array.from(new Set(shifts.map((s) => s.role_id)));
-          const locIds = Array.from(new Set(shifts.map((s) => s.location_id)));
+          const shiftRows = shifts as ShiftRow[];
+
+          const roleIds = Array.from(new Set(shiftRows.map((s) => s.role_id)));
+          const locIds = Array.from(new Set(shiftRows.map((s) => s.location_id)));
 
           const [{ data: roles }, { data: locs }] = await Promise.all([
             roleIds.length
@@ -399,20 +445,68 @@ export default function EmployeeHomePage() {
           if (locs)
             for (const l of locs as LocationRow[]) locById[l.id] = l;
 
-          const withMeta: ShiftWithMeta[] = (shifts as ShiftRow[]).map(
-            (s: ShiftRow) => ({
-              shift: s,
-              role: roleById[s.role_id] ?? null,
-              location: locById[s.location_id] ?? null,
-            }),
-          );
+          // Map shift_id → assignment (for this user)
+          const assignmentByShiftId: Record<string, ShiftAssignmentRow> = {};
+          for (const a of assignments) {
+            assignmentByShiftId[a.shift_id] = a;
+          }
 
-          const buckets = buildBucketsFromShifts(withMeta);
+          const activeShiftRows: ShiftRow[] = [];
+          const dropped: DroppedShift[] = [];
+
+          for (const s of shiftRows) {
+            const a = assignmentByShiftId[s.id];
+            if (!a) continue;
+
+            const shiftDate = new Date(s.start_ts);
+            const weekdayIndex = shiftDate.getDay();
+            const role = roleById[s.role_id]?.name ?? "Shift";
+            const color = roleById[s.role_id]?.color ?? null;
+            const locationName = locById[s.location_id]?.name ?? null;
+
+            // Always keep dropped in schedule until manager approves
+            if (a.status === "dropped") {
+              dropped.push({
+                assignmentId: a.id,
+                shiftId: s.id,
+                date: shiftDate,
+                weekdayIndex,
+                role,
+                locationName,
+                start: fmtTimeLocal(s.start_ts),
+                end: fmtTimeLocal(s.end_ts),
+                status: "dropped",
+              });
+              activeShiftRows.push(s);
+            } else if (a.status !== "declined") {
+              // Treat assigned/offered/accepted as active for schedule
+              activeShiftRows.push(s);
+            }
+          }
+
+          // Build schedule buckets from active shifts only
+          const withMeta: ShiftWithMeta[] = activeShiftRows.map((s) => ({
+            shift: s,
+            role: roleById[s.role_id] ?? null,
+            location: locById[s.location_id] ?? null,
+          }));
+
+          const buckets = buildBucketsFromShifts(withMeta, assignmentByShiftId);
+
+          // Sort dropped shifts by date/time
+          dropped.sort((a, b) => {
+            if (a.date.getTime() !== b.date.getTime()) {
+              return a.date.getTime() - b.date.getTime();
+            }
+            return a.start.localeCompare(b.start);
+          });
+
           if (!cancelled) {
             setDays(buckets);
             setWeekLabel(label);
-            setHadRealAssignments(true);
+            setHadRealAssignments(activeShiftRows.length > 0);
             setDayFlags(flagsByIndex);
+            setDroppedShifts(dropped);
             setLoading(false);
           }
           return;
@@ -427,11 +521,6 @@ export default function EmployeeHomePage() {
           "id,business_id,role_id,location_id,weekday,start_time,end_time",
         )
         .eq("business_id", employment.business_id);
-
-      console.debug("[EmployeeHome] templates", {
-        stErr,
-        templateCount: templates?.length,
-      });
 
       if (!stErr && templates && templates.length > 0) {
         const filtered = templates.filter((t: ShiftTemplateRow) => {
@@ -460,62 +549,154 @@ export default function EmployeeHomePage() {
         }
         setHadRealAssignments(false);
         setDayFlags(flagsByIndex);
+        setDroppedShifts([]);
         setLoading(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [supabase]);
+  }, [supabase, refreshKey]);
 
   const todayIdx = new Date().getDay();
   const todayFlags = dayFlags[todayIdx];
 
+  // Load coworkers for the selected shift's day
+  const loadCoworkersForDay = async (date: Date) => {
+    if (!employmentState) return;
+    setCoworkers([]);
+    setCoworkersLoading(true);
+    try {
+      const dayStart = new Date(date);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+
+      const { data: dayShifts, error: dayShErr } = await supabase
+        .from("shift")
+        .select("id")
+        .eq("business_id", employmentState.business_id)
+        .neq("status", "canceled")
+        .gte("start_ts", dayStart.toISOString())
+        .lt("start_ts", dayEnd.toISOString());
+
+      if (dayShErr || !dayShifts || dayShifts.length === 0) {
+        setCoworkers([]);
+        setCoworkersLoading(false);
+        return;
+      }
+
+      const dayShiftIds = (dayShifts as { id: string }[]).map((d) => d.id);
+
+      const { data: dayAssignments, error: daErr } = await supabase
+        .from("shift_assignment")
+        .select("user_id")
+        .in("shift_id", dayShiftIds)
+        .in("status", ["assigned", "accepted", "offered", "dropped"]);
+
+      if (daErr || !dayAssignments || dayAssignments.length === 0) {
+        setCoworkers([]);
+        setCoworkersLoading(false);
+        return;
+      }
+
+      const userIds = Array.from(
+        new Set(
+          (dayAssignments as { user_id: string }[]).map((a) => a.user_id),
+        ),
+      );
+
+      const { data: profs, error: profErr } = await supabase
+        .from("profiles")
+        .select("id, full_name, display_name, email")
+        .in("id", userIds);
+
+      if (profErr || !profs) {
+        setCoworkers([]);
+        setCoworkersLoading(false);
+        return;
+      }
+
+      const profList = (profs ?? []) as ProfileRow[];
+      const mapped: Coworker[] = profList.map((p) => ({
+        id: p.id,
+        name: p.full_name || p.display_name || p.email || "Unnamed",
+      }));
+
+      setCoworkers(mapped);
+    } catch (e) {
+      console.error("[EmployeeHome] load coworkers error", e);
+      setCoworkers([]);
+    } finally {
+      setCoworkersLoading(false);
+    }
+  };
+
+  const handleShiftClick = async (bucket: DayBucket, s: BucketShift) => {
+    if (!s.shiftId || s.isDropPending) return; // ignore templates and already-dropped
+    setDropReason("");
+    setDropError(null);
+
+    const sel: SelectedShift = {
+      shiftId: s.shiftId,
+      assignmentId: s.assignmentId ?? null,
+      date: bucket.date,
+      weekdayIndex: bucket.dayIndex,
+      role: s.role,
+      locationName: s.locationName ?? null,
+      start: s.start,
+      end: s.end,
+    };
+
+    setSelectedShift(sel);
+    await loadCoworkersForDay(bucket.date);
+  };
+
+  const handleConfirmDrop = async () => {
+    if (!selectedShift || !selectedShift.assignmentId || !currentUserId) return;
+
+    const reason = dropReason.trim();
+    if (!reason) {
+      setDropError("Please provide a reason for dropping this shift.");
+      return;
+    }
+
+    setDropSubmitting(true);
+    setDropError(null);
+    try {
+      const { error } = await supabase
+        .from("shift_assignment")
+        .update({
+          status: "dropped",
+          drop_reason: reason,
+          responded_at: new Date().toISOString(),
+        })
+        .eq("id", selectedShift.assignmentId)
+        .eq("user_id", currentUserId);
+
+      if (error) {
+        console.error("[EmployeeHome] drop shift error", error);
+        setDropError("Unable to drop this shift. Please try again.");
+        setDropSubmitting(false);
+        return;
+      }
+
+      setSelectedShift(null);
+      setDropReason("");
+      setDropError(null);
+      setRefreshKey((k) => k + 1);
+    } catch (e) {
+      console.error("[EmployeeHome] drop shift exception", e);
+      setDropError("Something went wrong. Please try again.");
+    } finally {
+      setDropSubmitting(false);
+    }
+  };
+
   // ---- Render ----
   return (
     <div className="min-h-screen bg-gray-50">
-      <nav className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center" />
-            <div className="flex items-center space-x-1">
-              <button
-                className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-2"
-                onClick={() =>
-                  router.push("/employeemanagement/timeoffrequest")
-                }
-              >
-                <Clock className="w-4 h-4" />
-                Request Time Off
-              </button>
-              <button
-                className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-2"
-                onClick={() =>
-                  router.push("/employeemanagement/changeavailability")
-                }
-              >
-                <Calendar className="w-4 h-4" />
-                Change Availability
-              </button>
-              <button className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-2">
-                <Bell className="w-4 h-4" />
-                Announcements
-              </button>
-              <button className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-2">
-                <Settings className="w-4 h-4" />
-                Settings
-              </button>
-              <button
-                className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-2"
-                onClick={handleLogout}
-              >
-                <LogOut className="w-4 h-4" />
-                Log out
-              </button>
-            </div>
-          </div>
-        </div>
-      </nav>
+      <EmployeeTopNav />
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-6">
@@ -550,6 +731,7 @@ export default function EmployeeHomePage() {
             )}
         </div>
 
+        {/* Weekly schedule */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <div className="grid grid-cols-7 gap-px bg-gray-200">
             {days.map((bucket: DayBucket) => {
@@ -592,19 +774,30 @@ export default function EmployeeHomePage() {
                   <div className="space-y-2 flex-1">
                     {bucket.shifts.length > 0 ? (
                       bucket.shifts.map((s, i) => (
-                        <div
+                        <button
                           key={`${bucket.dayIndex}-${i}`}
-                          className="bg-teal-50 border border-teal-200 rounded-lg p-3"
+                          type="button"
+                          onClick={() => handleShiftClick(bucket, s)}
+                          className="w-full text-left bg-teal-50 border border-teal-200 rounded-lg p-3 cursor-pointer hover:bg-teal-100 transition-colors disabled:cursor-default disabled:opacity-80"
                           style={s.color ? { borderColor: s.color } : undefined}
+                          disabled={!s.shiftId || s.isDropPending}
                         >
-                          <div className="text-xs font-semibold text-teal-900 mb-1">
-                            {s.role}
+                          <div className="text-xs font-semibold text-teal-900 mb-1 flex justify-between gap-2">
+                            <span>
+                              {s.role}
+                              {s.locationName ? ` · ${s.locationName}` : ""}
+                            </span>
+                            {s.isDropPending && (
+                              <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800">
+                                Drop requested
+                              </span>
+                            )}
                           </div>
                           <div className="text-xs text-teal-700 flex items-center gap-1">
                             <Clock className="w-3 h-3" />
                             {s.start} - {s.end}
                           </div>
-                        </div>
+                        </button>
                       ))
                     ) : (
                       <div className="text-center py-4">
@@ -625,7 +818,138 @@ export default function EmployeeHomePage() {
             })}
           </div>
         </div>
+
+        {/* Dropped shifts */}
+        <section className="mt-8">
+          <h2 className="text-lg font-semibold text-gray-900">Dropped shifts</h2>
+          <p className="text-sm text-gray-600 mt-1">
+            Shifts you have requested to drop for this week. These remain on your schedule until a manager approves the change.
+          </p>
+
+          <div className="mt-3 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            {droppedShifts.length === 0 ? (
+              <div className="px-4 py-6 text-sm text-gray-500 text-center">
+                You have no dropped shifts for this week.
+              </div>
+            ) : (
+              <ul className="divide-y divide-gray-200">
+                {droppedShifts.map((ds) => (
+                  <li
+                    key={ds.assignmentId}
+                    className="px-4 py-3 flex items-center justify-between gap-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-gray-900">
+                        {WEEKDAY_LABELS[ds.weekdayIndex]} · {fmtDateMMDD(ds.date)}
+                      </div>
+                      <div className="text-xs text-gray-600 mt-0.5">
+                        {ds.locationName && (
+                          <>
+                            {ds.locationName}
+                            {" · "}
+                          </>
+                        )}
+                        {ds.role} · {ds.start} - {ds.end}
+                      </div>
+                    </div>
+                    <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-medium text-amber-800">
+                      Pending manager review
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </section>
       </main>
+
+      {/* Drop shift modal */}
+      {selectedShift && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">
+                  {selectedShift.role}
+                  {selectedShift.locationName
+                    ? ` · ${selectedShift.locationName}`
+                    : ""}
+                </h2>
+                <p className="text-sm text-gray-600 mt-1">
+                  {WEEKDAY_LABELS[selectedShift.weekdayIndex]} ·{" "}
+                  {fmtDateMMDD(selectedShift.date)} · {selectedShift.start} –{" "}
+                  {selectedShift.end}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedShift(null)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <span className="sr-only">Close</span>
+                ×
+              </button>
+            </div>
+
+            <div className="mt-4">
+              <h3 className="text-sm font-medium text-gray-900">
+                Coworkers that day
+              </h3>
+              {coworkersLoading ? (
+                <p className="mt-1 text-sm text-gray-500">Loading…</p>
+              ) : coworkers.length === 0 ? (
+                <p className="mt-1 text-sm text-gray-500">
+                  No other coworkers found for this day yet.
+                </p>
+              ) : (
+                <ul className="mt-2 space-y-1 max-h-32 overflow-y-auto text-sm text-gray-700">
+                  {coworkers.map((c) => (
+                    <li key={c.id}>
+                      {c.name}
+                      {c.id === currentUserId ? " (you)" : ""}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="mt-5">
+              <label className="block text-sm font-medium text-gray-900 mb-1">
+                Reason for dropping this shift
+              </label>
+              <textarea
+                value={dropReason}
+                onChange={(e) => setDropReason(e.target.value)}
+                rows={3}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                placeholder="Explain why you need to drop this shift..."
+              />
+              {dropError && (
+                <p className="mt-1 text-sm text-red-600">{dropError}</p>
+              )}
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setSelectedShift(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+                disabled={dropSubmitting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDrop}
+                className="px-4 py-2 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-60"
+                disabled={dropSubmitting}
+              >
+                {dropSubmitting ? "Dropping…" : "Drop this shift"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -659,6 +983,7 @@ function labelForWeek(reference: Date): string {
 
 function buildBucketsFromShifts(
   rows: ShiftWithMeta[],
+  assignmentByShiftId: Record<string, ShiftAssignmentRow>,
 ): DayBucket[] {
   const buckets = defaultEmptyWeek();
   for (const r of rows) {
@@ -667,11 +992,18 @@ function buildBucketsFromShifts(
     const idx = s.getDay();
     const roleName = r.role?.name ?? "Shift";
     const color = r.role?.color ?? null;
+    const locationName = r.location?.name ?? null;
+    const assignment = assignmentByShiftId[r.shift.id];
+
     buckets[idx].shifts.push({
+      shiftId: r.shift.id,
+      assignmentId: assignment?.id ?? null,
       role: roleName,
-      start: fmtTimeLocal(s.toISOString()),
-      end: fmtTimeLocal(e.toISOString()),
+      start: fmtTimeLocal(r.shift.start_ts),
+      end: fmtTimeLocal(r.shift.end_ts),
       color,
+      locationName,
+      isDropPending: assignment?.status === "dropped",
     });
   }
   for (const b of buckets) {
@@ -709,6 +1041,7 @@ function buildBucketsFromTemplates(
       start: s.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
       end: e.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
       color: null,
+      locationName: null,
     });
   }
   for (const b of buckets) {

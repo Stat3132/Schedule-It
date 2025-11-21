@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import type { DayOfWeek, AvailabilityStatus } from "../../../lib/supabase";
+import EmployerTopNav from "@/components/EmployerTopNav";
 
 /* ========= Types ========= */
 type UUID = string;
@@ -439,16 +440,11 @@ export default function ManagerAvailabilityRequestsPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
+      <EmployerTopNav />
       <div className="max-w-6xl mx-auto px-4 space-y-8">
         {/* Header */}
         <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex items-start gap-4">
-            <button
-              onClick={() => router.replace("/employermanagement/employerhomepage")}
-              className="px-3 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
-            >
-              Back to Home
-            </button>
             <div>
               <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-slate-100 text-xs font-medium text-slate-700 mb-2">
                 <ShieldCheck className="w-3 h-3" />

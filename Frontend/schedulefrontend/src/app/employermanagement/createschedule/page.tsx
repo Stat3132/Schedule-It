@@ -4,6 +4,7 @@ import React, { JSX, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, X } from "lucide-react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import EmployerTopNav from "@/components/EmployerTopNav";
 
 type UUID = string;
 
@@ -20,24 +21,25 @@ type AvailabilityStatus = "available" | "partial" | "unavailable";
 
 type DayRange = { start: string | null; end: string | null };
 
+type WeeklyTimeRange = {
+  start?: string | null;
+  end?: string | null;
+};
+
 type WeeklyPatternPayload = {
   reason?: string | null;
   pattern?: Partial<Record<DayOfWeek, AvailabilityStatus>>;
-  timeRanges?: Partial<
-    Record<DayOfWeek, { start?: string | null; end?: string | null }>
-  >;
+  timeRanges?: Partial<Record<DayOfWeek, WeeklyTimeRange>>;
 };
 
 type AvailabilityRow = {
   id: UUID;
   user_id: UUID;
   weekly_pattern_json: unknown;
-  effective_from: string; // DATE (e.g. "2025-11-05")
-  effective_to: string | null; // DATE or null
+  effective_from: string;
+  effective_to: string | null;
   status: "pending" | "approved" | "denied" | "canceled";
 };
-
-/* ---------- Core types ---------- */
 
 type Employee = {
   id: UUID;
@@ -49,10 +51,10 @@ type Employee = {
 type ShiftDraft = { employeeId: UUID; day: number; start: string; end: string };
 
 type DayMeta = {
-  day: number; // 0..6 index in this week (Sun..Sat)
-  label: string; // "Sun", "Mon", ...
-  uiDate: string; // "11/16"
-  ymd: string; // "2025-11-16"
+  day: number;
+  label: string;
+  uiDate: string;
+  ymd: string;
 };
 
 type TimeOffRow = {
@@ -68,11 +70,10 @@ type SupabaseErrorObj =
   | { code?: string; message?: string; details?: string; hint?: string }
   | null;
 
-/** Availability window resolved for a given employee on a specific calendar day */
 type AvailabilityWindow = {
   status: AvailabilityStatus;
-  start: string | null; // in HH:mm, for partial
-  end: string | null; // in HH:mm, for partial
+  start: string | null;
+  end: string | null;
 };
 
 type ShiftRowDb = {
@@ -88,6 +89,39 @@ type ShiftAssignmentRow = {
   user_id: string;
 };
 
+type LocationRowDb = {
+  id: string;
+  name: string;
+};
+
+type RoleRowDb = {
+  id: string;
+  name: string | null;
+};
+
+type PreviewByDayItem = {
+  employeeName: string;
+  roleName: string;
+  start: string;
+  end: string;
+};
+
+type EmployeePreviewEntry = {
+  dayLabel: string;
+  uiDate: string;
+  start: string;
+  end: string;
+};
+
+type EmployeePreview = {
+  employeeId: string;
+  employeeName: string;
+  roleName: string;
+  entries: EmployeePreviewEntry[];
+};
+
+type PreviewMode = "byDay" | "byEmployee";
+
 const ALL_DAY_NAMES: DayOfWeek[] = [
   "sunday",
   "monday",
@@ -99,9 +133,9 @@ const ALL_DAY_NAMES: DayOfWeek[] = [
 ];
 
 /* ---------- Date helpers ---------- */
-function startOfWeek(d: Date, weekStartsOn: 0 | 1 = 0) {
+function startOfWeek(d: Date, weekStartsOn: number = 0) {
   const day = d.getDay();
-  const diff = (day < weekStartsOn ? 7 : 0) + day - weekStartsOn;
+  const diff = (day - weekStartsOn + 7) % 7;
   const out = new Date(d);
   out.setHours(0, 0, 0, 0);
   out.setDate(d.getDate() - diff);
@@ -142,7 +176,6 @@ function fromMinutes(m: number) {
   return `${String(h).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
 }
 
-/** HH:mm -> h:mm AM/PM (for display only) */
 function formatTime12(t?: string | null): string {
   if (!t) return "";
   const [hhStr, mmStr] = t.split(":");
@@ -157,7 +190,6 @@ function formatRange12(start: string, end: string): string {
   return `${formatTime12(start)}–${formatTime12(end)}`;
 }
 
-/** Intersection of [baseStart, baseEnd] with an optional [extraStart, extraEnd] window. */
 function intersectWindow(
   baseStart: string,
   baseEnd: string,
@@ -204,14 +236,14 @@ function normalizeTimeRanges(raw: unknown): Record<DayOfWeek, DayRange> {
   for (const day of ALL_DAY_NAMES) {
     const v = src[day];
     if (v && typeof v === "object") {
-      const obj = v as Record<string, unknown>;
+      const range = v as WeeklyTimeRange;
       const start =
-        typeof obj.start === "string" && obj.start.trim().length > 0
-          ? obj.start
+        typeof range.start === "string" && range.start.trim().length > 0
+          ? range.start
           : null;
       const end =
-        typeof obj.end === "string" && obj.end.trim().length > 0
-          ? obj.end
+        typeof range.end === "string" && range.end.trim().length > 0
+          ? range.end
           : null;
       out[day] = { start, end };
     } else {
@@ -224,7 +256,7 @@ function normalizeTimeRanges(raw: unknown): Record<DayOfWeek, DayRange> {
 
 function ymdToDayOfWeek(ymd: string): DayOfWeek {
   const d = new Date(`${ymd}T12:00:00`);
-  const idx = d.getDay(); // 0..6
+  const idx = d.getDay();
   return ALL_DAY_NAMES[idx];
 }
 
@@ -240,6 +272,7 @@ export default function CreateSchedulePage(): JSX.Element {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [businessName, setBusinessName] = useState<string | null>(null);
   const [locationName, setLocationName] = useState<string | null>(null);
+  const [locations, setLocations] = useState<LocationRowDb[]>([]);
   const [openHH, setOpenHH] = useState<string>("09:00");
   const [closeHH, setCloseHH] = useState<string>("17:00");
 
@@ -255,23 +288,27 @@ export default function CreateSchedulePage(): JSX.Element {
   const [userId, setUserId] = useState<string | null>(null);
   const [contextError, setContextError] = useState<string | null>(null);
 
-  // userId -> list of day indexes (0..6) where approved time off applies
   const [timeOffByUser, setTimeOffByUser] = useState<Record<string, number[]>>({});
-
-  // userId -> dayIndex (0..6) -> availability window for that calendar date
   const [availabilityByUser, setAvailabilityByUser] = useState<
     Record<string, Record<number, AvailabilityWindow>>
   >({});
 
-  // persisted schedule status for this week/location
   const [scheduleStatus, setScheduleStatus] = useState<
     "none" | "draft" | "published"
   >("none");
 
-  /* ---------- Week days for *this* week ---------- */
+  const [weekStartDay, setWeekStartDay] = useState<number>(0);
+  const [weekOffset, setWeekOffset] = useState<number>(0);
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [settingsWeekStart, setSettingsWeekStart] = useState<number>(0);
+
+  const [previewMode, setPreviewMode] = useState<PreviewMode>("byDay");
+
+  /* ---------- Week days for active week ---------- */
   const DAYS: DayMeta[] = useMemo(() => {
-    const now = new Date();
-    const ws = startOfWeek(now, 0); // Sunday start
+    const base = new Date();
+    base.setDate(base.getDate() + weekOffset * 7);
+    const ws = startOfWeek(base, weekStartDay);
     return Array.from({ length: 7 }, (_, i) => {
       const d = new Date(ws);
       d.setDate(ws.getDate() + i);
@@ -282,7 +319,7 @@ export default function CreateSchedulePage(): JSX.Element {
         ymd: fmtYMD(d),
       };
     });
-  }, []);
+  }, [weekStartDay, weekOffset]);
 
   /* ---------- Read context from localStorage ---------- */
   useEffect(() => {
@@ -302,7 +339,32 @@ export default function CreateSchedulePage(): JSX.Element {
 
     setActiveBusinessId(storedBiz);
     setActiveLocationId(storedLocs[0] ?? null);
+
+    const storedWeekStart = localStorage.getItem(
+      `scheduleWeekStartDay_${storedBiz}`
+    );
+    if (storedWeekStart != null) {
+      const parsed = parseInt(storedWeekStart, 10);
+      if (!Number.isNaN(parsed) && parsed >= 0 && parsed <= 6) {
+        setWeekStartDay(parsed);
+        setSettingsWeekStart(parsed);
+      }
+    }
   }, []);
+
+  useEffect(() => {
+    setWeekOffset(0);
+  }, [activeBusinessId]);
+
+  const handleLocationChange = (locationId: string) => {
+    setActiveLocationId(locationId);
+    if (typeof window !== "undefined") {
+      const storedLocsRaw = localStorage.getItem("activeLocationIds");
+      const storedLocs = storedLocsRaw ? (JSON.parse(storedLocsRaw) as string[]) : [];
+      const newList = [locationId, ...storedLocs.filter((id) => id !== locationId)];
+      localStorage.setItem("activeLocationIds", JSON.stringify(newList));
+    }
+  };
 
   /* ---------- Load user + business + location + employees + time off + availability + existing schedule ---------- */
   useEffect(() => {
@@ -334,7 +396,25 @@ export default function CreateSchedulePage(): JSX.Element {
         if (bizErr) console.error("business load error", bizErr);
         if (!cancelled) setBusinessName(biz?.name ?? null);
 
-        // Location
+        // All locations
+        const { data: allLocRaw, error: allLocErr } = await supabase
+          .from("location")
+          .select("id,name")
+          .eq("business_id", activeBusinessId)
+          .order("name", { ascending: true });
+
+        if (allLocErr) {
+          console.error("locations list load error", allLocErr);
+        } else if (!cancelled) {
+          const locRows = (allLocRaw ?? []) as LocationRowDb[];
+          setLocations(locRows);
+
+          if (!activeLocationId && locRows.length > 0) {
+            setActiveLocationId(locRows[0].id);
+          }
+        }
+
+        // Location details
         if (activeLocationId) {
           const { data: loc, error: locErr } = await supabase
             .from("location")
@@ -346,8 +426,10 @@ export default function CreateSchedulePage(): JSX.Element {
 
           if (!cancelled) {
             setLocationName(loc?.name ?? null);
-            setOpenHH(loc?.opens_at ?? "09:00");
-            setCloseHH(loc?.closes_at ?? "17:00");
+            setOpenHH((loc as { opens_at?: string | null } | null)?.opens_at ?? "09:00");
+            setCloseHH(
+              (loc as { closes_at?: string | null } | null)?.closes_at ?? "17:00"
+            );
           }
         } else {
           if (!cancelled) {
@@ -388,7 +470,22 @@ export default function CreateSchedulePage(): JSX.Element {
 
         const ids = Array.from(new Set(empRows.map((r) => r.user_id)));
 
-        // Profiles for names
+        // Roles
+        const { data: rolesRaw, error: rolesErr } = await supabase
+          .from("role")
+          .select("id,name")
+          .eq("business_id", activeBusinessId);
+
+        if (rolesErr) {
+          console.error("role load error", rolesErr);
+        }
+
+        const roles = (rolesRaw ?? []) as RoleRowDb[];
+        const roleNameBy = new Map<string, string>(
+          roles.map((r) => [r.id, r.name || "—"])
+        );
+
+        // Profiles
         const { data: profsRaw, error: profErr } = ids.length
           ? await supabase
               .from("profiles")
@@ -413,18 +510,24 @@ export default function CreateSchedulePage(): JSX.Element {
           ])
         );
 
-        const emps: Employee[] = empRows.map((r) => ({
-          id: r.user_id,
-          name: nameBy.get(r.user_id) ?? "Unnamed",
-          roleId: r.role_id ?? null,
-          roleName: "—",
-        }));
+        const emps: Employee[] = empRows.map((r) => {
+          const roleId = r.role_id ?? null;
+          const roleName =
+            roleId != null
+              ? roleNameBy.get(roleId) ?? "Role"
+              : "No role assigned";
+          return {
+            id: r.user_id,
+            name: nameBy.get(r.user_id) ?? "Unnamed",
+            roleId,
+            roleName,
+          };
+        });
 
         if (!cancelled) {
           setEmployees(emps.sort((a, b) => a.name.localeCompare(b.name)));
         }
 
-        // If there are no employees, clear context maps (still allow shifts, but unlikely).
         if (!ids.length) {
           if (!cancelled) {
             setTimeOffByUser({});
@@ -437,7 +540,7 @@ export default function CreateSchedulePage(): JSX.Element {
         const weekStartISO = weekStartDate.toISOString();
         const weekEndISO = weekEndDate.toISOString();
 
-        // ---- Time off for this week (approved only) ----
+        // Time off
         if (ids.length) {
           const { data: toRowsRaw, error: toErr } = await supabase
             .from("time_off_request")
@@ -460,7 +563,6 @@ export default function CreateSchedulePage(): JSX.Element {
             const end = new Date(row.end_ts);
 
             for (const d of DAYS) {
-              // use midday to avoid timezone midnight edge cases
               const dayMid = new Date(`${d.ymd}T12:00:00`);
               if (dayMid >= start && dayMid <= end) {
                 if (!offByUser[row.user_id]) offByUser[row.user_id] = new Set();
@@ -482,7 +584,7 @@ export default function CreateSchedulePage(): JSX.Element {
           if (!cancelled) setTimeOffByUser({});
         }
 
-        // ---- Availability (approved patterns) ----
+        // Availability
         if (ids.length) {
           const { data: availRowsRaw, error: availErr } = await supabase
             .from("availability")
@@ -498,14 +600,12 @@ export default function CreateSchedulePage(): JSX.Element {
           } else {
             const availRows = (availRowsRaw ?? []) as AvailabilityRow[];
 
-            // Build user -> dayIndex -> {window,effectiveFrom} so latest pattern wins
             const internal: Record<
               string,
               Record<number, { window: AvailabilityWindow; effectiveFrom: Date }>
             > = {};
 
             for (const row of availRows) {
-              // Convert DATE strings to actual Date objects (00:00 local)
               const effStart = new Date(`${row.effective_from}T00:00:00`);
               effStart.setHours(0, 0, 0, 0);
               const effEnd =
@@ -519,7 +619,6 @@ export default function CreateSchedulePage(): JSX.Element {
               for (const d of DAYS) {
                 const dayDate = new Date(`${d.ymd}T12:00:00`);
 
-                // Only apply this availability row if the day falls in its effective window
                 if (dayDate < effStart) continue;
                 if (effEnd && dayDate > effEnd) continue;
 
@@ -560,7 +659,7 @@ export default function CreateSchedulePage(): JSX.Element {
           if (!cancelled) setAvailabilityByUser({});
         }
 
-        // ---- Existing schedule for this week (draft or published) ----
+        // Existing schedule
         if (activeLocationId) {
           const { data: shiftRowsRaw, error: shiftErr } = await supabase
             .from("shift")
@@ -614,7 +713,7 @@ export default function CreateSchedulePage(): JSX.Element {
               const dayMeta = DAYS.find((d) => d.ymd === ymdLocal);
               if (!dayMeta) continue;
 
-              const employeeId = users[0]; // assume single-assignment per shift
+              const employeeId = users[0];
               weekDrafts.push({
                 employeeId,
                 day: dayMeta.day,
@@ -673,7 +772,6 @@ export default function CreateSchedulePage(): JSX.Element {
     return byDay[day] ?? null;
   };
 
-  /** Store-hours ∩ availability for a given employee/day, or null if fully blocked. */
   const computeAllowedWindowForDay = (
     empId: string,
     day: number | null
@@ -684,7 +782,6 @@ export default function CreateSchedulePage(): JSX.Element {
     const avail = getAvailabilityWindow(empId, day);
 
     if (!avail || avail.status === "available") {
-      // No additional restriction beyond store hours
       return { start: openHH, end: closeHH };
     }
 
@@ -692,7 +789,6 @@ export default function CreateSchedulePage(): JSX.Element {
       return null;
     }
 
-    // Partial availability: intersect store hours with the partial window
     const window = intersectWindow(openHH, closeHH, avail.start, avail.end);
     return window;
   };
@@ -700,7 +796,6 @@ export default function CreateSchedulePage(): JSX.Element {
   function openEditor(empId: string, day: number) {
     const allowed = computeAllowedWindowForDay(empId, day);
     if (!allowed) {
-      // Either approved time off or unavailable for that day; do nothing.
       return;
     }
 
@@ -723,7 +818,6 @@ export default function CreateSchedulePage(): JSX.Element {
 
     const allowed = computeAllowedWindowForDay(editing.employeeId, editing.day);
     if (!allowed) {
-      // Safety guard: day is blocked; do not save
       setEditing(null);
       return;
     }
@@ -771,7 +865,6 @@ export default function CreateSchedulePage(): JSX.Element {
       return;
     }
 
-    // Filter out drafts that are blocked by time off or availability
     const validDrafts = drafts.filter((d) => {
       const allowed = computeAllowedWindowForDay(d.employeeId, d.day);
       if (!allowed) return false;
@@ -813,7 +906,6 @@ export default function CreateSchedulePage(): JSX.Element {
 
     setLoading(true);
     try {
-      // Delete existing shifts for this week/location (both draft and published)
       const { data: existingShiftsRaw, error: existingErr } = await supabase
         .from("shift")
         .select("id")
@@ -919,7 +1011,6 @@ export default function CreateSchedulePage(): JSX.Element {
         end_ts: string;
       }[];
 
-      // Create assignments for both draft and published schedules so we can restore the week.
       if (inserted.length) {
         const assignments = inserted.map((row, idx) => ({
           shift_id: row.id,
@@ -954,14 +1045,8 @@ export default function CreateSchedulePage(): JSX.Element {
 
   /* ---------- Preview data ---------- */
 
-  const previewByDay: Record<
-    number,
-    { employeeName: string; roleName: string; start: string; end: string }[]
-  > = useMemo(() => {
-    const map: Record<
-      number,
-      { employeeName: string; roleName: string; start: string; end: string }[]
-    > = {};
+  const previewByDay: Record<number, PreviewByDayItem[]> = useMemo(() => {
+    const map: Record<number, PreviewByDayItem[]> = {};
     for (const d of drafts) {
       const emp = employees.find((e) => e.id === d.employeeId);
       if (!emp) continue;
@@ -978,6 +1063,61 @@ export default function CreateSchedulePage(): JSX.Element {
     }
     return map;
   }, [drafts, employees]);
+
+  const previewByEmployee: EmployeePreview[] = useMemo(() => {
+    const map: Record<string, EmployeePreview> = {};
+    for (const draft of drafts) {
+      const emp = employees.find((e) => e.id === draft.employeeId);
+      if (!emp) continue;
+      const dayMeta = DAYS[draft.day];
+      if (!dayMeta) continue;
+
+      if (!map[emp.id]) {
+        map[emp.id] = {
+          employeeId: emp.id,
+          employeeName: emp.name,
+          roleName: emp.roleName ?? "—",
+          entries: [],
+        };
+      }
+      map[emp.id].entries.push({
+        dayLabel: dayMeta.label,
+        uiDate: dayMeta.uiDate,
+        start: draft.start,
+        end: draft.end,
+      });
+    }
+
+    const list = Object.values(map);
+    for (const empPreview of list) {
+      empPreview.entries.sort((a, b) => {
+        const idxA = DAYS.findIndex(
+          (d) => d.uiDate === a.uiDate && d.label === a.dayLabel
+        );
+        const idxB = DAYS.findIndex(
+          (d) => d.uiDate === b.uiDate && d.label === b.dayLabel
+        );
+        return idxA - idxB;
+      });
+    }
+
+    list.sort((a, b) => a.employeeName.localeCompare(b.employeeName));
+    return list;
+  }, [drafts, employees, DAYS]);
+
+  const totalShiftCount = drafts.length;
+  const uniqueEmployeesScheduled = useMemo(
+    () => new Set(drafts.map((d) => d.employeeId)).size,
+    [drafts]
+  );
+  const totalScheduledMinutes = useMemo(
+    () =>
+      drafts.reduce((acc, d) => {
+        return acc + (toMinutes(d.end) - toMinutes(d.start));
+      }, 0),
+    [drafts]
+  );
+  const totalScheduledHours = (totalScheduledMinutes / 60).toFixed(1);
 
   if (contextError && !activeBusinessId) {
     return (
@@ -1004,126 +1144,307 @@ export default function CreateSchedulePage(): JSX.Element {
     return <div className="py-8 text-center">Loading…</div>;
   }
 
-  /* ---------- Render: Employee × Day Grid ---------- */
+  const DAY_LABELS: { label: string; value: number }[] = [
+    { label: "Sunday", value: 0 },
+    { label: "Monday", value: 1 },
+    { label: "Tuesday", value: 2 },
+    { label: "Wednesday", value: 3 },
+    { label: "Thursday", value: 4 },
+    { label: "Friday", value: 5 },
+    { label: "Saturday", value: 6 },
+  ];
+
+  const weekRangeLabel =
+    DAYS.length === 7 ? `${DAYS[0].uiDate} – ${DAYS[6].uiDate}` : "";
+
+  /* ---------- Render ---------- */
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* top bar */}
-      <div className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-gray-200">
-        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
-          <button
-            onClick={() =>
-              router.replace("/employermanagement/employerhomepage")
-            }
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span className="text-sm font-medium">Back to Home</span>
-          </button>
-          <div className="text-xs text-gray-500">
-            biz: {activeBusinessId ?? "null"} · loc: {activeLocationId ?? "null"} ·
-            emps: {employees.length}
+      <EmployerTopNav />
+
+      <div className="max-w-6xl mx-auto px-4 pt-6 pb-10 space-y-6">
+        {/* Header */}
+        <div className="flex items-center gap-3">
+          <div>
+            <h1 className="text-lg font-semibold text-gray-900">
+              Create schedule{locationName ? ` – ${locationName}` : ""}
+            </h1>
+            <p className="text-xs text-gray-500">
+              {businessName ?? "Your business"}
+            </p>
           </div>
         </div>
-      </div>
 
-      <div className="max-w-6xl mx-auto px-4 pt-6 pb-10">
-        {/* Header */}
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">
-              Create Weekly Schedule
-            </h1>
-            <p className="text-gray-600 mt-1">
-              Use the grid to assign shifts by employee and day. Time off and
-              availability are built in.
-            </p>
-            <p className="text-sm text-gray-600 mt-1">
-              <span className="font-medium">Business: </span>
-              {businessName ?? "—"} ·{" "}
-              <span className="font-medium">Location: </span>
-              {locationName ?? "—"} ·{" "}
+        {/* Top row: location + store hours + status / week controls */}
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium">Location:</span>
+              <select
+                value={activeLocationId ?? ""}
+                onChange={(e) => handleLocationChange(e.target.value)}
+                className="px-2 py-1 rounded-md border border-gray-300 bg-white text-sm"
+              >
+                {locations.length === 0 && (
+                  <option value="">No locations</option>
+                )}
+                {locations.length > 0 && !activeLocationId && (
+                  <option value="">Select location…</option>
+                )}
+                {locations.map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <p className="text-sm text-gray-700">
               <span className="font-medium">Store hours: </span>
               {formatTime12(openHH)}–{formatTime12(closeHH)}
             </p>
           </div>
-          <div className="mt-2 sm:mt-0 text-sm text-gray-600">
-            <span className="font-medium mr-1">Current week status:</span>
-            <span
-              className={
-                scheduleStatus === "published"
-                  ? "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-800 border border-green-200"
+
+          <div className="flex flex-col items-start sm:items-end gap-3">
+            <div className="text-sm text-gray-600">
+              <span className="font-medium mr-1">Current week status:</span>
+              <span
+                className={
+                  scheduleStatus === "published"
+                    ? "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-800 border border-green-200"
+                    : scheduleStatus === "draft"
+                    ? "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200"
+                    : "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-700 border border-gray-200"
+                }
+              >
+                {scheduleStatus === "none"
+                  ? "No saved schedule"
                   : scheduleStatus === "draft"
-                  ? "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200"
-                  : "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-700 border border-gray-200"
-              }
-            >
-              {scheduleStatus === "none"
-                ? "No saved schedule"
-                : scheduleStatus === "draft"
-                ? "Draft (manager-only)"
-                : "Published"}
-            </span>
+                  ? "Draft (manager-only)"
+                  : "Published"}
+              </span>
+            </div>
+
+            <div className="flex flex-col items-start sm:items-end gap-2 text-xs text-gray-500">
+              <div className="flex flex-wrap items-center gap-2">
+                <span>
+                  Week of{" "}
+                  <span className="font-semibold text-gray-800">
+                    {weekRangeLabel}
+                  </span>
+                </span>
+                <div className="inline-flex rounded-lg border border-gray-200 bg-white overflow-hidden">
+                  <button
+                    onClick={() => setWeekOffset((w) => w - 1)}
+                    className="px-2 py-1 text-[11px] font-medium border-r border-gray-200 hover:bg-gray-50"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    onClick={() => setWeekOffset(0)}
+                    className="px-2 py-1 text-[11px] font-medium border-r border-gray-200 hover:bg-gray-50"
+                  >
+                    This week
+                  </button>
+                  <button
+                    onClick={() => setWeekOffset((w) => w + 1)}
+                    className="px-2 py-1 text-[11px] font-medium hover:bg-gray-50"
+                  >
+                    Next
+                  </button>
+                </div>
+                <button
+                  onClick={() => {
+                    setSettingsWeekStart(weekStartDay);
+                    setIsSettingsOpen(true);
+                  }}
+                  className="inline-flex items-center px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-[11px] font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Schedule settings
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 text-[11px] text-gray-500">
+                <span>
+                  Shifts:{" "}
+                  <span className="font-semibold text-gray-800">
+                    {totalShiftCount}
+                  </span>
+                </span>
+                <span>
+                  Employees scheduled:{" "}
+                  <span className="font-semibold text-gray-800">
+                    {uniqueEmployeesScheduled}
+                  </span>
+                </span>
+                <span>
+                  Total hours:{" "}
+                  <span className="font-semibold text-gray-800">
+                    {totalScheduledHours}
+                  </span>
+                </span>
+              </div>
+            </div>
           </div>
         </div>
 
         {/* Weekly preview card */}
         {drafts.length > 0 && (
-          <div className="mt-4 border border-gray-200 rounded-2xl bg-white shadow-sm p-4">
-            <div className="flex items-center justify-between mb-3">
+          <section className="border border-gray-200 rounded-2xl bg-white shadow-sm p-4 sm:p-5">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
               <div>
                 <h2 className="text-sm font-semibold text-gray-900">
                   {scheduleStatus === "draft"
-                    ? "Draft schedule preview"
-                    : "Schedule preview (this week)"}
+                    ? "Draft schedule overview"
+                    : "Schedule overview (active week)"}
                 </h2>
                 <p className="text-xs text-gray-500">
-                  Quick glance at who&apos;s working each day.
+                  See who is working each day or view the schedule grouped by
+                  employee.
                 </p>
               </div>
+              <div className="inline-flex rounded-full border border-gray-200 bg-gray-50 overflow-hidden text-[11px]">
+                <button
+                  onClick={() => setPreviewMode("byDay")}
+                  className={`px-3 py-1 font-medium ${
+                    previewMode === "byDay"
+                      ? "bg-white text-blue-700"
+                      : "text-gray-600 hover:bg-gray-100"
+                  }`}
+                >
+                  By day
+                </button>
+                <button
+                  onClick={() => setPreviewMode("byEmployee")}
+                  className={`px-3 py-1 font-medium border-l border-gray-200 ${
+                    previewMode === "byEmployee"
+                      ? "bg-white text-blue-700"
+                      : "text-gray-600 hover:bg-gray-100"
+                  }`}
+                >
+                  By employee
+                </button>
+              </div>
             </div>
-            <div className="grid md:grid-cols-4 gap-3">
-              {DAYS.map((d) => {
-                const items = previewByDay[d.day] ?? [];
-                return (
-                  <div
-                    key={d.day}
-                    className="border border-gray-100 rounded-xl bg-gray-50/60 p-3 min-h-[64px]"
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-semibold text-gray-800">
-                        {d.label}
-                      </span>
-                      <span className="text-xs text-gray-500">{d.uiDate}</span>
+
+            {previewMode === "byDay" ? (
+              <div className="grid md:grid-cols-4 gap-3">
+                {DAYS.map((d) => {
+                  const items = previewByDay[d.day] ?? [];
+                  return (
+                    <div
+                      key={d.day}
+                      className="border border-gray-100 rounded-xl bg-gray-50/60 p-3 min-h-[72px]"
+                    >
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="flex flex-col">
+                          <span className="text-xs font-semibold text-gray-800">
+                            {d.label}
+                          </span>
+                          <span className="text-[11px] text-gray-500">
+                            {d.uiDate}
+                          </span>
+                        </div>
+                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-white text-gray-700 border border-gray-200">
+                          {items.length} shift
+                          {items.length === 1 ? "" : "s"}
+                        </span>
+                      </div>
+                      {items.length === 0 ? (
+                        <p className="text-[11px] text-gray-400">No shifts</p>
+                      ) : (
+                        <ul className="space-y-1.5">
+                          {items.map((item, idx) => {
+                            const showRole =
+                              item.roleName &&
+                              item.roleName.trim().length > 0 &&
+                              item.roleName !== "—" &&
+                              item.roleName !== "No role assigned";
+                            return (
+                              <li
+                                key={idx}
+                                className="text-[11px] text-gray-700 flex flex-col"
+                              >
+                                <span className="font-medium truncate">
+                                  {item.employeeName}
+                                </span>
+                                <span className="truncate text-gray-500">
+                                  {showRole ? (
+                                    <>
+                                      {item.roleName} ·{" "}
+                                      {formatRange12(item.start, item.end)}
+                                    </>
+                                  ) : (
+                                    formatRange12(item.start, item.end)
+                                  )}
+                                </span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
                     </div>
-                    {items.length === 0 ? (
-                      <p className="text-[11px] text-gray-400">No shifts</p>
-                    ) : (
-                      <ul className="space-y-1">
-                        {items.map((item, idx) => (
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="grid md:grid-cols-3 gap-3">
+                {previewByEmployee.map((emp) => {
+                  const showRole =
+                    emp.roleName &&
+                    emp.roleName.trim().length > 0 &&
+                    emp.roleName !== "—" &&
+                    emp.roleName !== "No role assigned";
+                  return (
+                    <div
+                      key={emp.employeeId}
+                      className="border border-gray-100 rounded-xl bg-gray-50/60 p-3"
+                    >
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-xs font-semibold text-gray-900 truncate">
+                            {emp.employeeName}
+                          </span>
+                          {showRole && (
+                            <span className="text-[11px] text-gray-500 truncate">
+                              {emp.roleName}
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-white text-gray-700 border border-gray-200">
+                          {emp.entries.length} shift
+                          {emp.entries.length === 1 ? "" : "s"}
+                        </span>
+                      </div>
+                      <ul className="mt-1 space-y-1.5">
+                        {emp.entries.map((entry, idx) => (
                           <li
                             key={idx}
-                            className="text-[11px] text-gray-700 flex flex-col"
+                            className="text-[11px] text-gray-700 flex items-center justify-between gap-2"
                           >
-                            <span className="font-medium truncate">
-                              {item.employeeName}
+                            <span className="text-gray-500 truncate">
+                              {entry.dayLabel} · {entry.uiDate}
                             </span>
-                            <span className="truncate text-gray-500">
-                              {item.roleName} ·{" "}
-                              {formatRange12(item.start, item.end)}
+                            <span className="font-medium text-gray-800 whitespace-nowrap">
+                              {formatRange12(entry.start, entry.end)}
                             </span>
                           </li>
                         ))}
                       </ul>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+                    </div>
+                  );
+                })}
+                {previewByEmployee.length === 0 && (
+                  <p className="text-[11px] text-gray-400">
+                    No employees have shifts in this draft.
+                  </p>
+                )}
+              </div>
+            )}
+          </section>
         )}
 
         {/* Grid controls */}
-        <div className="mt-6 flex items-center justify-between gap-2">
+        <section className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
             <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
               Off / unavailable
@@ -1132,7 +1453,7 @@ export default function CreateSchedulePage(): JSX.Element {
               Has shift
             </span>
             <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 border border-gray-200">
-              Click to add / edit
+              Click cell to add / edit
             </span>
           </div>
           <div className="hidden sm:flex items-center gap-1 text-xs text-gray-500">
@@ -1153,10 +1474,10 @@ export default function CreateSchedulePage(): JSX.Element {
               ))}
             </div>
           </div>
-        </div>
+        </section>
 
         {/* Grid */}
-        <div className="mt-3 rounded-2xl border border-gray-200 bg-white shadow-sm overflow-x-auto">
+        <section className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-x-auto">
           <div className="min-w-[720px]">
             {/* Header row */}
             <div className="grid grid-cols-[minmax(220px,0.9fr)_repeat(7,minmax(90px,1fr))] border-b border-gray-200 bg-gray-50 text-xs font-semibold text-gray-700">
@@ -1198,9 +1519,11 @@ export default function CreateSchedulePage(): JSX.Element {
                     <span className="text-sm font-semibold text-gray-900 truncate">
                       {e.name}
                     </span>
-                    <span className="text-[11px] text-gray-500 truncate">
-                      {e.roleName}
-                    </span>
+                    {e.roleName && (
+                      <span className="text-[11px] text-gray-500 truncate">
+                        {e.roleName}
+                      </span>
+                    )}
                   </div>
 
                   {/* Day cells */}
@@ -1213,7 +1536,8 @@ export default function CreateSchedulePage(): JSX.Element {
                       availWindow?.status === "unavailable";
                     const isPartial = availWindow?.status === "partial";
 
-                    const isBlocked = isOff || isUnavailableByAvail || !allowedWindow;
+                    const isBlocked =
+                      isOff || isUnavailableByAvail || !allowedWindow;
 
                     let label: string;
                     if (isOff) {
@@ -1266,7 +1590,6 @@ export default function CreateSchedulePage(): JSX.Element {
                         {draft && (
                           <span className="text-[10px] text-gray-500 mt-0.5">
                             Click to edit ·{" "}
-                            {/* span instead of nested button to avoid button-in-button */}
                             <span
                               role="button"
                               tabIndex={0}
@@ -1314,10 +1637,10 @@ export default function CreateSchedulePage(): JSX.Element {
               ))
             )}
           </div>
-        </div>
+        </section>
 
         {/* Actions */}
-        <div className="mt-6 flex flex-col sm:flex-row justify-end gap-3">
+        <section className="flex flex-col sm:flex-row justify-end gap-3">
           <button
             onClick={() => persistSchedule("draft")}
             className="px-6 py-2 border border-gray-300 text-gray-800 font-medium rounded-lg hover:bg-gray-50"
@@ -1330,8 +1653,83 @@ export default function CreateSchedulePage(): JSX.Element {
           >
             Publish Schedule
           </button>
-        </div>
+        </section>
       </div>
+
+      {/* Schedule settings modal */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Schedule settings
+              </h3>
+              <button
+                onClick={() => setIsSettingsOpen(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  First day of schedule week
+                </label>
+                <select
+                  value={settingsWeekStart}
+                  onChange={(e) =>
+                    setSettingsWeekStart(parseInt(e.target.value, 10))
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                >
+                  {DAY_LABELS.map((d) => (
+                    <option key={d.value} value={d.value}>
+                      {d.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-gray-500">
+                  This controls which day your schedule grid starts on for this
+                  business. For example, if you post schedules from Monday to
+                  Sunday, choose Monday.
+                </p>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => setIsSettingsOpen(false)}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setWeekStartDay(settingsWeekStart);
+                    if (activeBusinessId && typeof window !== "undefined") {
+                      localStorage.setItem(
+                        `scheduleWeekStartDay_${activeBusinessId}`,
+                        String(settingsWeekStart)
+                      );
+                    }
+                    setIsSettingsOpen(false);
+                  }}
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700"
+                >
+                  Save settings
+                </button>
+              </div>
+
+              <p className="text-xs text-gray-500 pt-2">
+                You can also move between weeks using the Previous / This week /
+                Next controls above. Schedules are saved for whichever week is
+                currently active.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* modal editor */}
       {editing && (
@@ -1394,12 +1792,10 @@ export default function CreateSchedulePage(): JSX.Element {
               </div>
 
               <p className="text-xs text-gray-500 pt-2">
-                Shifts are constrained to store hours ({formatTime12(
-                  openHH
-                )}
-                –{formatTime12(closeHH)}) and the employee&apos;s approved
-                availability. Days with time off or &quot;unavailable&quot; cannot
-                be scheduled.
+                Shifts are constrained to store hours ({formatTime12(openHH)}–
+                {formatTime12(closeHH)}) and the employee&apos;s approved
+                availability. Days with time off or &quot;unavailable&quot; cannot be
+                scheduled.
               </p>
             </div>
           </div>
