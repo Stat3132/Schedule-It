@@ -67,7 +67,12 @@ export default function SignUpClient() {
         },
       });
 
+      // Debug logs to help diagnose production issues (visible in browser console)
+      console.log('supabase.signUp response', { data, error, emailRedirectTo });
+
       if (error) {
+        // surface the full error for debugging (will be shown in catch below)
+        console.error('SignUp error:', error);
         throw error;
       }
 
@@ -93,6 +98,7 @@ export default function SignUpClient() {
         verifyPassword: "",
       });
     } catch (err: unknown) {
+      console.error('SignUpClient caught error:', err);
       setMessage({
         type: "error",
         text:
