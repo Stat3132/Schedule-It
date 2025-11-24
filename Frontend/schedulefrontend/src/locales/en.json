@@ -1,0 +1,59 @@
+{
+  "title": "Settings",
+  "subtitle": "Customize your schedule experience",
+
+  "accessibility": "Accessibility",
+  "theme": "Theme",
+  "theme_desc": "Choose your preferred color scheme",
+  "light": "Light",
+  "dark": "Dark",
+
+  "language": "Language",
+  "language_desc": "Select your preferred language",
+  "english": "English",
+  "spanish": "Español",
+  "french": "Français",
+  "german": "Deutsch",
+  "chinese": "中文",
+
+  "font_size": "Font Size",
+  "font_size_desc": "Adjust text size for better readability",
+  "small": "Small",
+  "medium": "Medium",
+  "large": "Large",
+  "xlarge": "Extra Large",
+
+  "high_contrast": "High Contrast",
+  "high_contrast_desc": "Enhance visual contrast for better visibility",
+
+  "notifications": "Notifications",
+  "push_notifications": "Push Notifications",
+  "push_notifications_desc": "Receive notifications for upcoming events",
+  "email_reminders": "Email Reminders",
+  "email_reminders_desc": "Get email reminders for scheduled events",
+
+  "calendar_prefs": "Calendar Preferences",
+  "default_view": "Default View",
+  "default_view_desc": "Choose your preferred calendar view",
+  "day": "Day",
+  "week": "Week",
+  "month": "Month",
+  "agenda": "Agenda",
+
+  "week_starts": "Week Starts On",
+  "week_starts_desc": "Select the first day of the week",
+  "sunday": "Sunday",
+  "monday": "Monday",
+  "saturday": "Saturday",
+
+  "time_format": "Time Format",
+  "time_format_desc": "Choose between 12-hour or 24-hour format",
+  "12h": "12h",
+  "24h": "24h",
+
+  "show_weekends": "Show Weekends",
+  "show_weekends_desc": "Display Saturday and Sunday in calendar view",
+
+  "cancel": "Cancel",
+  "save_changes": "Save Changes"
+}

@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { Moon, Sun, Globe, Bell, Calendar, Clock, Eye, Type } from 'lucide-react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { useI18n } from '../../../lib/i18n';
 
 const supabase = createClientComponentClient();
 
@@ -15,7 +16,8 @@ export default function Settings() {
     } catch (e) {}
     return 'light';
   });
-  const [language, setLanguage] = useState('en');
+  const { locale, setLocale, t } = useI18n();
+  const [language, setLanguage] = useState(locale);
   const [fontSize, setFontSize] = useState('medium');
   const [highContrast, setHighContrast] = useState(false);
   const [notifications, setNotifications] = useState(true);
@@ -76,9 +78,9 @@ export default function Settings() {
     <div className={`min-h-screen ${theme === 'dark' ? 'bg-gray-900' : 'bg-gray-50'} transition-colors duration-200`}>
       <div className="max-w-4xl mx-auto p-6 space-y-8">
         <div className={`${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
-          <h1 className="text-3xl font-bold mb-2">Settings</h1>
+          <h1 className="text-3xl font-bold mb-2">{t('title')}</h1>
           <p className={`${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
-            Customize your schedule experience
+            {t('subtitle')}
           </p>
         </div>
 
@@ -86,7 +88,7 @@ export default function Settings() {
           <div className="flex items-center gap-3 mb-4">
             <Eye className={`w-5 h-5 ${theme === 'dark' ? 'text-blue-400' : 'text-blue-600'}`} />
             <h2 className={`text-xl font-semibold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
-              Accessibility
+              {t('accessibility')}
             </h2>
           </div>
 
@@ -96,10 +98,10 @@ export default function Settings() {
                 {theme === 'dark' ? <Moon className="w-5 h-5 text-gray-400" /> : <Sun className="w-5 h-5 text-gray-600" />}
                 <div>
                   <label className={`font-medium ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
-                    Theme
+                    {t('theme')}
                   </label>
                   <p className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
-                    Choose your preferred color scheme
+                    {t('theme_desc')}
                   </p>
                 </div>
               </div>
@@ -115,7 +117,7 @@ export default function Settings() {
                       : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                   }`}
                 >
-                  Light
+                  {t('light')}
                 </button>
                 <button
                   onClick={() => {
@@ -128,7 +130,7 @@ export default function Settings() {
                       : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                   }`}
                 >
-                  Dark
+                  {t('dark')}
                 </button>
               </div>
             </div>
@@ -138,27 +140,30 @@ export default function Settings() {
                 <Globe className={`w-5 h-5 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`} />
                 <div>
                   <label className={`font-medium ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
-                    Language
+                    {t('language')}
                   </label>
                   <p className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
-                    Select your preferred language
+                    {t('language_desc')}
                   </p>
                 </div>
               </div>
               <select
                 value={language}
-                onChange={(e) => setLanguage(e.target.value)}
+                onChange={(e) => {
+                  setLanguage(e.target.value);
+                  setLocale(e.target.value);
+                }}
                 className={`px-4 py-2 rounded-lg border ${
                   theme === 'dark'
                     ? 'bg-gray-700 border-gray-600 text-white'
                     : 'bg-white border-gray-300 text-gray-900'
                 } focus:outline-none focus:ring-2 focus:ring-blue-500`}
               >
-                <option value="en">English</option>
-                <option value="es">Español</option>
-                <option value="fr">Français</option>
-                <option value="de">Deutsch</option>
-                <option value="zh">中文</option>
+                <option value="en">{t('english')}</option>
+                <option value="es">{t('spanish')}</option>
+                <option value="fr">{t('french')}</option>
+                <option value="de">{t('german')}</option>
+                <option value="zh">{t('chinese')}</option>
               </select>
             </div>
 
@@ -167,10 +172,10 @@ export default function Settings() {
                 <Type className={`w-5 h-5 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`} />
                 <div>
                   <label className={`font-medium ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
-                    Font Size
+                    {t('font_size')}
                   </label>
                   <p className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
-                    Adjust text size for better readability
+                    {t('font_size_desc')}
                   </p>
                 </div>
               </div>
@@ -183,20 +188,20 @@ export default function Settings() {
                     : 'bg-white border-gray-300 text-gray-900'
                 } focus:outline-none focus:ring-2 focus:ring-blue-500`}
               >
-                <option value="small">Small</option>
-                <option value="medium">Medium</option>
-                <option value="large">Large</option>
-                <option value="xlarge">Extra Large</option>
+                <option value="small">{t('small')}</option>
+                <option value="medium">{t('medium')}</option>
+                <option value="large">{t('large')}</option>
+                <option value="xlarge">{t('xlarge')}</option>
               </select>
             </div>
 
             <div className="flex items-center justify-between">
               <div>
                 <label className={`font-medium ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
-                  High Contrast
+                  {t('high_contrast')}
                 </label>
                 <p className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
-                  Enhance visual contrast for better visibility
+                  {t('high_contrast_desc')}
                 </p>
               </div>
               <button
@@ -219,7 +224,7 @@ export default function Settings() {
           <div className="flex items-center gap-3 mb-4">
             <Bell className={`w-5 h-5 ${theme === 'dark' ? 'text-blue-400' : 'text-blue-600'}`} />
             <h2 className={`text-xl font-semibold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
-              Notifications
+              {t('notifications')}
             </h2>
           </div>
 
@@ -227,10 +232,10 @@ export default function Settings() {
             <div className="flex items-center justify-between">
               <div>
                 <label className={`font-medium ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
-                  Push Notifications
+                  {t('push_notifications')}
                 </label>
                 <p className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
-                  Receive notifications for upcoming events
+                  {t('push_notifications_desc')}
                 </p>
               </div>
               <button
@@ -250,10 +255,10 @@ export default function Settings() {
             <div className="flex items-center justify-between">
               <div>
                 <label className={`font-medium ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
-                  Email Reminders
+                  {t('email_reminders')}
                 </label>
                 <p className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
-                  Get email reminders for scheduled events
+                  {t('email_reminders_desc')}
                 </p>
               </div>
               <button
@@ -276,7 +281,7 @@ export default function Settings() {
           <div className="flex items-center gap-3 mb-4">
             <Calendar className={`w-5 h-5 ${theme === 'dark' ? 'text-blue-400' : 'text-blue-600'}`} />
             <h2 className={`text-xl font-semibold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
-              Calendar Preferences
+              {t('calendar_prefs')}
             </h2>
           </div>
 
@@ -284,10 +289,10 @@ export default function Settings() {
             <div className="flex items-center justify-between">
               <div>
                 <label className={`font-medium ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
-                  Default View
+                  {t('default_view')}
                 </label>
                 <p className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
-                  Choose your preferred calendar view
+                  {t('default_view_desc')}
                 </p>
               </div>
               <select
@@ -299,20 +304,20 @@ export default function Settings() {
                     : 'bg-white border-gray-300 text-gray-900'
                 } focus:outline-none focus:ring-2 focus:ring-blue-500`}
               >
-                <option value="day">Day</option>
-                <option value="week">Week</option>
-                <option value="month">Month</option>
-                <option value="agenda">Agenda</option>
+                <option value="day">{t('day')}</option>
+                <option value="week">{t('week')}</option>
+                <option value="month">{t('month')}</option>
+                <option value="agenda">{t('agenda')}</option>
               </select>
             </div>
 
             <div className="flex items-center justify-between">
               <div>
                 <label className={`font-medium ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
-                  Week Starts On
+                  {t('week_starts')}
                 </label>
                 <p className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
-                  Select the first day of the week
+                  {t('week_starts_desc')}
                 </p>
               </div>
               <select
@@ -324,9 +329,9 @@ export default function Settings() {
                     : 'bg-white border-gray-300 text-gray-900'
                 } focus:outline-none focus:ring-2 focus:ring-blue-500`}
               >
-                <option value="sunday">Sunday</option>
-                <option value="monday">Monday</option>
-                <option value="saturday">Saturday</option>
+                <option value="sunday">{t('sunday')}</option>
+                <option value="monday">{t('monday')}</option>
+                <option value="saturday">{t('saturday')}</option>
               </select>
             </div>
 
@@ -335,10 +340,10 @@ export default function Settings() {
                 <Clock className={`w-5 h-5 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`} />
                 <div>
                   <label className={`font-medium ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
-                    Time Format
+                    {t('time_format')}
                   </label>
                   <p className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
-                    Choose between 12-hour or 24-hour format
+                    {t('time_format_desc')}
                   </p>
                 </div>
               </div>
@@ -353,7 +358,7 @@ export default function Settings() {
                       : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                   }`}
                 >
-                  12h
+                  {t('12h')}
                 </button>
                 <button
                   onClick={() => setTimeFormat('24h')}
@@ -365,7 +370,7 @@ export default function Settings() {
                       : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                   }`}
                 >
-                  24h
+                  {t('24h')}
                 </button>
               </div>
             </div>
@@ -403,13 +408,13 @@ export default function Settings() {
                 : 'border-gray-300 text-gray-700 hover:bg-gray-100'
             }`}
           >
-            Cancel
+            {t('cancel')}
           </button>
           <button
             onClick={saveChanges}
             className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
           >
-            Save Changes
+            {t('save_changes')}
           </button>
         </div>
       </div>

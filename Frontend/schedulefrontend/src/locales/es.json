@@ -1,0 +1,59 @@
+{
+  "title": "Ajustes",
+  "subtitle": "Personaliza tu experiencia de programación",
+
+  "accessibility": "Accesibilidad",
+  "theme": "Tema",
+  "theme_desc": "Elige tu esquema de color preferido",
+  "light": "Claro",
+  "dark": "Oscuro",
+
+  "language": "Idioma",
+  "language_desc": "Selecciona tu idioma preferido",
+  "english": "English",
+  "spanish": "Español",
+  "french": "Français",
+  "german": "Deutsch",
+  "chinese": "中文",
+
+  "font_size": "Tamaño de fuente",
+  "font_size_desc": "Ajusta el tamaño del texto para una mejor legibilidad",
+  "small": "Pequeño",
+  "medium": "Medio",
+  "large": "Grande",
+  "xlarge": "Extra Grande",
+
+  "high_contrast": "Alto Contraste",
+  "high_contrast_desc": "Mejora el contraste visual para mayor visibilidad",
+
+  "notifications": "Notificaciones",
+  "push_notifications": "Notificaciones Push",
+  "push_notifications_desc": "Recibe notificaciones de próximos eventos",
+  "email_reminders": "Recordatorios por correo",
+  "email_reminders_desc": "Recibe recordatorios por correo para eventos programados",
+
+  "calendar_prefs": "Preferencias del calendario",
+  "default_view": "Vista predeterminada",
+  "default_view_desc": "Elige tu vista de calendario preferida",
+  "day": "Día",
+  "week": "Semana",
+  "month": "Mes",
+  "agenda": "Agenda",
+
+  "week_starts": "La semana empieza en",
+  "week_starts_desc": "Selecciona el primer día de la semana",
+  "sunday": "Domingo",
+  "monday": "Lunes",
+  "saturday": "Sábado",
+
+  "time_format": "Formato de hora",
+  "time_format_desc": "Elige entre formato de 12 o 24 horas",
+  "12h": "12h",
+  "24h": "24h",
+
+  "show_weekends": "Mostrar fines de semana",
+  "show_weekends_desc": "Mostrar sábado y domingo en la vista del calendario",
+
+  "cancel": "Cancelar",
+  "save_changes": "Guardar cambios"
+}
