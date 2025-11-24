@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   ChevronLeft,
   ChevronRight,
@@ -221,7 +220,6 @@ function DayChip(props: {
 
 export default function ManagerAvailabilityRequestsPage() {
   const supabase = createClientComponentClient();
-  const router = useRouter();
 
   const [requests, setRequests] = useState<RequestVM[]>([]);
   const [loading, setLoading] = useState(true);
@@ -383,8 +381,16 @@ export default function ManagerAvailabilityRequestsPage() {
         .eq("id", userId)
         .maybeSingle();
 
-      const managerName =
-        (mgrProf as any)?.full_name || (mgrProf as any)?.display_name || (mgrProf as any)?.email || "Manager";
+      function getProfileDisplayName(profile: unknown): string {
+        if (!profile || typeof profile !== "object") return "Manager";
+        const p = profile as Record<string, unknown>;
+        if (typeof p.full_name === "string" && p.full_name.trim()) return p.full_name;
+        if (typeof p.display_name === "string" && p.display_name.trim()) return p.display_name;
+        if (typeof p.email === "string" && p.email.trim()) return p.email;
+        return "Manager";
+      }
+
+      const managerName = getProfileDisplayName(mgrProf);
 
       const title = `Availability request ${data.status === "approved" ? "approved" : "updated"}`;
       const content = req

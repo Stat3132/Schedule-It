@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -51,7 +50,6 @@ type FilterKey = "all" | "pending" | "approved" | "denied" | "canceled";
 /* ========= Page ========= */
 export default function ManagerTimeOffRequestsPage() {
   const supabase = createClientComponentClient();
-  const router = useRouter();
 
   const [requests, setRequests] = useState<RequestVM[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,40 +60,7 @@ export default function ManagerTimeOffRequestsPage() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
 
   /* ---------- boot ---------- */
-  useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      setLoading(true);
-      setErrorMsg(null);
-
-      const { data: auth, error: authErr } = await supabase.auth.getUser();
-      if (authErr || !auth?.user) {
-        console.error("Auth error", authErr);
-        if (!cancelled) {
-          setErrorMsg("Could not load your account. Please sign in again.");
-          setRequests([]);
-          setLoading(false);
-        }
-        return;
-      }
-
-      const uid = auth.user.id as UUID;
-      if (cancelled) return;
-
-      setUserId(uid);
-
-      await reloadRequests();
-      if (!cancelled) setLoading(false);
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [supabase]);
-
-  /* ---------- data load ---------- */
-  async function reloadRequests() {
+  const reloadRequests = useCallback(async () => {
     setErrorMsg(null);
 
     const { data, error } = await supabase
@@ -149,9 +114,52 @@ export default function ManagerTimeOffRequestsPage() {
     });
 
     setRequests(vms);
-  }
+  }, [supabase]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      setLoading(true);
+      setErrorMsg(null);
+
+      const { data: auth, error: authErr } = await supabase.auth.getUser();
+      if (authErr || !auth?.user) {
+        console.error("Auth error", authErr);
+        if (!cancelled) {
+          setErrorMsg("Could not load your account. Please sign in again.");
+          setRequests([]);
+          setLoading(false);
+        }
+        return;
+      }
+
+      const uid = auth.user.id as UUID;
+      if (cancelled) return;
+
+      setUserId(uid);
+
+      await reloadRequests();
+      if (!cancelled) setLoading(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, reloadRequests]);
+
+  /* ---------- data load ---------- */
 
   /* ---------- actions ---------- */
+  function getProfileDisplayName(profile: unknown): string {
+    if (!profile || typeof profile !== "object") return "Manager";
+    const p = profile as Record<string, unknown>;
+    if (typeof p.full_name === "string" && p.full_name.trim()) return p.full_name;
+    if (typeof p.display_name === "string" && p.display_name.trim()) return p.display_name;
+    if (typeof p.email === "string" && p.email.trim()) return p.email;
+    return "Manager";
+  }
+
   async function handleDecision(id: UUID, decision: "approved" | "denied") {
     if (!userId) return;
 
@@ -207,8 +215,7 @@ export default function ManagerTimeOffRequestsPage() {
         .eq("id", userId)
         .maybeSingle();
 
-      const managerName =
-        (mgrProf as any)?.full_name || (mgrProf as any)?.display_name || (mgrProf as any)?.email || "Manager";
+      const managerName = getProfileDisplayName(mgrProf);
 
       const title = `Time off request ${data.status === "approved" ? "approved" : "updated"}`;
       const content = req
@@ -298,26 +305,23 @@ export default function ManagerTimeOffRequestsPage() {
     [currentMonth]
   );
 
-  const requestTouchesMonth = (r: RequestVM) => {
-    const s = new Date(r.startISO);
-    const e = new Date(r.endISO);
-    const monthStart = new Date(
-      currentMonth.getFullYear(),
-      currentMonth.getMonth(),
-      1
-    );
-    const monthEnd = new Date(
-      currentMonth.getFullYear(),
-      currentMonth.getMonth() + 1,
-      0
-    );
-    return e >= monthStart && s <= monthEnd;
-  };
-
-  const monthSummary = useMemo(
-    () => requests.filter(requestTouchesMonth),
-    [requests, currentMonth]
-  );
+  const monthSummary = useMemo(() => {
+    return requests.filter((r) => {
+      const s = new Date(r.startISO);
+      const e = new Date(r.endISO);
+      const monthStart = new Date(
+        currentMonth.getFullYear(),
+        currentMonth.getMonth(),
+        1
+      );
+      const monthEnd = new Date(
+        currentMonth.getFullYear(),
+        currentMonth.getMonth() + 1,
+        0
+      );
+      return e >= monthStart && s <= monthEnd;
+    });
+  }, [requests, currentMonth]);
 
   /* ---------- render ---------- */
   if (loading) {

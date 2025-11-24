@@ -64,8 +64,8 @@ export default function Settings() {
     try {
       // Set a cookie so the server can read the preference for SSR
       // Use a 1 year max-age. Use SameSite=Lax to be generally safe.
-      var expires = 60 * 60 * 24 * 365; // seconds
-      var cookieVal = encodeURIComponent(theme);
+      const expires = 60 * 60 * 24 * 365; // seconds
+      const cookieVal = encodeURIComponent(theme);
       document.cookie = `theme=${cookieVal}; Max-Age=${expires}; Path=/; SameSite=Lax`;
     } catch (e) {
       // ignore cookie errors in restricted environments

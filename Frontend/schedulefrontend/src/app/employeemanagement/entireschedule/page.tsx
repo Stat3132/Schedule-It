@@ -121,7 +121,7 @@ export default function EmployeeSchedulePage() {
   const router = useRouter();
 
   const [user, setUser] = useState<User | null>(null);
-  const [businessId, setBusinessId] = useState<UUID | null>(null);
+  const [, setBusinessId] = useState<UUID | null>(null);
 
   const [availableDrops, setAvailableDrops] = useState<DropAssignment[]>([]);
   const [myDropped, setMyDropped] = useState<MyDroppedAssignment[]>([]);
@@ -324,9 +324,8 @@ export default function EmployeeSchedulePage() {
       // Dev debug: log returned weekShifts shape to help diagnose missing assignments
       // (remove or guard in production)
       try {
-        // eslint-disable-next-line no-console
         console.debug("loaded weekShifts:", scheduleRes.data);
-      } catch (e) {
+      } catch {
         // ignore
       }
     } catch (err: unknown) {
@@ -410,6 +409,19 @@ export default function EmployeeSchedulePage() {
   };
 
   const myId = user?.id ?? null;
+
+  function getAssignmentUserId(assignment: unknown): UUID | null {
+    if (!assignment || typeof assignment !== "object") return null;
+    const obj = assignment as Record<string, unknown>;
+    const userVal = obj.user ?? obj.user_id ?? obj.userId;
+    if (!userVal) return null;
+    if (typeof userVal === "string") return userVal as UUID;
+    if (typeof userVal === "object" && userVal !== null) {
+      const u = userVal as Record<string, unknown>;
+      if (typeof u.id === "string") return u.id as UUID;
+    }
+    return null;
+  }
 
   const userFullName = (() => {
     const meta = user?.user_metadata as unknown;
@@ -622,13 +634,7 @@ export default function EmployeeSchedulePage() {
                     <div className="px-4 py-3 border-r text-sm text-muted-foreground">
                       {(() => {
                           const firstWithMe = weekShifts.find((s) =>
-                            s.assignments.some((a) => {
-                              const raw = (a as any).user ?? (a as any).user_id ?? (a as any).userId;
-                              if (!raw) return false;
-                              if (typeof raw === "string") return raw === myId;
-                              if (typeof raw === "object") return ((raw as any).id ?? raw) === myId;
-                              return false;
-                            })
+                            s.assignments.some((a) => getAssignmentUserId(a) === myId)
                           );
                           return firstWithMe?.role?.name ?? "—";
                         })()}
@@ -637,13 +643,7 @@ export default function EmployeeSchedulePage() {
                     {/* Day cells */}
                     {weekDays.map((day) => {
                       const shiftsForDay = weekShifts.filter((s) => {
-                        const hasMe = s.assignments.some((a) => {
-                          const raw = (a as any).user ?? (a as any).user_id ?? (a as any).userId;
-                          if (!raw) return false;
-                          if (typeof raw === "string") return raw === myId;
-                          if (typeof raw === "object") return ((raw as any).id ?? raw) === myId;
-                          return false;
-                        });
+                        const hasMe = s.assignments.some((a) => getAssignmentUserId(a) === myId);
                         if (!hasMe) return false;
                         return toYmd(s.start_ts) === day.ymd;
                       });

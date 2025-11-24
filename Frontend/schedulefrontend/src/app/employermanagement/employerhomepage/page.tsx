@@ -309,7 +309,16 @@ export default function EmployerHomePage() {
             .from("role")
             .select("id")
             .in("business_id", bizIds);
-          if (roles && Array.isArray(roles)) roleIds = roles.map((r: any) => r.id);
+          if (roles && Array.isArray(roles))
+            roleIds = (roles as unknown[])
+              .map((r) => {
+                if (r && typeof r === "object" && "id" in r) {
+                  const rec = r as Record<string, unknown>;
+                  if (typeof rec.id === "string") return rec.id;
+                }
+                return "";
+              })
+              .filter(Boolean) as string[];
         }
 
         // Load announcements ordered most-recent-first
@@ -320,9 +329,12 @@ export default function EmployerHomePage() {
 
         if (annErr || !annRows || annRows.length === 0) return;
 
-        const rows = annRows as any[];
+        const rows = (annRows ?? []) as unknown[];
         const applicable = rows.filter((a) => {
-          const targets = a.target_role_ids as string[] | null | undefined;
+          const rec = a as Record<string, unknown>;
+          const targets = Array.isArray(rec.target_role_ids)
+            ? (rec.target_role_ids as string[])
+            : null;
           if (!targets || targets.length === 0) return true;
           if (roleIds.length === 0) return false;
           return targets.some((t) => roleIds.includes(t));
@@ -340,28 +352,48 @@ export default function EmployerHomePage() {
         }
 
         // Find the first applicable announcement the user hasn't seen
-        const firstUnseen = applicable.find((a) => !seenIds.includes(a.id));
-        if (!firstUnseen) return;
+        const firstUnseenRec = applicable.find((a) => {
+          const rec = a as Record<string, unknown>;
+          const id = typeof rec.id === "string" ? rec.id : "";
+          return id && !seenIds.includes(id);
+        });
+        if (!firstUnseenRec) return;
+
+        const firstRec = firstUnseenRec as Record<string, unknown>;
 
         // Resolve sender name
+        const creatorId = typeof firstRec.created_by === "string" ? firstRec.created_by : "";
         const { data: prof } = await supabase
           .from("profiles")
           .select("full_name,display_name,email")
-          .eq("id", firstUnseen.created_by)
+          .eq("id", creatorId)
           .maybeSingle();
 
-        const senderName =
-          (prof?.full_name as string | null) ||
-          (prof?.display_name as string | null) ||
-          (prof?.email as string | null) ||
-          "Manager";
+        let senderName = "Manager";
+        if (prof && typeof prof === "object") {
+          const p = prof as Record<string, unknown>;
+          if (typeof p.full_name === "string" && p.full_name.trim()) senderName = p.full_name;
+          else if (typeof p.display_name === "string" && p.display_name.trim()) senderName = p.display_name;
+          else if (typeof p.email === "string" && p.email.trim()) senderName = p.email;
+        }
+
+        // Normalize announcement object into expected shape
+        const announcement = {
+          id: typeof firstRec.id === "string" ? firstRec.id : "",
+          title: typeof firstRec.title === "string" ? firstRec.title : "",
+          content: typeof firstRec.content === "string" ? firstRec.content : "",
+          created_at: typeof firstRec.created_at === "string" ? firstRec.created_at : "",
+          created_by: typeof firstRec.created_by === "string" ? firstRec.created_by : "",
+          target_role_ids: Array.isArray(firstRec.target_role_ids) ? (firstRec.target_role_ids as string[]) : undefined,
+        };
 
         // show it and mark it seen for this user
-        setAnnouncementToShow(firstUnseen);
+        setAnnouncementToShow(announcement);
         setAnnouncementSender(senderName);
         try {
-          if (!seenIds.includes(firstUnseen.id)) {
-            seenIds.push(firstUnseen.id);
+          const id = announcement.id;
+          if (id && !seenIds.includes(id)) {
+            seenIds.push(id);
             window.localStorage.setItem(
               `seenAnnouncements:${user.id}`,
               JSON.stringify(seenIds),
