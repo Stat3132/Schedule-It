@@ -13,8 +13,8 @@ export default function EmployeeSideNav() {
   const supabase = createClientComponentClient();
 
   const navBase = "px-3 py-2 rounded-md flex items-center gap-3 text-sm w-full text-left";
-  const inactive = "text-gray-700 hover:bg-gray-50";
-  const active = "bg-blue-50 border border-blue-200 text-blue-700";
+  const inactive = "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-800";
+  const active = "bg-blue-50 border border-blue-200 text-blue-700 dark:bg-blue-900 dark:border-blue-800 dark:text-blue-200";
 
   const items: { label: string; href: string; icon: React.ReactNode }[] = [
     { label: "Home", href: "/employeemanagement/employeehomepage", icon: <Home className="w-4 h-4" /> },
@@ -39,7 +39,7 @@ export default function EmployeeSideNav() {
   };
 
   return (
-    <aside className="hidden lg:flex lg:flex-col lg:fixed lg:left-0 lg:top-0 lg:h-full w-56 bg-white border-r border-gray-200">
+    <aside className="hidden lg:flex lg:flex-col lg:fixed lg:left-0 lg:top-0 lg:h-full w-56 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-700">
       <div className="p-4">
         <Link href="/employeemanagement/employeehomepage" aria-label="Schedule-It">
           <Image src="/scheduleitlogo.png" alt="Schedule-It" width={36} height={36} priority />

@@ -51,6 +51,7 @@ export interface Announcement {
   created_at: string;
   created_by: string;
   updated_at: string;
+  target_role_ids?: string[] | null; 
 }
 
 /* ========= Availability Types ========= */

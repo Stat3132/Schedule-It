@@ -25,23 +25,22 @@ export function AnnouncementCard({ announcement, onDelete }: AnnouncementCardPro
   };
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
+    <div className="bg-background rounded-xl shadow-sm border border-border p-6 hover:shadow-md transition-shadow">
       <div className="flex justify-between items-start gap-4 mb-3">
-        <h3 className="text-lg font-semibold text-gray-900 flex-1">{announcement.title}</h3>
+        <h3 className="text-lg font-semibold text-foreground flex-1">{announcement.title}</h3>
         <button
           onClick={handleDelete}
-          className="text-gray-400 hover:text-red-600 transition-colors flex-shrink-0"
+          className="text-foreground/60 hover:text-destructive transition-colors flex-shrink-0"
           title="Delete announcement"
         >
           <Trash2 size={18} />
         </button>
       </div>
-
-      <p className="text-gray-600 mb-4 whitespace-pre-wrap leading-relaxed">
+      <p className="text-foreground/70 mb-4 whitespace-pre-wrap leading-relaxed">
         {announcement.content}
       </p>
 
-      <div className="flex items-center gap-2 text-sm text-gray-500">
+      <div className="flex items-center gap-2 text-sm text-foreground/60">
         <Calendar size={14} />
         <span>{formatDate(announcement.created_at)}</span>
       </div>

@@ -320,25 +320,25 @@ export default function UserManagement({ businessId }: Props) {
 
   /* ---------- UI ---------- */
   return (
-    <main className="relative min-h-screen bg-gray-50">
+    <main className="relative min-h-screen bg-background">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 pb-12">
         <header className="mb-6">
           <div className="flex items-center gap-4">
             <button
               onClick={() => router.replace("/employermanagement/employerhomepage")}
-              className="px-3 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+              className="px-3 py-2 rounded-lg border border-border text-foreground hover:bg-background/95"
             >
               Back to Home
             </button>
             <h1 className="text-2xl font-semibold tracking-tight">User management</h1>
           </div>
           {biz && (
-            <div className="mt-1 text-sm text-gray-600">
+            <div className="mt-1 text-sm text-foreground/70">
               <span className="font-medium">{biz.name}</span>
               <span className="mx-2">·</span>
               <span>
                 Verification:
-                <span className={cx("ml-1", biz.verification_status === "verified" ? "text-green-600" : "text-amber-600")}>
+                <span className={cx("ml-1", biz.verification_status === "verified" ? "text-green-600 dark:text-emerald-300" : "text-amber-600 dark:text-amber-300")}>
                   {biz.verification_status}
                 </span>
               </span>
@@ -346,30 +346,30 @@ export default function UserManagement({ businessId }: Props) {
           )}
         </header>
 
-        {error && <div className="mb-4 rounded-md bg-rose-50 text-rose-700 px-3 py-2 text-sm">{error}</div>}
+        {error && <div className="mb-4 rounded-md bg-rose-50 text-rose-700 px-3 py-2 text-sm dark:bg-rose-900 dark:text-rose-200">{error}</div>}
 
         {loading ? (
           <div className="text-sm">Loading…</div>
         ) : (
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
             {/* Pending invites */}
-            <section className="bg-white border rounded-xl shadow-sm overflow-hidden xl:col-span-1">
-              <div className="px-4 py-3 border-b font-medium">Pending invites</div>
-              <ul className="divide-y">
-                {invites.length === 0 && <li className="px-4 py-6 text-sm text-gray-500">No pending invites.</li>}
+            <section className="bg-background border border-border rounded-xl shadow-sm overflow-hidden xl:col-span-1">
+                <div className="px-4 py-3 border-b font-medium">Pending invites</div>
+                <ul className="divide-y">
+                  {invites.length === 0 && <li className="px-4 py-6 text-sm text-foreground/60">No pending invites.</li>}
                 {invites.map(inv => (
                   <li key={inv.id} className="p-4">
                     <div className="flex items-center justify-between">
                       <div>
                         <div className="font-medium">{inv.email}</div>
-                        <div className="text-xs text-gray-500">
+                          <div className="text-xs text-foreground/60">
                           Role: {roles.find(r => r.id === inv.role_id)?.name ?? "—"} ·{" "}
                           Location: {locations.find(l => l.id === inv.location_id)?.name ?? "—"}
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
                         <button
-                          className="px-3 py-1 rounded-md bg-emerald-600 text-white text-sm disabled:opacity-50"
+                          className="px-3 py-1 rounded-md bg-emerald-600 text-white text-sm disabled:opacity-50 dark:bg-emerald-500 dark:hover:bg-emerald-600"
                           onClick={() => openAcceptForInvite(inv)}
                           disabled={disabledUI}
                           title={disabledUI ? "Business must be verified" : "Accept"}
@@ -379,7 +379,7 @@ export default function UserManagement({ businessId }: Props) {
                           </span>
                         </button>
                         <button
-                          className="px-3 py-1 rounded-md bg-rose-600 text-white text-sm"
+                          className="px-3 py-1 rounded-md bg-rose-600 text-white text-sm dark:bg-rose-600 dark:hover:bg-rose-700"
                           onClick={() => declineInvite(inv.id)}
                           title="Decline"
                         >
@@ -395,10 +395,10 @@ export default function UserManagement({ businessId }: Props) {
             </section>
 
             {/* Pending activations */}
-            <section className="bg-white border rounded-xl shadow-sm overflow-hidden xl:col-span-1">
+            <section className="bg-background border border-border rounded-xl shadow-sm overflow-hidden xl:col-span-1">
               <div className="px-4 py-3 border-b font-medium">Pending activations</div>
               <ul className="divide-y">
-                {pendingEmps.length === 0 && <li className="px-4 py-6 text-sm text-gray-500">No pending activations.</li>}
+                {pendingEmps.length === 0 && <li className="px-4 py-6 text-sm text-foreground/60">No pending activations.</li>}
                 {pendingEmps.map(emp => (
                   <li key={emp.id} className="p-4">
                     <div className="flex items-center justify-between">
@@ -406,13 +406,13 @@ export default function UserManagement({ businessId }: Props) {
                         <div className="font-medium">
                           {emp.profile?.full_name || emp.profile?.email || emp.user_id}
                         </div>
-                        <div className="text-xs text-gray-500">
+                        <div className="text-xs text-foreground/60">
                           Status: {emp.status} · Role: {roles.find(r => r.id === emp.role_id)?.name ?? "—"} ·{" "}
                           Primary: {locations.find(l => l.id === emp.location_id)?.name ?? "—"}
                         </div>
                       </div>
                       <button
-                        className="px-3 py-1 rounded-md bg-emerald-600 text-white text-sm disabled:opacity-50"
+                        className="px-3 py-1 rounded-md bg-emerald-600 text-white text-sm disabled:opacity-50 dark:bg-emerald-500 dark:hover:bg-emerald-600"
                         onClick={() => openAcceptForEmployment(emp)}
                         disabled={disabledUI}
                         title={disabledUI ? "Business must be verified" : "Activate"}
@@ -428,10 +428,10 @@ export default function UserManagement({ businessId }: Props) {
             </section>
 
             {/* Join requests */}
-            <section className="bg-white border rounded-xl shadow-sm overflow-hidden xl:col-span-1">
+            <section className="bg-background border border-border rounded-xl shadow-sm overflow-hidden xl:col-span-1">
               <div className="px-4 py-3 border-b font-medium">Join requests</div>
               <ul className="divide-y">
-                {joinRequests.length === 0 && <li className="px-4 py-6 text-sm text-gray-500">No pending requests.</li>}
+                {joinRequests.length === 0 && <li className="px-4 py-6 text-sm text-foreground/60">No pending requests.</li>}
                 {joinRequests.map(req => (
                   <li key={req.id} className="p-4">
                     <div className="flex items-center justify-between">
@@ -439,14 +439,14 @@ export default function UserManagement({ businessId }: Props) {
                         <div className="font-medium">
                           {req.profile?.full_name || req.profile?.email || req.requester_user_id}
                         </div>
-                        <div className="text-xs text-gray-500">
+                        <div className="text-xs text-foreground/60">
                           Requested role: {roles.find(r => r.id === req.requested_role_id)?.name ?? "—"} ·{" "}
                           Requested location: {locations.find(l => l.id === req.requested_location_id)?.name ?? "—"}
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
                         <button
-                          className="px-3 py-1 rounded-md bg-emerald-600 text-white text-sm disabled:opacity-50"
+                          className="px-3 py-1 rounded-md bg-emerald-600 text-white text-sm disabled:opacity-50 dark:bg-emerald-500 dark:hover:bg-emerald-600"
                           onClick={() => openAcceptForRequest(req)}
                           disabled={disabledUI}
                           title={disabledUI ? "Business must be verified" : "Approve"}
@@ -456,7 +456,7 @@ export default function UserManagement({ businessId }: Props) {
                           </span>
                         </button>
                         <button
-                          className="px-3 py-1 rounded-md bg-rose-600 text-white text-sm"
+                          className="px-3 py-1 rounded-md bg-rose-600 text-white text-sm dark:bg-rose-600 dark:hover:bg-rose-700"
                           onClick={() => denyRequest(req.id)}
                           title="Deny"
                         >
@@ -466,7 +466,7 @@ export default function UserManagement({ businessId }: Props) {
                         </button>
                       </div>
                     </div>
-                    {req.message && <p className="mt-1 text-xs text-gray-600">{req.message}</p>}
+                    {req.message && <p className="mt-1 text-xs text-foreground/70">{req.message}</p>}
                   </li>
                 ))}
               </ul>
@@ -476,13 +476,13 @@ export default function UserManagement({ businessId }: Props) {
 
         {/* Inline accept panel */}
         {openTarget && (
-          <div className="mt-6 bg-white border rounded-xl shadow-sm overflow-hidden">
+          <div className="mt-6 bg-background border border-border rounded-xl shadow-sm overflow-hidden">
             <button
               className="w-full flex items-center justify-between px-4 py-3 border-b"
               onClick={() => setOpenTarget(openTarget ? null : openTarget)}
             >
               <div className="font-medium">
-                {openTarget.kind === "invite" && `Accept invite: ${openTarget.invite.email}`}
+                {openTarget.kind === "invite" && `Accept invite: ${openTarget.invite.email}`} 
                 {openTarget.kind === "employment" &&
                   `Activate: ${openTarget.employment.profile?.full_name || openTarget.employment.profile?.email || openTarget.employment.user_id}`}
                 {openTarget.kind === "request" &&
@@ -493,11 +493,11 @@ export default function UserManagement({ businessId }: Props) {
 
             <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm mb-1">Role</label>
+                <label className="block text-sm mb-1 text-foreground">Role</label>
                 <select
                   value={formRoleId}
                   onChange={e => setFormRoleId(e.target.value as UUID | "")}
-                  className="w-full border rounded-md px-3 py-2 bg-white"
+                  className="w-full border border-border rounded-md px-3 py-2 bg-transparent text-foreground"
                 >
                   <option value="">No role</option>
                   {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
@@ -505,11 +505,11 @@ export default function UserManagement({ businessId }: Props) {
               </div>
 
               <div>
-                <label className="block text-sm mb-1">Primary location</label>
+                <label className="block text-sm mb-1 text-foreground">Primary location</label>
                 <select
                   value={formPrimaryLocId}
                   onChange={e => setFormPrimaryLocId(e.target.value as UUID | "")}
-                  className="w-full border rounded-md px-3 py-2 bg-white"
+                  className="w-full border border-border rounded-md px-3 py-2 bg-transparent text-foreground"
                 >
                   <option value="">None</option>
                   {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
@@ -517,15 +517,15 @@ export default function UserManagement({ businessId }: Props) {
               </div>
 
               <div className="md:col-span-2">
-                <label className="block text-sm mb-1">Allowed locations</label>
+                <label className="block text-sm mb-1 text-foreground">Allowed locations</label>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                   {locations.map(l => {
                     const checked = formAllowedLocs.includes(l.id);
                     return (
-                      <label key={l.id} className="inline-flex items-center gap-2 text-sm">
+                      <label key={l.id} className="inline-flex items-center gap-2 text-sm text-foreground">
                         <input
                           type="checkbox"
-                          className="accent-black"
+                          className="accent-primary"
                           checked={checked}
                           onChange={() =>
                             setFormAllowedLocs(prev => checked ? prev.filter(x => x !== l.id) : [...prev, l.id])
@@ -536,32 +536,32 @@ export default function UserManagement({ businessId }: Props) {
                     );
                   })}
                 </div>
-                <p className="text-xs text-gray-500 mt-1">
+                <p className="text-xs text-foreground/60 mt-1">
                   Stored in <code>employment.permissions.locations_allowed</code>.
                 </p>
               </div>
 
               <div className="flex items-center gap-6">
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input type="checkbox" className="accent-black" checked={formIsMgr} onChange={e => setFormIsMgr(e.target.checked)} />
+                <label className="inline-flex items-center gap-2 text-sm text-foreground">
+                  <input type="checkbox" className="accent-primary" checked={formIsMgr} onChange={e => setFormIsMgr(e.target.checked)} />
                   Manager
                 </label>
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input type="checkbox" className="accent-black" checked={formIsAdmin} onChange={e => setFormIsAdmin(e.target.checked)} />
+                <label className="inline-flex items-center gap-2 text-sm text-foreground">
+                  <input type="checkbox" className="accent-primary" checked={formIsAdmin} onChange={e => setFormIsAdmin(e.target.checked)} />
                   Admin
                 </label>
               </div>
 
               <div className="md:col-span-2 flex gap-2">
                 <button
-                  className="px-4 py-2 rounded-md bg-black text-white text-sm disabled:opacity-50"
+                  className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm disabled:opacity-50"
                   onClick={acceptSave}
                   disabled={!verified}
                   title={verified ? "Save" : "Business must be verified"}
                 >
                   Save
                 </button>
-                <button className="px-4 py-2 rounded-md border text-sm" onClick={resetPanel}>
+                <button className="px-4 py-2 rounded-md border border-border text-sm text-foreground" onClick={resetPanel}>
                   Cancel
                 </button>
               </div>

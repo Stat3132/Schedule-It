@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createAnnouncement } from "../../../lib/announcements";
 import type { User } from "@supabase/supabase-js";
 
 /* ---------- Types ---------- */
@@ -320,6 +321,14 @@ export default function EmployeeSchedulePage() {
         (pickupRes.data ?? []) as unknown as MyPickupRequest[]
       );
       setWeekShifts((scheduleRes.data ?? []) as unknown as WeekShift[]);
+      // Dev debug: log returned weekShifts shape to help diagnose missing assignments
+      // (remove or guard in production)
+      try {
+        // eslint-disable-next-line no-console
+        console.debug("loaded weekShifts:", scheduleRes.data);
+      } catch (e) {
+        // ignore
+      }
     } catch (err: unknown) {
       console.error("Error loading employee schedule page:", err);
       if (err instanceof Error) setErrorMsg(err.message ?? "Failed to load schedule.");
@@ -352,6 +361,19 @@ export default function EmployeeSchedulePage() {
       });
 
       if (error) throw error;
+
+        // Create announcement for pickup request
+        try {
+          const sender = userFullName ?? user.email ?? "Employee";
+          const title = `${sender} requested to pick up a shift`;
+          const content = `${formatDate(selectedAssignment.shift.start_ts)} · ${formatTimeRange(
+            selectedAssignment.shift.start_ts,
+            selectedAssignment.shift.end_ts
+          )}${selectedAssignment.shift.location?.name ? ` \n\nLocation: ${selectedAssignment.shift.location.name}` : ""}${pickupReason ? `\n\nReason: ${pickupReason}` : ""}`;
+          await createAnnouncement(supabase, user.id, title, content, []);
+        } catch (e) {
+          console.error("Failed to create announcement for pickup request:", e);
+        }
 
       setPickupModalOpen(false);
       setSelectedAssignment(null);
@@ -401,7 +423,9 @@ export default function EmployeeSchedulePage() {
   /* ---------- JSX ---------- */
 
   return (
-    <div className="p-6 space-y-8">
+    <div className="p-6">
+      <div className="mx-auto max-w-6xl">
+        <div className="rounded-2xl border border-border bg-card p-6 space-y-8">
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">My Schedule</h1>
@@ -433,7 +457,7 @@ export default function EmployeeSchedulePage() {
                 {availableDrops.map((a) => (
                   <div
                     key={a.id}
-                    className="rounded-lg border bg-card px-4 py-3 text-sm shadow-sm flex flex-col gap-1"
+                    className="rounded-lg border border-border bg-background px-4 py-3 text-sm shadow-sm flex flex-col gap-1"
                   >
                     <div className="flex justify-between gap-2">
                       <div>
@@ -486,11 +510,11 @@ export default function EmployeeSchedulePage() {
                   You haven&apos;t dropped any shifts this week.
                 </p>
               ) : (
-                <div className="space-y-2 text-sm">
+                  <div className="space-y-2 text-sm">
                   {myDropped.map((d) => (
                     <div
                       key={d.id}
-                      className="rounded-lg border bg-card px-3 py-2 flex flex-col gap-0.5"
+                      className="rounded-lg border border-border bg-background px-3 py-2 flex flex-col gap-0.5"
                     >
                       <div className="font-medium">
                         {d.shift.role?.name ?? "Unassigned role"}
@@ -518,11 +542,11 @@ export default function EmployeeSchedulePage() {
                   You haven&apos;t requested to pick up any shifts yet.
                 </p>
               ) : (
-                <div className="space-y-2 text-sm">
+                  <div className="space-y-2 text-sm">
                   {myPickupRequests.map((r) => (
                     <div
                       key={r.id}
-                      className="rounded-lg border bg-card px-3 py-2 flex flex-col gap-0.5"
+                      className="rounded-lg border border-border bg-background px-3 py-2 flex flex-col gap-0.5"
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div>
@@ -568,7 +592,7 @@ export default function EmployeeSchedulePage() {
               </p>
             ) : (
               <div className="mt-2 overflow-x-auto">
-                <div className="min-w-[900px] rounded-lg border bg-card text-sm">
+                <div className="min-w-[900px] rounded-lg border border-border bg-background text-sm">
                   {/* Header row */}
                   <div className="grid grid-cols-[220px,120px,repeat(7,minmax(0,1fr))] border-b bg-muted text-xs font-medium uppercase tracking-wide text-muted-foreground">
                     <div className="px-4 py-2">Employee</div>
@@ -597,19 +621,30 @@ export default function EmployeeSchedulePage() {
                     {/* Role cell (primary role this week, if any) */}
                     <div className="px-4 py-3 border-r text-sm text-muted-foreground">
                       {(() => {
-                        const firstWithMe = weekShifts.find((s) =>
-                          s.assignments.some((a) => a.user?.id === myId)
-                        );
-                        return firstWithMe?.role?.name ?? "—";
-                      })()}
+                          const firstWithMe = weekShifts.find((s) =>
+                            s.assignments.some((a) => {
+                              const raw = (a as any).user ?? (a as any).user_id ?? (a as any).userId;
+                              if (!raw) return false;
+                              if (typeof raw === "string") return raw === myId;
+                              if (typeof raw === "object") return ((raw as any).id ?? raw) === myId;
+                              return false;
+                            })
+                          );
+                          return firstWithMe?.role?.name ?? "—";
+                        })()}
                     </div>
 
                     {/* Day cells */}
                     {weekDays.map((day) => {
                       const shiftsForDay = weekShifts.filter((s) => {
-                        if (!s.assignments.some((a) => a.user?.id === myId)) {
+                        const hasMe = s.assignments.some((a) => {
+                          const raw = (a as any).user ?? (a as any).user_id ?? (a as any).userId;
+                          if (!raw) return false;
+                          if (typeof raw === "string") return raw === myId;
+                          if (typeof raw === "object") return ((raw as any).id ?? raw) === myId;
                           return false;
-                        }
+                        });
+                        if (!hasMe) return false;
                         return toYmd(s.start_ts) === day.ymd;
                       });
 
@@ -634,7 +669,7 @@ export default function EmployeeSchedulePage() {
                           {shiftsForDay.map((s) => (
                             <div
                               key={s.id}
-                              className="rounded-md bg-blue-50 px-3 py-2 text-blue-900 shadow-sm"
+                              className="rounded-md border border-border bg-background/60 px-3 py-2 text-foreground shadow-sm"
                             >
                               <div className="text-[11px] font-semibold uppercase tracking-wide">
                                 {s.role?.name ?? "Shift"}
@@ -705,6 +740,8 @@ export default function EmployeeSchedulePage() {
           </div>
         </div>
       )}
+      </div>
+    </div>
     </div>
   );
 }

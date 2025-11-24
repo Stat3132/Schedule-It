@@ -85,8 +85,8 @@ export function Calendar({ onDateSelect, selectedDate }: CalendarProps) {
         onClick={() => handleDateClick(day)}
         className={`h-10 rounded-lg flex items-center justify-center text-sm font-medium transition-colors ${
           isSelected(day)
-            ? "bg-blue-600 text-white"
-            : "hover:bg-gray-100 text-gray-700"
+            ? "bg-primary text-primary-foreground"
+            : "hover:bg-background/95 text-foreground"
         }`}
       >
         {day}
@@ -95,22 +95,22 @@ export function Calendar({ onDateSelect, selectedDate }: CalendarProps) {
   }
 
   return (
-    <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
+    <div className="bg-background rounded-lg p-4 shadow-sm border border-border">
       <div className="flex items-center justify-between mb-4">
         <button
           onClick={prevMonth}
-          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+          className="p-2 hover:bg-background/95 rounded-lg transition-colors"
         >
-          <ChevronLeft className="w-5 h-5 text-gray-600" />
+          <ChevronLeft className="w-5 h-5 text-foreground/70" />
         </button>
-        <h3 className="font-semibold text-gray-900">
+        <h3 className="font-semibold text-foreground">
           {monthNames[currentMonth.getMonth()]} {currentMonth.getFullYear()}
         </h3>
         <button
           onClick={nextMonth}
-          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+          className="p-2 hover:bg-background/95 rounded-lg transition-colors"
         >
-          <ChevronRight className="w-5 h-5 text-gray-600" />
+          <ChevronRight className="w-5 h-5 text-foreground/70" />
         </button>
       </div>
 
@@ -118,7 +118,7 @@ export function Calendar({ onDateSelect, selectedDate }: CalendarProps) {
         {dayNames.map((name) => (
           <div
             key={name}
-            className="h-10 flex items-center justify-center text-xs font-medium text-gray-500"
+            className="h-10 flex items-center justify-center text-xs font-medium text-foreground/60"
           >
             {name}
           </div>

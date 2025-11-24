@@ -11,6 +11,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createAnnouncement } from "../../../lib/announcements";
 
 /* ========= Types ========= */
 type UUID = string;
@@ -197,6 +198,27 @@ export default function ManagerTimeOffRequestsPage() {
     );
 
     setDecisionLoadingId(null);
+    // Create an announcement informing the employee of the decision
+    try {
+      const req = requests.find((r) => r.id === id);
+      const { data: mgrProf } = await supabase
+        .from("profiles")
+        .select("full_name,display_name,email")
+        .eq("id", userId)
+        .maybeSingle();
+
+      const managerName =
+        (mgrProf as any)?.full_name || (mgrProf as any)?.display_name || (mgrProf as any)?.email || "Manager";
+
+      const title = `Time off request ${data.status === "approved" ? "approved" : "updated"}`;
+      const content = req
+        ? `Your time off request for ${formatRange(req.startISO, req.endISO)} was ${data.status} by ${managerName}.`
+        : `A time off request was ${data.status} by ${managerName}.`;
+
+      await createAnnouncement(supabase, userId, title, content, []);
+    } catch (e) {
+      console.error("Failed to create announcement for time off decision:", e);
+    }
   }
 
   /* ---------- helpers ---------- */
@@ -222,21 +244,21 @@ export default function ManagerTimeOffRequestsPage() {
 
   const badgeTint = (status: RequestVM["status"]) =>
     status === "approved"
-      ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+      ? "bg-emerald-100 text-emerald-800 border border-emerald-200 dark:bg-emerald-900 dark:text-emerald-200 dark:border-emerald-700"
       : status === "denied"
-      ? "bg-red-100 text-red-800 border border-red-200"
+      ? "bg-red-100 text-red-800 border border-red-200 dark:bg-red-900 dark:text-red-200 dark:border-red-700"
       : status === "canceled"
-      ? "bg-slate-100 text-slate-700 border border-slate-200"
-      : "bg-amber-100 text-amber-800 border border-amber-200";
+      ? "bg-border text-foreground/70 border border-border"
+      : "bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-900 dark:text-amber-200 dark:border-amber-700";
 
   const rowBorder = (status: RequestVM["status"]) =>
     status === "approved"
-      ? "border-emerald-200"
+      ? "border-emerald-200 dark:border-emerald-700"
       : status === "denied"
-      ? "border-red-200"
+      ? "border-red-200 dark:border-red-700"
       : status === "canceled"
-      ? "border-slate-200"
-      : "border-amber-200";
+      ? "border-border"
+      : "border-amber-200 dark:border-amber-700";
 
   const filterLabel: Record<FilterKey, string> = {
     all: "All",
@@ -300,8 +322,8 @@ export default function ManagerTimeOffRequestsPage() {
   /* ---------- render ---------- */
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="px-6 py-4 rounded-xl bg-white shadow-sm border border-slate-200 text-slate-700 text-sm">
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="px-6 py-4 rounded-xl bg-background shadow-sm border border-border text-foreground/70 text-sm">
           Loading time off requests…
         </div>
       </div>
@@ -309,20 +331,20 @@ export default function ManagerTimeOffRequestsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 py-8">
+    <div className="min-h-screen bg-background py-8">
       <div className="max-w-6xl mx-auto px-4 space-y-8">
         {/* Header */}
         <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex items-start gap-4">
             <div>
-              <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-slate-100 text-xs font-medium text-slate-700 mb-2">
+              <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-border text-xs font-medium text-foreground/70 mb-2">
                 <ShieldCheck className="w-3 h-3" />
                 Manager · Time Off
               </div>
-              <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
+              <h1 className="text-3xl font-semibold tracking-tight text-foreground">
                 Time Off Requests
               </h1>
-              <p className="mt-1 text-sm text-slate-600">
+              <p className="mt-1 text-sm text-foreground/70">
                 Review, approve, or deny time off for your team. Decisions are tracked for
                 audit history.
               </p>
@@ -336,12 +358,12 @@ export default function ManagerTimeOffRequestsPage() {
                   new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1)
                 )
               }
-              className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+              className="inline-flex items-center justify-center rounded-lg border border-border bg-background px-2 py-1.5 text-xs font-medium text-foreground/70 hover:bg-background/50"
             >
               <ChevronLeft className="w-4 h-4 mr-1" />
               Prev
             </button>
-            <div className="px-3 py-1.5 rounded-lg bg-slate-900 text-xs font-medium text-white">
+            <div className="px-3 py-1.5 rounded-lg bg-foreground text-xs font-medium text-background">
               {monthLabel}
             </div>
             <button
@@ -350,7 +372,7 @@ export default function ManagerTimeOffRequestsPage() {
                   new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1)
                 )
               }
-              className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+              className="inline-flex items-center justify-center rounded-lg border border-border bg-background px-2 py-1.5 text-xs font-medium text-foreground/70 hover:bg-background/50"
             >
               Next
               <ChevronRight className="w-4 h-4 ml-1" />
@@ -360,70 +382,70 @@ export default function ManagerTimeOffRequestsPage() {
 
         {/* Error banner */}
         {errorMsg && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:bg-red-900 dark:text-red-200 dark:border-red-700">
             {errorMsg}
           </div>
         )}
 
         {/* Summary cards */}
         <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="rounded-xl border border-border bg-background p-4 shadow-sm">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+              <span className="text-xs font-semibold text-foreground/70 uppercase tracking-wide">
                 Pending
               </span>
-              <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 border border-amber-100">
+              <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 border border-amber-100 dark:bg-amber-900 dark:text-amber-200 dark:border-amber-700">
                 <Filter className="w-3 h-3 mr-1" />
                 Needs review
               </span>
             </div>
-            <div className="text-2xl font-semibold text-slate-900">
+            <div className="text-2xl font-semibold text-foreground">
               {counts.pending}
-              <span className="text-xs font-normal text-slate-500 ml-1">open</span>
+              <span className="text-xs font-normal text-foreground/70 ml-1">open</span>
             </div>
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 text-xs text-foreground/70">
               Requests awaiting your decision.
             </p>
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="rounded-xl border border-border bg-background p-4 shadow-sm">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+              <span className="text-xs font-semibold text-foreground/70 uppercase tracking-wide">
                 This month
               </span>
             </div>
-            <div className="text-2xl font-semibold text-slate-900">
+            <div className="text-2xl font-semibold text-foreground">
               {monthSummary.length}
-              <span className="text-xs font-normal text-slate-500 ml-1">requests</span>
+              <span className="text-xs font-normal text-foreground/70 ml-1">requests</span>
             </div>
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 text-xs text-foreground/70">
               Any time off overlapping {monthLabel.toLowerCase()}.
             </p>
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="rounded-xl border border-border bg-background p-4 shadow-sm">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+              <span className="text-xs font-semibold text-foreground/70 uppercase tracking-wide">
                 Total
               </span>
             </div>
-            <div className="text-2xl font-semibold text-slate-900">
+            <div className="text-2xl font-semibold text-foreground">
               {counts.all}
-              <span className="text-xs font-normal text-slate-500 ml-1">lifetime</span>
+              <span className="text-xs font-normal text-foreground/70 ml-1">lifetime</span>
             </div>
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 text-xs text-foreground/70">
               All requests visible to your role.
             </p>
           </div>
         </section>
 
         {/* Filter + list */}
-        <section className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+        <section className="rounded-xl border border-border bg-background shadow-sm overflow-hidden">
           {/* Filter bar */}
-          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-100">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-border">
             <div className="flex items-center gap-2">
-              <Filter className="w-4 h-4 text-slate-500" />
-              <span className="text-xs font-medium text-slate-700">
+              <Filter className="w-4 h-4 text-foreground/70" />
+              <span className="text-xs font-medium text-foreground/70">
                 Filter by status
               </span>
             </div>
@@ -434,16 +456,16 @@ export default function ManagerTimeOffRequestsPage() {
                   onClick={() => setFilter(key)}
                   className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition-colors ${
                     filter === key
-                      ? "bg-slate-900 text-white"
-                      : "bg-slate-50 text-slate-700 hover:bg-slate-100"
+                      ? "bg-foreground text-background"
+                      : "bg-border text-foreground/70 hover:bg-border/50"
                   }`}
                 >
                   {filterLabel[key]}
                   <span
                     className={`ml-1 inline-flex h-4 min-w-[1.25rem] items-center justify-center rounded-full text-[10px] ${
                       filter === key
-                        ? "bg-slate-800 text-slate-100"
-                        : "bg-white text-slate-600"
+                        ? "bg-foreground/90 text-background"
+                        : "bg-background text-foreground/70"
                     }`}
                   >
                     {counts[key]}
@@ -454,9 +476,9 @@ export default function ManagerTimeOffRequestsPage() {
           </div>
 
           {/* Requests list */}
-          <div className="divide-y divide-slate-100">
+          <div className="divide-y divide-border">
             {filteredRequests.length === 0 ? (
-              <div className="p-8 text-center text-sm text-slate-500">
+              <div className="p-8 text-center text-sm text-foreground/70">
                 {requests.length === 0
                   ? "There are no time off requests available for your role yet."
                   : "No requests match the current filter."}
@@ -465,32 +487,32 @@ export default function ManagerTimeOffRequestsPage() {
               filteredRequests.map((r) => (
                 <div
                   key={r.id}
-                  className={`px-4 py-4 md:px-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-slate-50/60 ${rowBorder(
+                  className={`px-4 py-4 md:px-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-background/60 ${rowBorder(
                     r.status
                   )}`}
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-semibold text-slate-900 truncate">
+                      <p className="text-sm font-semibold text-foreground truncate">
                         {r.employee_name}
                       </p>
                       {r.employee_email && (
-                        <span className="text-xs text-slate-500 truncate">
+                        <span className="text-xs text-foreground/70 truncate">
                           · {r.employee_email}
                         </span>
                       )}
                     </div>
-                    <p className="mt-1 text-sm text-slate-700">
+                    <p className="mt-1 text-sm text-foreground/70">
                       {formatRange(r.startISO, r.endISO)}
                     </p>
                     {r.reason && (
-                      <p className="mt-1 text-xs text-slate-600">
-                        <span className="font-medium text-slate-700">Reason:</span>{" "}
+                      <p className="mt-1 text-xs text-foreground/70">
+                        <span className="font-medium text-foreground">Reason:</span>{" "}
                         {r.reason}
                       </p>
                     )}
                     {r.decided_at && r.status !== "pending" && (
-                      <p className="mt-1 text-[11px] text-slate-500">
+                      <p className="mt-1 text-[11px] text-foreground/70">
                         Decided {formatDateTimeShort(r.decided_at)}
                       </p>
                     )}
@@ -510,7 +532,7 @@ export default function ManagerTimeOffRequestsPage() {
                         <button
                           onClick={() => handleDecision(r.id, "denied")}
                           disabled={decisionLoadingId === r.id}
-                          className="inline-flex items-center rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60 disabled:cursor-not-allowed"
+                          className="inline-flex items-center rounded-lg border border-red-200 bg-background px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 dark:border-red-600 dark:text-red-300 dark:hover:bg-red-900 disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                           <XCircle className="w-3.5 h-3.5 mr-1" />
                           Deny
@@ -518,14 +540,14 @@ export default function ManagerTimeOffRequestsPage() {
                         <button
                           onClick={() => handleDecision(r.id, "approved")}
                           disabled={decisionLoadingId === r.id}
-                          className="inline-flex items-center rounded-lg border border-emerald-200 bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                          className="inline-flex items-center rounded-lg border border-emerald-200 bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600 dark:border-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                           <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
                           Approve
                         </button>
                       </div>
                     ) : (
-                      <p className="text-[11px] text-slate-500 mt-1 md:mt-0">
+                      <p className="text-[11px] text-foreground/70 mt-1 md:mt-0">
                         Decision recorded for this request.
                       </p>
                     )}

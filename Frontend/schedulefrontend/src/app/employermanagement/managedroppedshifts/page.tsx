@@ -636,7 +636,7 @@ export default function ManageDroppedShiftsPage() {
     return (
       <div className="p-6">
         No manager access found for your user.
-        <div className="mt-2 text-sm text-gray-600">
+        <div className="mt-2 text-sm text-foreground/70">
           Ensure you either own a business or have an active employment with
           manager/admin rights.
         </div>
@@ -645,37 +645,37 @@ export default function ManageDroppedShiftsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-background">
       <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
-              <AlertTriangle className="w-6 h-6 text-amber-500" />
+            <h1 className="text-3xl font-bold text-foreground flex items-center gap-2">
+              <AlertTriangle className="w-6 h-6 text-amber-500 dark:text-amber-300" />
               Dropped Shifts
             </h1>
-            <p className="text-gray-600 mt-1">
+            <p className="text-foreground/70 mt-1">
               {bizName} ·{" "}
               {selectedLoc === "ALL" ? "All locations" : "One location"}
             </p>
-            <p className="text-gray-600">{weekLabel}</p>
+            <p className="text-foreground/70">{weekLabel}</p>
             {errorMsg && (
-              <p className="text-sm text-red-600 mt-2">{errorMsg}</p>
+              <p className="text-sm text-red-600 dark:text-red-400 mt-2">{errorMsg}</p>
             )}
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+        <div className="bg-background rounded-xl shadow-sm border border-border">
           {loading ? (
-            <div className="p-6 text-sm text-gray-600 flex items-center gap-2">
-              <Clock className="w-4 h-4 animate-spin" /> Loading dropped
+            <div className="p-6 text-sm text-foreground/70 flex items-center gap-2">
+              <Clock className="w-4 h-4 animate-spin text-foreground/60 dark:text-foreground/40" /> Loading dropped
               shifts…
             </div>
           ) : requests.length === 0 ? (
-            <div className="p-6 text-sm text-gray-500">
+            <div className="p-6 text-sm text-foreground/70">
               No dropped shift requests for this week and scope.
             </div>
           ) : (
-            <ul className="divide-y divide-gray-200">
+            <ul className="divide-y divide-border">
               {requests.map((r) => (
                 <li
                   key={r.assignmentId}
@@ -683,26 +683,24 @@ export default function ManageDroppedShiftsPage() {
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-semibold text-gray-900">
+                      <span className="text-sm font-semibold text-foreground">
                         {r.roleName}
                       </span>
-                      <span className="text-xs text-gray-500">
+                      <span className="text-xs text-foreground/70">
                         · {r.locationName}
                       </span>
                     </div>
-
-                    <div className="mt-1 text-xs text-gray-700 flex flex-wrap gap-2 items-center">
+                    <div className="mt-1 text-xs text-foreground/70 flex flex-wrap gap-2 items-center">
                       <span>
                         {fmtDateTime(r.start_ts)} – {fmtDateTime(r.end_ts)}
                       </span>
                       {r.requested_at && (
-                        <span className="text-gray-500">
+                        <span className="text-foreground/70">
                           · Pickup requested: {fmtDateTime(r.requested_at)}
                         </span>
                       )}
                     </div>
-
-                    <div className="mt-2 text-xs text-gray-700 flex flex-col gap-1">
+                    <div className="mt-2 text-xs text-foreground/70 flex flex-col gap-1">
                       <div>
                         <span className="font-semibold">Dropped by:</span>{" "}
                         {r.dropperName}
@@ -711,7 +709,7 @@ export default function ManageDroppedShiftsPage() {
                         <span className="font-semibold">Pickup by:</span>{" "}
                         {r.pickerName ?? "No pickup request yet"}
                         {r.pickerStatus && r.pickerName && (
-                          <span className="ml-1 text-[10px] uppercase tracking-wide text-gray-500">
+                          <span className="ml-1 text-[10px] uppercase tracking-wide text-foreground/70">
                             ({r.pickerStatus})
                           </span>
                         )}
@@ -719,14 +717,14 @@ export default function ManageDroppedShiftsPage() {
                     </div>
 
                     {r.drop_reason && (
-                      <div className="mt-2 text-xs text-gray-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                      <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 dark:bg-amber-900 dark:text-amber-200 dark:border-amber-700">
                         <span className="font-medium">Drop reason: </span>
                         {r.drop_reason}
                       </div>
                     )}
 
                     {r.pickup_reason && (
-                      <div className="mt-2 text-xs text-gray-800 bg-blue-50 border border-blue-200 rounded-md px-3 py-2">
+                      <div className="mt-2 text-xs text-blue-800 bg-blue-50 border border-blue-200 rounded-md px-3 py-2 dark:bg-blue-900 dark:text-blue-200 dark:border-blue-800">
                         <span className="font-medium">Pickup note: </span>
                         {r.pickup_reason}
                       </div>
@@ -738,7 +736,7 @@ export default function ManageDroppedShiftsPage() {
                       type="button"
                       onClick={() => handleApprove(r.assignmentId)}
                       disabled={busyActionId === r.assignmentId}
-                      className="inline-flex items-center justify-center rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+                      className="inline-flex items-center justify-center rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600 disabled:opacity-60"
                     >
                       <Check className="w-3 h-3 mr-1" /> Approve pickup
                     </button>
@@ -746,7 +744,7 @@ export default function ManageDroppedShiftsPage() {
                       type="button"
                       onClick={() => handleDeny(r.assignmentId)}
                       disabled={busyActionId === r.assignmentId}
-                      className="inline-flex items-center justify-center rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-60"
+                      className="inline-flex items-center justify-center rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 dark:bg-red-600 dark:hover:bg-red-700 disabled:opacity-60"
                     >
                       <X className="w-3 h-3 mr-1" /> Deny pickup
                     </button>

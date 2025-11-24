@@ -163,6 +163,13 @@ export default function EmployerHomePage() {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Announcement popup state (initial announcement on first login)
+  const [announcementToShow, setAnnouncementToShow] = useState<
+    | { id: string; title: string; content: string; created_at: string; created_by: string; target_role_ids?: string[] | null }
+    | null
+  >(null);
+  const [announcementSender, setAnnouncementSender] = useState<string | null>(null);
+
   const [businesses, setBusinesses] = useState<BusinessOpt[]>([]);
   const [selectedBiz, setSelectedBiz] = useState<string | null>(null);
 
@@ -281,6 +288,94 @@ export default function EmployerHomePage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase]);
+
+  // Show the most recent unseen announcement for employer on homepage load
+  useEffect(() => {
+    (async () => {
+      if (typeof window === "undefined") return;
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!user) return;
+
+        // Determine business ids this manager/admin has access to
+        const bizIds = businesses.map((b) => b.id);
+
+        // Load roles for these businesses
+        let roleIds: string[] = [];
+        if (bizIds.length) {
+          const { data: roles } = await supabase
+            .from("role")
+            .select("id")
+            .in("business_id", bizIds);
+          if (roles && Array.isArray(roles)) roleIds = roles.map((r: any) => r.id);
+        }
+
+        // Load announcements ordered most-recent-first
+        const { data: annRows, error: annErr } = await supabase
+          .from("announcements")
+          .select("id,title,content,created_at,created_by,target_role_ids")
+          .order("created_at", { ascending: false });
+
+        if (annErr || !annRows || annRows.length === 0) return;
+
+        const rows = annRows as any[];
+        const applicable = rows.filter((a) => {
+          const targets = a.target_role_ids as string[] | null | undefined;
+          if (!targets || targets.length === 0) return true;
+          if (roleIds.length === 0) return false;
+          return targets.some((t) => roleIds.includes(t));
+        });
+
+        if (applicable.length === 0) return;
+
+        // Read seen announcements for this user
+        let seenIds: string[] = [];
+        try {
+          const raw = window.localStorage.getItem(`seenAnnouncements:${user.id}`);
+          if (raw) seenIds = JSON.parse(raw) as string[];
+        } catch {
+          seenIds = [];
+        }
+
+        // Find the first applicable announcement the user hasn't seen
+        const firstUnseen = applicable.find((a) => !seenIds.includes(a.id));
+        if (!firstUnseen) return;
+
+        // Resolve sender name
+        const { data: prof } = await supabase
+          .from("profiles")
+          .select("full_name,display_name,email")
+          .eq("id", firstUnseen.created_by)
+          .maybeSingle();
+
+        const senderName =
+          (prof?.full_name as string | null) ||
+          (prof?.display_name as string | null) ||
+          (prof?.email as string | null) ||
+          "Manager";
+
+        // show it and mark it seen for this user
+        setAnnouncementToShow(firstUnseen);
+        setAnnouncementSender(senderName);
+        try {
+          if (!seenIds.includes(firstUnseen.id)) {
+            seenIds.push(firstUnseen.id);
+            window.localStorage.setItem(
+              `seenAnnouncements:${user.id}`,
+              JSON.stringify(seenIds),
+            );
+          }
+        } catch {
+          // ignore storage errors silently
+        }
+      } catch (e) {
+        console.error("Error checking announcements for employer:", e);
+      }
+    })();
+    // run when businesses list or supabase ref changes
+  }, [businesses, supabase]);
 
   /* ---------- Persist selection ---------- */
   useEffect(() => {
@@ -647,7 +742,7 @@ export default function EmployerHomePage() {
     return (
       <div className="p-6">
         No manager access found for your user.
-        <div className="mt-2 text-sm text-gray-600">
+        <div className="mt-2 text-sm text-foreground/70">
           Ensure you either own a business or have an active employment with
           manager/admin rights.
         </div>
@@ -658,22 +753,22 @@ export default function EmployerHomePage() {
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">Weekly Schedule</h1>
-        <p className="text-gray-600 mt-1">
+        <h1 className="text-3xl font-bold text-foreground">Weekly Schedule</h1>
+        <p className="text-foreground/70 mt-1">
           {bizName} · {selectedLoc === "ALL" ? "All locations" : "One location"}
         </p>
-        <p className="text-gray-600">{weekLabel}</p>
-        {errorMsg && <p className="text-sm text-red-600 mt-2">{errorMsg}</p>}
+        <p className="text-foreground/70">{weekLabel}</p>
+        {errorMsg && <p className="text-sm text-red-600 dark:text-red-400 mt-2">{errorMsg}</p>}
       </div>
 
       {/* Scope controls */}
       <div className="mb-6 flex flex-wrap gap-3 items-center">
-        <div className="space-y-1">
-          <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+          <div className="space-y-1">
+          <div className="text-xs font-medium text-foreground/60 uppercase tracking-wide">
             Business
           </div>
           <select
-            className="border rounded-md px-2 py-1 text-sm bg-white"
+            className="border rounded-md px-2 py-1 text-sm bg-background text-foreground"
             value={selectedBiz ?? ""}
             onChange={(e) => setSelectedBiz(e.target.value || null)}
           >
@@ -685,12 +780,12 @@ export default function EmployerHomePage() {
           </select>
         </div>
 
-        <div className="space-y-1">
-          <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+          <div className="space-y-1">
+          <div className="text-xs font-medium text-foreground/60 uppercase tracking-wide">
             Location
           </div>
           <select
-            className="border rounded-md px-2 py-1 text-sm bg-white"
+            className="border rounded-md px-2 py-1 text-sm bg-background text-foreground"
             value={selectedLoc}
             onChange={(e) =>
               setSelectedLoc((e.target.value as string) || "ALL")
@@ -708,18 +803,18 @@ export default function EmployerHomePage() {
       </div>
 
       {/* Full-width schedule card */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 w-full">
+      <div className="bg-background rounded-xl shadow-sm border border-border w-full">
         {loading ? (
           <div className="p-6">Loading…</div>
         ) : (
           <table className="w-full">
             <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">
+              <tr className="border-b border-border bg-background">
                 <th className="px-6 py-4 text-left">
-                  <div className="text-sm font-semibold text-gray-900">
+                  <div className="text-sm font-semibold text-foreground">
                     Staff Member
                   </div>
-                  <div className="text-xs text-gray-500">
+                  <div className="text-xs text-foreground/60">
                     {selectedLoc === "ALL"
                       ? "Business scope"
                       : "Business + Location scope"}
@@ -730,10 +825,10 @@ export default function EmployerHomePage() {
                     key={d.label}
                     className="px-3 py-4 text-center min-w-[110px]"
                   >
-                    <div className="text-sm font-semibold text-gray-900">
+                    <div className="text-sm font-semibold text-foreground">
                       {d.label}
                     </div>
-                    <div className="text-xs text-gray-500 mt-1">
+                    <div className="text-xs text-foreground/60 mt-1">
                       {d.date}
                     </div>
                   </th>
@@ -745,26 +840,26 @@ export default function EmployerHomePage() {
               {grid.map((row) => (
                 <tr
                   key={row.userId}
-                  className="border-b border-gray-200 hover:bg-gray-50"
+                  className="border-b border-border hover:bg-background/50"
                 >
                   <td className="px-6 py-4">
-                    <div className="text-sm font-semibold text-gray-900">
+                    <div className="text-sm font-semibold text-foreground">
                       {row.name || row.userId}
                     </div>
                   </td>
                   {row.byDay.map((cell, idx) => (
                     <td key={idx} className="px-3 py-4 text-center">
-                      {cell.start ? (
-                        <div className="border rounded-lg p-2">
-                          <div className="text-xs font-semibold">
+                        {cell.start ? (
+                        <div className="border rounded-lg p-2 border-border bg-background">
+                          <div className="text-xs font-semibold text-foreground">
                             {cell.start}
                           </div>
-                          <div className="text-xs">{cell.end}</div>
+                          <div className="text-xs text-foreground">{cell.end}</div>
                           {(cell.timeOffStatus ||
                             cell.unavailable ||
                             cell.isDropPending ||
                             cell.isPickedUp) && (
-                            <div className="mt-1 text-[11px] text-amber-700">
+                            <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
                               {(() => {
                                 const parts: string[] = [];
                                 if (cell.timeOffStatus) {
@@ -788,17 +883,17 @@ export default function EmployerHomePage() {
                           )}
                         </div>
                       ) : cell.timeOffStatus ? (
-                        <div className="border border-amber-200 bg-amber-50 rounded-lg p-2 text-xs text-amber-900">
+                        <div className="border border-amber-200 bg-amber-50 rounded-lg p-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-900 dark:text-amber-200">
                           {cell.timeOffStatus === "pending"
                             ? "Time off requested (pending)"
                             : "Time off approved"}
                         </div>
                       ) : cell.unavailable ? (
-                        <div className="border border-gray-200 bg-gray-50 rounded-lg p-2 text-xs text-gray-600">
+                        <div className="border border-border bg-background rounded-lg p-2 text-xs text-foreground/70">
                           Unavailable
                         </div>
                       ) : (
-                        <div className="text-xs text-gray-400 py-2">Off</div>
+                        <div className="text-xs text-foreground/60 py-2">Off</div>
                       )}
                     </td>
                   ))}
@@ -808,7 +903,7 @@ export default function EmployerHomePage() {
               {grid.length === 0 && (
                 <tr>
                   <td
-                    className="px-6 py-8 text-sm text-gray-500"
+                    className="px-6 py-8 text-sm text-foreground/60"
                     colSpan={1 + days.length}
                   >
                     No employees or no shifts for this week and scope.
@@ -819,6 +914,50 @@ export default function EmployerHomePage() {
           </table>
         )}
       </div>
+
+      {/* Announcement popup (initial only) */}
+        {announcementToShow && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 dark:bg-black/60">
+          <div className="bg-background rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase text-blue-600 dark:text-blue-400 mb-1">
+                  New announcement
+                </p>
+                <h2 className="text-lg font-semibold text-foreground">
+                  {announcementToShow.title}
+                </h2>
+                <p className="mt-1 text-sm text-foreground/70">
+                  From {announcementSender ?? "Manager"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setAnnouncementToShow(null);
+                }}
+                className="text-foreground/70 hover:text-foreground"
+              >
+                <span className="sr-only">Close</span>
+                ×
+              </button>
+            </div>
+            <div className="mt-4 text-sm text-foreground/70 whitespace-pre-wrap leading-relaxed">
+              {announcementToShow.content}
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setAnnouncementToShow(null)}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

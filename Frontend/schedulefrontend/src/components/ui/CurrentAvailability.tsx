@@ -36,8 +36,8 @@ const STATUS_DISPLAY: Record<
 
 export function CurrentAvailability({ schedule }: CurrentAvailabilityProps) {
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-      <h2 className="text-xl font-semibold text-gray-900 mb-4">
+    <div className="bg-background rounded-xl shadow-sm border border-border p-6">
+      <h2 className="text-xl font-semibold text-foreground mb-4">
         Current Availability
       </h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -46,16 +46,11 @@ export function CurrentAvailability({ schedule }: CurrentAvailabilityProps) {
           const config = STATUS_DISPLAY[status];
 
           return (
-            <div
-              key={day}
-              className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
-            >
-              <span className="text-sm font-medium text-gray-700 capitalize">
+            <div key={day} className="flex items-center justify-between p-3 bg-background/95 rounded-lg">
+              <span className="text-sm font-medium text-foreground capitalize">
                 {day}
               </span>
-              <span
-                className={`px-3 py-1 rounded-full text-xs font-medium border ${config.color}`}
-              >
+              <span className={`px-3 py-1 rounded-full text-xs font-medium border border-border text-foreground bg-background`}>
                 {config.label}
               </span>
             </div>

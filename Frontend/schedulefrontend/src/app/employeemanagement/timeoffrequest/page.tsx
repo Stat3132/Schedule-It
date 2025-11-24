@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, X, Plus } from "lucide-react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createAnnouncement } from "../../../lib/announcements";
 
 /* ========= Types ========= */
 type UUID = string;
@@ -246,6 +247,19 @@ export default function TimeOffRequestsPage() {
 
       if (insErr) throw insErr;
 
+        // Create an announcement so managers/employees see the new request
+        try {
+          await createAnnouncement(
+            supabase,
+            userId,
+            `${displayName} requested time off`,
+            `Requested ${formatRange(startISO, endISO)}${payloadReason ? `\n\nReason: ${payloadReason}` : ""}`,
+            [] // broadcast to all roles
+          );
+        } catch (e) {
+          console.error("Failed to create announcement for time off:", e);
+        }
+
       setStartDate(null);
       setEndDate(null);
       setReason("");
@@ -273,48 +287,59 @@ export default function TimeOffRequestsPage() {
 
   const rowTint = (status: RequestVM["status"]) =>
     status === "approved"
-      ? "bg-green-50 border-green-200 text-green-900"
+      ? "bg-green-50 border-green-200 text-green-900 dark:bg-emerald-900 dark:text-emerald-200 dark:border-emerald-700"
       : status === "denied"
-      ? "bg-red-50 border-red-200 text-red-900"
+      ? "bg-red-50 border-red-200 text-red-900 dark:bg-red-900 dark:text-red-200 dark:border-red-700"
       : status === "canceled"
-      ? "bg-gray-50 border-gray-200 text-gray-900"
-      : "bg-amber-50 border-amber-200 text-amber-900";
+      ? "bg-border text-foreground/70 border border-border"
+      : "bg-amber-50 border-amber-200 text-amber-900 dark:bg-amber-900 dark:text-amber-200 dark:border-amber-700";
 
   const badgeTint = (status: RequestVM["status"]) =>
     status === "approved"
-      ? "bg-green-100 text-green-800"
+      ? "bg-green-100 text-green-800 dark:bg-emerald-900 dark:text-emerald-200 dark:border-emerald-700"
       : status === "denied"
-      ? "bg-red-100 text-red-800"
+      ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 dark:border-red-700"
       : status === "canceled"
-      ? "bg-gray-100 text-gray-800"
-      : "bg-amber-100 text-amber-800";
+      ? "bg-border text-foreground/70"
+      : "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200 dark:border-amber-700";
 
   /* ----- render ----- */
   if (loading) return <div className="text-center py-8">Loading...</div>;
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
+    <div className="min-h-screen bg-background py-8">
       <div className="max-w-6xl mx-auto px-4">
         <div className="mb-8 flex justify-between items-center">
           <div className="flex items-center gap-4">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">Time Off Requests</h1>
-              <p className="text-gray-600 mt-1">
-                View and submit your own time off requests.
-              </p>
-            </div>
+              <h1 className="text-3xl font-bold text-foreground">Time Off Requests</h1>
+              <p className="text-foreground/70 mt-1">View and submit your own time off requests.</p>
+
+              <div className="mt-3">
+                <label className="block text-sm font-medium text-foreground/70 mb-2">
+                  Requesting as
+                </label>
+                <div className="px-3 py-2 border border-border rounded-lg bg-background text-sm text-foreground">
+                  {displayName} {" "}
+                  <span className="text-foreground/60 text-xs">(current user)</span>
+                </div>
+              </div>
+           A </div>
           </div>
-          <button
-            onClick={() => setShowForm((v) => !v)}
-            className="px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            New Request
-          </button>
+
+          <div>
+            <button
+              onClick={() => setShowForm(true)}
+              className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              New Request
+            </button>
+          </div>
         </div>
 
         {showForm && (
-          <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 mb-8">
+          <div className="bg-background rounded-lg border border-border shadow-sm p-6 mb-8">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-semibold text-gray-900">
                 Create Time Off Request
@@ -368,13 +393,13 @@ export default function TimeOffRequestsPage() {
                     </div>
                   </div>
 
-                  <div className="bg-white border border-gray-200 rounded-lg p-4">
+                  <div className="bg-background border border-border rounded-lg p-4">
                     <div className="grid grid-cols-7 gap-1 mb-3">
                       {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
                         (day) => (
                           <div
                             key={day}
-                            className="text-center text-xs font-semibold text-gray-500 py-2"
+                            className="text-center text-xs font-semibold text-foreground/60 py-2"
                           >
                             {day}
                           </div>
@@ -407,7 +432,7 @@ export default function TimeOffRequestsPage() {
                               "bg-teal-50 text-teal-900 border border-teal-200";
                           } else {
                             classes +=
-                              "bg-white text-gray-700 border border-gray-200 hover:border-blue-300";
+                              "bg-background text-foreground border border-border hover:border-blue-300";
                           }
 
                           return (
@@ -432,7 +457,7 @@ export default function TimeOffRequestsPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Requesting as
                   </label>
-                  <div className="px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm text-gray-800">
+                  <div className="px-3 py-2 border border-border rounded-lg bg-background text-sm text-foreground">
                     {displayName}{" "}
                     <span className="text-gray-500 text-xs">(current user)</span>
                   </div>
@@ -443,7 +468,7 @@ export default function TimeOffRequestsPage() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Date Range
                     </label>
-                    <div className="px-3 py-2 border border-gray-300 rounded-lg bg-gray-50">
+                    <div className="px-3 py-2 border border-border rounded-lg bg-background">
                       <p className="text-sm text-gray-700">
                         {formatRange(
                           normalizeToLocalDay(startDate).toISOString(),
@@ -455,14 +480,14 @@ export default function TimeOffRequestsPage() {
                 )}
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Reason (Optional)
-                  </label>
+                    <label className="block text-sm font-medium text-foreground/70 mb-2">
+                      Reason (Optional)
+                    </label>
                   <textarea
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
                     placeholder="Vacation, sick leave, personal…"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                    className="w-full px-3 py-2 border border-border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none bg-background text-foreground"
                     rows={3}
                   />
                 </div>
@@ -470,7 +495,7 @@ export default function TimeOffRequestsPage() {
                 <div className="flex gap-3 pt-4">
                   <button
                     onClick={() => setShowForm(false)}
-                    className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+                    className="flex-1 px-4 py-2 border border-border text-foreground font-medium rounded-lg hover:bg-background/50 transition-colors"
                   >
                     Cancel
                   </button>
@@ -489,10 +514,10 @@ export default function TimeOffRequestsPage() {
 
         {/* Requests list */}
         <div className="space-y-3">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Your Requests</h2>
+          <h2 className="text-lg font-semibold text-foreground mb-4">Your Requests</h2>
           {requests.length === 0 ? (
-            <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
-              <p className="text-gray-500">
+            <div className="bg-background rounded-lg border border-border p-8 text-center">
+              <p className="text-foreground/60">
                 You have not submitted any time off yet.
               </p>
             </div>
@@ -500,18 +525,18 @@ export default function TimeOffRequestsPage() {
             requests.map((r) => (
               <div
                 key={r.id}
-                className={`bg-white border rounded-lg p-4 ${rowTint(r.status)}`}
+                className={`bg-background border rounded-lg p-4 ${rowTint(r.status)}`}
               >
                 <div className="flex justify-between items-start mb-2">
                   <div>
-                    <h3 className="font-semibold text-gray-900">
+                    <h3 className="font-semibold text-foreground">
                       {r.employee_name}
                     </h3>
-                    <p className="text-sm text-gray-600 mt-1">
+                    <p className="text-sm text-foreground/70 mt-1">
                       {formatRange(r.startISO, r.endISO)}
                     </p>
                     {r.reason && (
-                      <p className="text-sm text-gray-600 mt-1">
+                      <p className="text-sm text-foreground/70 mt-1">
                         Reason: {r.reason}
                       </p>
                     )}

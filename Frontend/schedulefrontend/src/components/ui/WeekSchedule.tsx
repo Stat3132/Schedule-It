@@ -58,7 +58,7 @@ export function WeekSchedule({
         return (
           <div key={day} className="flex flex-col gap-2 border-b pb-3 last:border-b-0">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-700 capitalize w-28">
+              <span className="text-sm font-medium text-foreground capitalize w-28">
                 {day}
               </span>
               <div className="flex gap-2">
@@ -73,7 +73,7 @@ export function WeekSchedule({
                       className={`px-4 py-2 rounded-lg text-xs font-medium transition-all ${
                         isSelected
                           ? `${config.color} text-white`
-                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                          : "bg-background text-foreground/70 hover:bg-background/95"
                       }`}
                     >
                       {config.label}
@@ -85,7 +85,7 @@ export function WeekSchedule({
 
             {status === "partial" && (
               <div className="ml-28 flex items-center gap-3">
-                <label className="text-xs text-gray-600">From</label>
+                <label className="text-xs text-foreground/70">From</label>
                 <input
                   type="time"
                   value={range.start ?? ""}
@@ -95,9 +95,9 @@ export function WeekSchedule({
                       end: range.end,
                     })
                   }
-                  className="border border-gray-300 rounded-md px-2 py-1 text-xs"
+                  className="border border-border rounded-md px-2 py-1 text-xs bg-transparent text-foreground"
                 />
-                <label className="text-xs text-gray-600">to</label>
+                <label className="text-xs text-foreground/70">to</label>
                 <input
                   type="time"
                   value={range.end ?? ""}
@@ -107,7 +107,7 @@ export function WeekSchedule({
                       end: e.target.value || null,
                     })
                   }
-                  className="border border-gray-300 rounded-md px-2 py-1 text-xs"
+                  className="border border-border rounded-md px-2 py-1 text-xs bg-transparent text-foreground"
                 />
               </div>
             )}

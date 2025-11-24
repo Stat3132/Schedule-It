@@ -1120,12 +1120,12 @@ export default function CreateSchedulePage(): JSX.Element {
 
   if (contextError && !activeBusinessId) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 px-4">
-        <div className="max-w-md bg-white border border-gray-200 rounded-2xl shadow-sm p-6">
-          <h1 className="text-xl font-semibold text-gray-900 mb-2">
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background px-4">
+        <div className="max-w-md bg-background border border-border rounded-2xl shadow-sm p-6 text-foreground">
+          <h1 className="text-xl font-semibold text-foreground mb-2">
             Schedule context missing
           </h1>
-          <p className="text-sm text-gray-600 mb-4">{contextError}</p>
+          <p className="text-sm text-foreground/70 mb-4">{contextError}</p>
           <button
             onClick={() =>
               router.replace("/employermanagement/employerhomepage")
@@ -1158,16 +1158,16 @@ export default function CreateSchedulePage(): JSX.Element {
 
   /* ---------- Render ---------- */
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-background">
 
       <div className="max-w-6xl mx-auto px-4 pt-6 pb-10 space-y-6">
         {/* Header */}
         <div className="flex items-center gap-3">
           <div>
-            <h1 className="text-lg font-semibold text-gray-900">
+            <h1 className="text-lg font-semibold text-foreground">
               Create schedule{locationName ? ` – ${locationName}` : ""}
             </h1>
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-foreground/70">
               {businessName ?? "Your business"}
             </p>
           </div>
@@ -1181,7 +1181,7 @@ export default function CreateSchedulePage(): JSX.Element {
               <select
                 value={activeLocationId ?? ""}
                 onChange={(e) => handleLocationChange(e.target.value)}
-                className="px-2 py-1 rounded-md border border-gray-300 bg-white text-sm"
+                className="px-2 py-1 rounded-md border border-border bg-background text-sm text-foreground"
               >
                 {locations.length === 0 && (
                   <option value="">No locations</option>
@@ -1196,22 +1196,22 @@ export default function CreateSchedulePage(): JSX.Element {
                 ))}
               </select>
             </div>
-            <p className="text-sm text-gray-700">
+            <p className="text-sm text-foreground">
               <span className="font-medium">Store hours: </span>
               {formatTime12(openHH)}–{formatTime12(closeHH)}
             </p>
           </div>
 
           <div className="flex flex-col items-start sm:items-end gap-3">
-            <div className="text-sm text-gray-600">
+            <div className="text-sm text-foreground/70">
               <span className="font-medium mr-1">Current week status:</span>
               <span
                 className={
                   scheduleStatus === "published"
-                    ? "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-800 border border-green-200"
+                    ? "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-800 border border-green-200 dark:bg-emerald-900 dark:text-emerald-200 dark:border-emerald-700"
                     : scheduleStatus === "draft"
-                    ? "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200"
-                    : "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-700 border border-gray-200"
+                    ? "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-900 dark:text-amber-200 dark:border-amber-700"
+                    : "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-background text-foreground/70 border border-border"
                 }
               >
                 {scheduleStatus === "none"
@@ -1222,30 +1222,30 @@ export default function CreateSchedulePage(): JSX.Element {
               </span>
             </div>
 
-            <div className="flex flex-col items-start sm:items-end gap-2 text-xs text-gray-500">
-              <div className="flex flex-wrap items-center gap-2">
-                <span>
+            <div className="flex flex-col items-start sm:items-end gap-2 text-xs text-foreground/70">
+                <div className="flex flex-wrap items-center gap-2">
+              <span>
                   Week of{" "}
-                  <span className="font-semibold text-gray-800">
+                  <span className="font-semibold text-foreground">
                     {weekRangeLabel}
                   </span>
                 </span>
-                <div className="inline-flex rounded-lg border border-gray-200 bg-white overflow-hidden">
+                <div className="inline-flex rounded-lg border border-border bg-background overflow-hidden">
                   <button
                     onClick={() => setWeekOffset((w) => w - 1)}
-                    className="px-2 py-1 text-[11px] font-medium border-r border-gray-200 hover:bg-gray-50"
+                    className="px-2 py-1 text-[11px] font-medium border-r border-border hover:bg-background/50"
                   >
                     Previous
                   </button>
                   <button
                     onClick={() => setWeekOffset(0)}
-                    className="px-2 py-1 text-[11px] font-medium border-r border-gray-200 hover:bg-gray-50"
+                    className="px-2 py-1 text-[11px] font-medium border-r border-border hover:bg-background/50"
                   >
                     This week
                   </button>
                   <button
                     onClick={() => setWeekOffset((w) => w + 1)}
-                    className="px-2 py-1 text-[11px] font-medium hover:bg-gray-50"
+                    className="px-2 py-1 text-[11px] font-medium hover:bg-background/50"
                   >
                     Next
                   </button>
@@ -1255,28 +1255,28 @@ export default function CreateSchedulePage(): JSX.Element {
                     setSettingsWeekStart(weekStartDay);
                     setIsSettingsOpen(true);
                   }}
-                  className="inline-flex items-center px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-[11px] font-medium text-gray-700 hover:bg-gray-50"
+                  className="inline-flex items-center px-3 py-1.5 rounded-lg border border-border bg-background text-[11px] font-medium text-foreground hover:bg-background/50"
                 >
                   Schedule settings
                 </button>
               </div>
 
-              <div className="flex flex-wrap items-center gap-3 text-[11px] text-gray-500">
+              <div className="flex flex-wrap items-center gap-3 text-[11px] text-foreground/70">
                 <span>
                   Shifts:{" "}
-                  <span className="font-semibold text-gray-800">
+                  <span className="font-semibold text-foreground">
                     {totalShiftCount}
                   </span>
                 </span>
                 <span>
                   Employees scheduled:{" "}
-                  <span className="font-semibold text-gray-800">
+                  <span className="font-semibold text-foreground">
                     {uniqueEmployeesScheduled}
                   </span>
                 </span>
                 <span>
                   Total hours:{" "}
-                  <span className="font-semibold text-gray-800">
+                  <span className="font-semibold text-foreground">
                     {totalScheduledHours}
                   </span>
                 </span>
@@ -1287,36 +1287,36 @@ export default function CreateSchedulePage(): JSX.Element {
 
         {/* Weekly preview card */}
         {drafts.length > 0 && (
-          <section className="border border-gray-200 rounded-2xl bg-white shadow-sm p-4 sm:p-5">
+          <section className="border border-border rounded-2xl bg-background shadow-sm p-4 sm:p-5">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
               <div>
-                <h2 className="text-sm font-semibold text-gray-900">
+                <h2 className="text-sm font-semibold text-foreground">
                   {scheduleStatus === "draft"
                     ? "Draft schedule overview"
                     : "Schedule overview (active week)"}
                 </h2>
-                <p className="text-xs text-gray-500">
+                <p className="text-xs text-foreground/70">
                   See who is working each day or view the schedule grouped by
                   employee.
                 </p>
               </div>
-              <div className="inline-flex rounded-full border border-gray-200 bg-gray-50 overflow-hidden text-[11px]">
+              <div className="inline-flex rounded-full border border-border bg-background overflow-hidden text-[11px]">
                 <button
                   onClick={() => setPreviewMode("byDay")}
                   className={`px-3 py-1 font-medium ${
                     previewMode === "byDay"
-                      ? "bg-white text-blue-700"
-                      : "text-gray-600 hover:bg-gray-100"
+                        ? "bg-background text-blue-700 dark:text-blue-300"
+                          : "text-foreground/70 hover:bg-background/50"
                   }`}
                 >
                   By day
                 </button>
                 <button
                   onClick={() => setPreviewMode("byEmployee")}
-                  className={`px-3 py-1 font-medium border-l border-gray-200 ${
+                  className={`px-3 py-1 font-medium border-l border-border ${
                     previewMode === "byEmployee"
-                      ? "bg-white text-blue-700"
-                      : "text-gray-600 hover:bg-gray-100"
+                      ? "bg-background text-blue-700 dark:text-blue-300"
+                        : "text-foreground/70 hover:bg-background/50"
                   }`}
                 >
                   By employee
@@ -1331,25 +1331,25 @@ export default function CreateSchedulePage(): JSX.Element {
                   return (
                     <div
                       key={d.day}
-                      className="border border-gray-100 rounded-xl bg-gray-50/60 p-3 min-h-[72px]"
+                      className="border border-border rounded-xl bg-background/60 p-3 min-h-[72px]"
                     >
                       <div className="flex items-center justify-between mb-1.5">
                         <div className="flex flex-col">
-                          <span className="text-xs font-semibold text-gray-800">
+                          <span className="text-xs font-semibold text-foreground">
                             {d.label}
                           </span>
-                          <span className="text-[11px] text-gray-500">
+                          <span className="text-[11px] text-foreground/60">
                             {d.uiDate}
                           </span>
                         </div>
-                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-white text-gray-700 border border-gray-200">
+                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-background text-foreground border border-border">
                           {items.length} shift
                           {items.length === 1 ? "" : "s"}
                         </span>
                       </div>
                       {items.length === 0 ? (
-                        <p className="text-[11px] text-gray-400">No shifts</p>
-                      ) : (
+                        <p className="text-[11px] text-foreground/60">No shifts</p>
+                        ) : (
                         <ul className="space-y-1.5">
                           {items.map((item, idx) => {
                             const showRole =
@@ -1360,12 +1360,12 @@ export default function CreateSchedulePage(): JSX.Element {
                             return (
                               <li
                                 key={idx}
-                                className="text-[11px] text-gray-700 flex flex-col"
+                                className="text-[11px] text-foreground flex flex-col"
                               >
                                 <span className="font-medium truncate">
                                   {item.employeeName}
                                 </span>
-                                <span className="truncate text-gray-500">
+                                <span className="truncate text-foreground/70">
                                   {showRole ? (
                                     <>
                                       {item.roleName} ·{" "}
@@ -1395,20 +1395,20 @@ export default function CreateSchedulePage(): JSX.Element {
                   return (
                     <div
                       key={emp.employeeId}
-                      className="border border-gray-100 rounded-xl bg-gray-50/60 p-3"
+                      className="border border-border rounded-xl bg-border/60 p-3"
                     >
                       <div className="flex items-center justify-between mb-1.5">
                         <div className="flex flex-col min-w-0">
-                          <span className="text-xs font-semibold text-gray-900 truncate">
+                          <span className="text-xs font-semibold text-foreground truncate">
                             {emp.employeeName}
                           </span>
                           {showRole && (
-                            <span className="text-[11px] text-gray-500 truncate">
+                            <span className="text-[11px] text-foreground/70 truncate">
                               {emp.roleName}
                             </span>
                           )}
                         </div>
-                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-white text-gray-700 border border-gray-200">
+                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-background text-foreground/70 border border-border">
                           {emp.entries.length} shift
                           {emp.entries.length === 1 ? "" : "s"}
                         </span>
@@ -1417,12 +1417,12 @@ export default function CreateSchedulePage(): JSX.Element {
                         {emp.entries.map((entry, idx) => (
                           <li
                             key={idx}
-                            className="text-[11px] text-gray-700 flex items-center justify-between gap-2"
+                            className="text-[11px] text-foreground flex items-center justify-between gap-2"
                           >
-                            <span className="text-gray-500 truncate">
+                            <span className="text-foreground/70 truncate">
                               {entry.dayLabel} · {entry.uiDate}
                             </span>
-                            <span className="font-medium text-gray-800 whitespace-nowrap">
+                            <span className="font-medium text-foreground whitespace-nowrap">
                               {formatRange12(entry.start, entry.end)}
                             </span>
                           </li>
@@ -1432,7 +1432,7 @@ export default function CreateSchedulePage(): JSX.Element {
                   );
                 })}
                 {previewByEmployee.length === 0 && (
-                  <p className="text-[11px] text-gray-400">
+                  <p className="text-[11px] text-foreground/60">
                     No employees have shifts in this draft.
                   </p>
                 )}
@@ -1443,28 +1443,28 @@ export default function CreateSchedulePage(): JSX.Element {
 
         {/* Grid controls */}
         <section className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
-            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-foreground/70">
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-900 dark:text-amber-200 dark:border-amber-700">
               Off / unavailable
             </span>
-            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200">
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200 dark:bg-blue-900 dark:text-blue-200 dark:border-blue-800">
               Has shift
             </span>
-            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 border border-gray-200">
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-border text-foreground/70 border border-border">
               Click cell to add / edit
             </span>
           </div>
-          <div className="hidden sm:flex items-center gap-1 text-xs text-gray-500">
+          <div className="hidden sm:flex items-center gap-1 text-xs text-foreground/70">
             <span>Highlight day:</span>
-            <div className="inline-flex rounded-lg border border-gray-200 bg-white overflow-hidden">
+            <div className="inline-flex rounded-lg border border-border bg-background overflow-hidden">
               {DAYS.map((d) => (
                 <button
                   key={d.day}
                   onClick={() => setActiveDay(d.day)}
-                  className={`px-2 py-1 text-[11px] font-medium border-l border-gray-200 first:border-l-0 ${
+                  className={`px-2 py-1 text-[11px] font-medium border-l border-border first:border-l-0 ${
                     activeDay === d.day
                       ? "bg-blue-50 text-blue-700"
-                      : "text-gray-600 hover:bg-gray-50"
+                      : "text-foreground/70 hover:bg-background/50"
                   }`}
                 >
                   {d.label}
@@ -1475,31 +1475,31 @@ export default function CreateSchedulePage(): JSX.Element {
         </section>
 
         {/* Grid */}
-        <section className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-x-auto">
+        <section className="rounded-2xl border border-border bg-background shadow-sm overflow-x-auto">
           <div className="min-w-[720px]">
             {/* Header row */}
-            <div className="grid grid-cols-[minmax(220px,0.9fr)_repeat(7,minmax(90px,1fr))] border-b border-gray-200 bg-gray-50 text-xs font-semibold text-gray-700">
+            <div className="grid grid-cols-[minmax(220px,0.9fr)_repeat(7,minmax(90px,1fr))] border-b border-border bg-border text-xs font-semibold text-foreground/70">
               <div className="px-4 py-2 flex items-center justify-between">
                 <span>Employee</span>
-                <span className="text-[11px] text-gray-400">Role</span>
+                <span className="text-[11px] text-foreground/60">Role</span>
               </div>
               {DAYS.map((d) => (
                 <button
                   key={d.day}
                   onClick={() => setActiveDay(d.day)}
-                  className={`px-3 py-2 border-l border-gray-200 text-left flex flex-col ${
+                  className={`px-3 py-2 border-l border-border text-left flex flex-col ${
                     activeDay === d.day ? "bg-blue-50" : ""
                   }`}
                 >
                   <span className="text-[11px] font-semibold">{d.label}</span>
-                  <span className="text-[11px] text-gray-500">{d.uiDate}</span>
+                  <span className="text-[11px] text-foreground/70">{d.uiDate}</span>
                 </button>
               ))}
             </div>
 
             {/* Rows */}
             {employees.length === 0 ? (
-              <div className="px-4 py-4 text-sm text-gray-500">
+              <div className="px-4 py-4 text-sm text-foreground/70">
                 No active employees found for this business (or RLS blocked the
                 query). Check that you and your employees have active employment
                 rows for this business.
@@ -1508,17 +1508,17 @@ export default function CreateSchedulePage(): JSX.Element {
               employees.map((e, rowIdx) => (
                 <div
                   key={e.id}
-                  className={`grid grid-cols-[minmax(220px,0.9fr)_repeat(7,minmax(90px,1fr))] text-xs ${
-                    rowIdx % 2 === 0 ? "bg-white" : "bg-gray-50/60"
-                  } border-t border-gray-100`}
+                    className={`grid grid-cols-[minmax(220px,0.9fr)_repeat(7,minmax(90px,1fr))] text-xs ${
+                    rowIdx % 2 === 0 ? "bg-background" : "bg-background/60"
+                  } border-t border-border`}
                 >
                   {/* Employee cell */}
                   <div className="px-4 py-2 flex flex-col justify-center">
-                    <span className="text-sm font-semibold text-gray-900 truncate">
+                    <span className="text-sm font-semibold text-foreground truncate">
                       {e.name}
                     </span>
                     {e.roleName && (
-                      <span className="text-[11px] text-gray-500 truncate">
+                      <span className="text-[11px] text-foreground/60 truncate">
                         {e.roleName}
                       </span>
                     )}
@@ -1566,27 +1566,27 @@ export default function CreateSchedulePage(): JSX.Element {
                         key={d.day}
                         disabled={isOff || isUnavailableByAvail || !allowedWindow}
                         onClick={() => openEditor(e.id, d.day)}
-                        className={`px-2 py-2 border-l border-gray-200 text-left flex flex-col justify-center transition-colors ${
+                        className={`px-2 py-2 border-l border-border text-left flex flex-col justify-center transition-colors ${
                           draft
-                            ? "bg-blue-50 hover:bg-blue-100"
-                            : isBlocked
-                            ? "bg-amber-50/70 text-amber-800 cursor-not-allowed"
-                            : "hover:bg-gray-100"
+                                ? "bg-blue-50 hover:bg-blue-100 dark:bg-blue-900 dark:hover:bg-blue-800 dark:text-blue-200"
+                                  : isBlocked
+                                  ? "bg-amber-50/70 text-amber-800 cursor-not-allowed dark:bg-amber-900 dark:text-amber-200"
+                                  : "hover:bg-background/50"
                         }`}
                       >
                         <span
                           className={`text-[11px] font-medium ${
                             draft
-                              ? "text-blue-800"
+                              ? "text-blue-800 dark:text-blue-200"
                               : isBlocked
-                              ? "text-amber-800"
-                              : "text-gray-700"
+                              ? "text-amber-800 dark:text-amber-200"
+                              : "text-foreground"
                           }`}
                         >
                           {label}
                         </span>
                         {draft && (
-                          <span className="text-[10px] text-gray-500 mt-0.5">
+                          <span className="text-[10px] text-foreground/60 mt-0.5">
                             Click to edit ·{" "}
                             <span
                               role="button"
@@ -1602,14 +1602,14 @@ export default function CreateSchedulePage(): JSX.Element {
                                   removeDraft(e.id, d.day);
                                 }
                               }}
-                              className="underline hover:text-gray-700 cursor-pointer"
+                              className="underline hover:text-foreground cursor-pointer"
                             >
                               remove
                             </span>
                           </span>
                         )}
                         {!draft && availHint && !isBlocked && (
-                          <span className="text-[10px] text-gray-400 mt-0.5">
+                          <span className="text-[10px] text-foreground/60 mt-0.5">
                             {availHint}
                           </span>
                         )}
@@ -1641,7 +1641,7 @@ export default function CreateSchedulePage(): JSX.Element {
         <section className="flex flex-col sm:flex-row justify-end gap-3">
           <button
             onClick={() => persistSchedule("draft")}
-            className="px-6 py-2 border border-gray-300 text-gray-800 font-medium rounded-lg hover:bg-gray-50"
+            className="px-6 py-2 border border-border text-foreground font-medium rounded-lg hover:bg-background/50"
           >
             Save as Draft
           </button>
@@ -1657,14 +1657,14 @@ export default function CreateSchedulePage(): JSX.Element {
       {/* Schedule settings modal */}
       {isSettingsOpen && (
         <div className="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+          <div className="bg-background rounded-xl shadow-xl max-w-md w-full p-6 border border-border text-foreground">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">
+              <h3 className="text-lg font-semibold text-foreground">
                 Schedule settings
               </h3>
               <button
                 onClick={() => setIsSettingsOpen(false)}
-                className="text-gray-400 hover:text-gray-600"
+                className="text-foreground/60 hover:text-foreground"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1672,7 +1672,7 @@ export default function CreateSchedulePage(): JSX.Element {
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-foreground/70 mb-1">
                   First day of schedule week
                 </label>
                 <select
@@ -1680,7 +1680,7 @@ export default function CreateSchedulePage(): JSX.Element {
                   onChange={(e) =>
                     setSettingsWeekStart(parseInt(e.target.value, 10))
                   }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                  className="w-full px-3 py-2 border border-border rounded-lg focus:ring-2 focus:ring-blue-500 text-sm bg-background text-foreground"
                 >
                   {DAY_LABELS.map((d) => (
                     <option key={d.value} value={d.value}>
@@ -1688,7 +1688,7 @@ export default function CreateSchedulePage(): JSX.Element {
                     </option>
                   ))}
                 </select>
-                <p className="mt-1 text-xs text-gray-500">
+                <p className="mt-1 text-xs text-foreground/70">
                   This controls which day your schedule grid starts on for this
                   business. For example, if you post schedules from Monday to
                   Sunday, choose Monday.
@@ -1698,7 +1698,7 @@ export default function CreateSchedulePage(): JSX.Element {
               <div className="flex gap-3 pt-4">
                 <button
                   onClick={() => setIsSettingsOpen(false)}
-                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50"
+                  className="flex-1 px-4 py-2 border border-border text-foreground font-medium rounded-lg hover:bg-background/50"
                 >
                   Cancel
                 </button>
@@ -1719,7 +1719,7 @@ export default function CreateSchedulePage(): JSX.Element {
                 </button>
               </div>
 
-              <p className="text-xs text-gray-500 pt-2">
+              <p className="text-xs text-foreground/70 pt-2">
                 You can also move between weeks using the Previous / This week /
                 Next controls above. Schedules are saved for whichever week is
                 currently active.
@@ -1732,14 +1732,14 @@ export default function CreateSchedulePage(): JSX.Element {
       {/* modal editor */}
       {editing && (
         <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+          <div className="bg-background rounded-xl shadow-xl max-w-md w-full p-6 border border-border text-foreground">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">
+              <h3 className="text-lg font-semibold text-foreground">
                 Set Shift Time
               </h3>
               <button
                 onClick={() => setEditing(null)}
-                className="text-gray-400 hover:text-gray-600"
+                className="text-foreground/60 hover:text-foreground"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1747,7 +1747,7 @@ export default function CreateSchedulePage(): JSX.Element {
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-foreground/70 mb-1">
                   Start
                 </label>
                 <input
@@ -1756,12 +1756,12 @@ export default function CreateSchedulePage(): JSX.Element {
                   min={openHH}
                   max={closeHH}
                   onChange={(e) => setStartTime(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 border border-border rounded-lg focus:ring-2 focus:ring-blue-500 bg-background text-foreground"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-foreground/70 mb-1">
                   End
                 </label>
                 <input
@@ -1770,14 +1770,14 @@ export default function CreateSchedulePage(): JSX.Element {
                   min={openHH}
                   max={closeHH}
                   onChange={(e) => setEndTime(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 border border-border rounded-lg focus:ring-2 focus:ring-blue-500 bg-background text-foreground"
                 />
               </div>
 
               <div className="flex gap-3 pt-4">
                 <button
                   onClick={() => setEditing(null)}
-                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50"
+                  className="flex-1 px-4 py-2 border border-border text-foreground font-medium rounded-lg hover:bg-background/50"
                 >
                   Cancel
                 </button>
@@ -1789,7 +1789,7 @@ export default function CreateSchedulePage(): JSX.Element {
                 </button>
               </div>
 
-              <p className="text-xs text-gray-500 pt-2">
+              <p className="text-xs text-foreground/70 pt-2">
                 Shifts are constrained to store hours ({formatTime12(openHH)}–
                 {formatTime12(closeHH)}) and the employee&apos;s approved
                 availability. Days with time off or &quot;unavailable&quot; cannot be

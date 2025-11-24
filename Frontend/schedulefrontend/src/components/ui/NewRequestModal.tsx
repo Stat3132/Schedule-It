@@ -109,16 +109,16 @@ export function NewRequestModal({ isOpen, onClose, onSubmit }: NewRequestModalPr
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex items-center justify-between">
-          <h2 className="text-xl font-semibold text-gray-900">
+      <div className="bg-background rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="sticky top-0 bg-background border-b border-border p-4 flex items-center justify-between">
+          <h2 className="text-xl font-semibold text-foreground">
             {step === "date" ? "Select Date Range" : "Set Weekly Schedule"}
           </h2>
           <button
             onClick={handleClose}
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+            className="p-2 rounded-lg transition-colors"
           >
-            <X className="w-5 h-5 text-gray-500" />
+            <X className="w-5 h-5 text-foreground/70" />
           </button>
         </div>
 
@@ -127,24 +127,24 @@ export function NewRequestModal({ isOpen, onClose, onSubmit }: NewRequestModalPr
             <div className="space-y-4">
               <div className="text-center mb-4">
                 {startDate && !endDate && (
-                  <p className="text-sm text-gray-600">
+                  <p className="text-sm text-foreground/70">
                     Start:{" "}
-                    <span className="font-medium">
+                    <span className="font-medium text-foreground">
                       {startDate.toLocaleDateString()}
                     </span>
                     <br />
-                    <span className="text-xs text-gray-500">
+                    <span className="text-xs text-foreground/60">
                       Now select an end date
                     </span>
                   </p>
                 )}
                 {startDate && endDate && (
-                  <p className="text-sm text-gray-600">
-                    <span className="font-medium">
+                  <p className="text-sm text-foreground/70">
+                    <span className="font-medium text-foreground">
                       {startDate.toLocaleDateString()}
                     </span>{" "}
                     -{" "}
-                    <span className="font-medium">
+                    <span className="font-medium text-foreground">
                       {endDate.toLocaleDateString()}
                     </span>
                   </p>
@@ -159,17 +159,17 @@ export function NewRequestModal({ isOpen, onClose, onSubmit }: NewRequestModalPr
               <button
                 onClick={handleContinue}
                 disabled={!startDate || !endDate}
-                className="w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+                className="w-full py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors disabled:bg-muted/50 disabled:cursor-not-allowed"
               >
                 Continue to Schedule
               </button>
             </div>
           ) : (
             <div className="space-y-6">
-              <div className="text-sm text-gray-600 mb-4">
+              <div className="text-sm text-foreground/70 mb-4">
                 <p>
                   Period:{" "}
-                  <span className="font-medium">
+                  <span className="font-medium text-foreground">
                     {startDate?.toLocaleDateString()} -{" "}
                     {endDate?.toLocaleDateString()}
                   </span>
@@ -184,14 +184,14 @@ export function NewRequestModal({ isOpen, onClose, onSubmit }: NewRequestModalPr
               />
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-foreground mb-2">
                   Reason for Availability Change <span className="text-red-500">*</span>
                 </label>
                 <textarea
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
                   placeholder="Please explain why your availability is changing..."
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                  className="w-full px-4 py-3 border border-border rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent resize-none"
                   rows={4}
                 />
               </div>
@@ -199,14 +199,14 @@ export function NewRequestModal({ isOpen, onClose, onSubmit }: NewRequestModalPr
               <div className="flex gap-3">
                 <button
                   onClick={() => setStep("date")}
-                  className="flex-1 py-3 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors"
+                  className="flex-1 py-3 border border-border text-foreground rounded-lg font-medium transition-colors"
                 >
                   Back
                 </button>
                 <button
                   onClick={handleSubmit}
                   disabled={!reason.trim()}
-                  className="flex-1 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  className="flex-1 py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors disabled:bg-muted/50 disabled:cursor-not-allowed"
                 >
                   Submit Request
                 </button>
