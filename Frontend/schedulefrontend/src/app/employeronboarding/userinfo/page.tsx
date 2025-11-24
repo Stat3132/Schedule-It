@@ -76,7 +76,6 @@ export default function UserInfo() {
       },
     });
 
-    // eslint-disable-next-line no-console
     console.debug("employer signUp result", { data, error });
 
     if (error) {

@@ -31,8 +31,9 @@ export default function ThemeProvider(): null {
         // Try to get the logged-in user; if they have a saved theme, use it.
         const { data: userData } = await supabase.auth.getUser();
         const user = userData?.user ?? null;
-        if (mounted && user && (user.user_metadata as any)?.theme) {
-          const t = (user.user_metadata as any).theme as string;
+        const metadata = (user && typeof user === 'object' ? (user as unknown as Record<string, unknown>).user_metadata : undefined) as Record<string, unknown> | undefined;
+        if (mounted && user && metadata && typeof metadata.theme === 'string') {
+          const t = String(metadata.theme);
           if (t === 'dark' || t === 'light') {
             apply(t);
             try { localStorage.setItem('theme', t); } catch {}
@@ -51,7 +52,7 @@ export default function ThemeProvider(): null {
         if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
           apply('dark');
         }
-      } catch (e) {
+      } catch {
         // ignore
       }
     };

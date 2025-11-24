@@ -6,7 +6,7 @@ export async function createAnnouncement(
   title: string,
   content: string,
   targetRoleIds: string[] | null = null,
-) {
+): Promise<{ success: boolean; error?: unknown }> {
   try {
     const insert = {
       title,
@@ -23,6 +23,6 @@ export async function createAnnouncement(
     return { success: true };
   } catch (err) {
     console.error("[Announcements] unexpected error", err);
-    return { success: false, error: err } as any;
+    return { success: false, error: err };
   }
 }

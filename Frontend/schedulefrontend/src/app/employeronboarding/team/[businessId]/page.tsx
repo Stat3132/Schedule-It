@@ -265,6 +265,9 @@ export default function TeamPage() {
           <div className="text-sm text-neutral-500">
             {loadingMembers ? "Loading…" : `${members.length} member${members.length === 1 ? "" : "s"}`}
           </div>
+          {ownerEnsuredError && (
+            <div className="mt-2 text-sm text-red-600">{ownerEnsuredError}</div>
+          )}
         </div>
 
         <div className="mt-4 rounded-lg border">
