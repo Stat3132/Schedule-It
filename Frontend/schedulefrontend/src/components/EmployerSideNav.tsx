@@ -14,6 +14,7 @@ import {
   Settings,
   LogOut,
   AlertTriangle,
+  MessageCircle,
 } from "lucide-react";
 
 export default function EmployerSideNav() {
@@ -36,6 +37,11 @@ export default function EmployerSideNav() {
       label: "Create Schedule",
       href: "/employermanagement/createschedule",
       icon: <Plus className="w-4 h-4" />,
+    },
+    {
+      label: "Messages",
+      href: "/employermanagement/messages", // make sure this matches your messages page route
+      icon: <MessageCircle className="w-4 h-4" />,
     },
     {
       label: "Time Off Requests",

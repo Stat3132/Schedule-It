@@ -1,3 +1,4 @@
+// app/signup/SignUpClient.tsx
 "use client";
 
 import React, { useState } from "react";
@@ -19,6 +20,7 @@ export default function SignUpClient() {
   });
 
   const roleAtSignup: "employee" | "employer" = "employee";
+
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{
     type: "success" | "error";
@@ -36,7 +38,7 @@ export default function SignUpClient() {
     e.preventDefault();
 
     if (formData.password !== formData.verifyPassword) {
-      setMessage({ type: "error", text: "Passwords do not match" });
+      setMessage({ type: "error", text: "Passwords do not match." });
       return;
     }
 
@@ -49,6 +51,35 @@ export default function SignUpClient() {
         inviteToken ? `?token=${encodeURIComponent(inviteToken)}` : ""
       }`;
 
+      // --- 1) Check if email already exists (server-side, service role) ---
+      const checkResp = await fetch("/api/check-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: formData.email }),
+      });
+
+      const checkJson = await checkResp.json().catch(() => null);
+      console.log("check-email result:", checkResp.status, checkJson);
+
+      if (!checkResp.ok) {
+        setMessage({
+          type: "error",
+          text: "Unable to verify email. Please try again in a moment.",
+        });
+        setLoading(false);
+        return;
+      }
+
+      if (checkJson?.exists) {
+        setMessage({
+          type: "error",
+          text: "An account with this email already exists. Please sign in instead.",
+        });
+        setLoading(false);
+        return;
+      }
+
+      // --- 2) Email is free → proceed to Supabase sign-up ---
       const origin = window.location.origin;
       const emailRedirectTo = `${origin}/auth/callback?next=${encodeURIComponent(
         nextPath
@@ -67,17 +98,20 @@ export default function SignUpClient() {
         },
       });
 
-      // Debug logs to help diagnose production issues (visible in browser console)
-      console.log('supabase.signUp response', { data, error, emailRedirectTo });
+      console.log("supabase.signUp response", { data, error, emailRedirectTo });
 
       if (error) {
-        // surface the full error for debugging (will be shown in catch below)
-        console.error('SignUp error:', error);
-        throw error;
+        console.error("SignUp error:", error);
+        const rawMsg = (error as { message?: string })?.message ?? "";
+        setMessage({
+          type: "error",
+          text: rawMsg || "Unexpected error during sign up.",
+        });
+        setLoading(false);
+        return;
       }
 
-      // If email confirmations are OFF and we already have a session,
-      // just go straight to business-selection.
+      // If email confirmations are OFF and we got a session, go straight to business-selection.
       if (data.session) {
         router.push(nextPath);
         return;
@@ -98,12 +132,12 @@ export default function SignUpClient() {
         verifyPassword: "",
       });
     } catch (err: unknown) {
-      console.error('SignUpClient caught error:', err);
+      console.error("SignUpClient caught error:", err);
       setMessage({
         type: "error",
         text:
           (err as { message?: string })?.message ??
-          "Unexpected error during sign up",
+          "Unexpected error during sign up.",
       });
     } finally {
       setLoading(false);
