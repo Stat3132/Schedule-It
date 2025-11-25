@@ -1,24 +1,18 @@
 // app/api/check-email/route.ts
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 
-// Use server-only env vars in Next.js route handlers. `NEXT_PUBLIC_*` keys
-// are meant for the browser and may not be present for server usage.
-const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
+// Use the public Supabase URL env var (Next.js public env) and a server-only
+// service role key. Vercel deploys typically provide `NEXT_PUBLIC_SUPABASE_URL`.
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  // Throwing here will cause Next.js to return a 500 and the server log
-  // will include this message — helpful during local development.
-  console.error("Missing Supabase server env vars: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+  console.error("Missing Supabase env vars: NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
 }
 
-const supabaseAdmin = createClient(SUPABASE_URL || "", SUPABASE_SERVICE_ROLE_KEY || "", {
-  auth: {
-    autoRefreshToken: false,
-    persistSession: false,
-  },
-});
+// Note: We use the Supabase Admin REST endpoint directly below. The
+// SDK-based `supabaseAdmin` client was removed because the REST call is
+// more explicit and avoids SDK compatibility issues in different versions.
 
 export async function POST(req: Request) {
   try {
