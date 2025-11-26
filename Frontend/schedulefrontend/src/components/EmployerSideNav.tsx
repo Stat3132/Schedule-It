@@ -89,7 +89,7 @@ export default function EmployerSideNav() {
   };
 
   return (
-    <aside className="hidden lg:flex lg:flex-col lg:fixed lg:left-0 lg:top-0 lg:h-full w-64 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-700">
+    <aside className="hidden lg:flex lg:flex-col lg:fixed lg:left-0 lg:top-0 lg:h-full w-56 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-700">
       <div className="px-4 py-6 flex flex-col h-full">
         {/* spacer so the Home button sits lower without re-adding the brand block */}
         <div className="h-12" />

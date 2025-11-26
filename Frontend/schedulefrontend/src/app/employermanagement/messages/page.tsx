@@ -1,8 +1,3 @@
-// app/employeemanagement/messages/page.tsx
-// Note: Supabase auth is cookie-based per browser profile.
-// You cannot be simultaneously logged in as two different users
-// for the same Supabase project in the same browser profile.
-
 "use client";
 
 import type React from "react";
@@ -246,6 +241,33 @@ export default function MessagingPage() {
     };
   }, [supabase, currentUserId, activePeer?.id]);
 
+  // Derived list of messages honoring search and date filters
+  const displayedMessages = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const now = new Date();
+
+    return messages.filter((m) => {
+      if (q && !m.content.toLowerCase().includes(q)) return false;
+
+      if (dateFilter === "today") {
+        const d = new Date(m.created_at);
+        return (
+          d.getFullYear() === now.getFullYear() &&
+          d.getMonth() === now.getMonth() &&
+          d.getDate() === now.getDate()
+        );
+      }
+
+      if (dateFilter === "7days") {
+        const d = new Date(m.created_at);
+        const diff = now.getTime() - d.getTime();
+        return diff <= 7 * 24 * 60 * 60 * 1000;
+      }
+
+      return true;
+    });
+  }, [messages, searchQuery, dateFilter]);
+
   // Realtime subscription for new messages in this DM
   useEffect(() => {
     if (!currentUserId || !activePeer) return;
@@ -277,33 +299,6 @@ export default function MessagingPage() {
       supabase.removeChannel(channel);
     };
   }, [supabase, currentUserId, activePeer?.id]);
-
-  // Derived list of messages honoring search and date filters
-  const displayedMessages = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    const now = new Date();
-
-    return messages.filter((m) => {
-      if (q && !m.content.toLowerCase().includes(q)) return false;
-
-      if (dateFilter === "today") {
-        const d = new Date(m.created_at);
-        return (
-          d.getFullYear() === now.getFullYear() &&
-          d.getMonth() === now.getMonth() &&
-          d.getDate() === now.getDate()
-        );
-      }
-
-      if (dateFilter === "7days") {
-        const d = new Date(m.created_at);
-        const diff = now.getTime() - d.getTime();
-        return diff <= 7 * 24 * 60 * 60 * 1000;
-      }
-
-      return true;
-    });
-  }, [messages, searchQuery, dateFilter]);
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
