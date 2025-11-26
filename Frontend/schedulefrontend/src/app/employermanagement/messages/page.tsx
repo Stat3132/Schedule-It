@@ -60,7 +60,7 @@ export default function EmployerMessagingPage() {
   const [isPeerTyping, setIsPeerTyping] = useState(false);
 
   const messageEndRef = useRef<HTMLDivElement | null>(null);
-  const channelRef = useRef<any>(null);
+  const channelRef = useRef<ReturnType<SupabaseClient['channel']> | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Scroll chat to bottom whenever messages change
