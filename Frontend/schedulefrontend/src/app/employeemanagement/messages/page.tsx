@@ -1,7 +1,4 @@
 // app/employeemanagement/messages/page.tsx
-// Note: Supabase auth is cookie-based per browser profile.
-// You cannot be simultaneously logged in as two different users
-// for the same Supabase project in the same browser profile.
 
 "use client";
 
@@ -33,7 +30,11 @@ type DMConversation = {
   lastMessage: MessageRow | null;
 };
 
-export default function MessagingPage() {
+function dmChannelName(a: UUID, b: UUID) {
+  return ["dm", ...[a, b].sort()].join(":");
+}
+
+export default function EmployeeMessagingPage() {
   const supabase = createClientComponentClient();
   const [loadingUser, setLoadingUser] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<UUID | null>(null);
@@ -56,7 +57,11 @@ export default function MessagingPage() {
   >([]);
   const [isLoadingSchedule, setIsLoadingSchedule] = useState(false);
 
+  const [isPeerTyping, setIsPeerTyping] = useState(false);
+
   const messageEndRef = useRef<HTMLDivElement | null>(null);
+  const channelRef = useRef<any>(null);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Scroll chat to bottom whenever messages change
   useEffect(() => {
@@ -92,7 +97,7 @@ export default function MessagingPage() {
     };
   }, [supabase]);
 
-  // Load contacts (coworkers) from profiles
+  // Load contacts
   useEffect(() => {
     if (!currentUserId) return;
 
@@ -127,7 +132,6 @@ export default function MessagingPage() {
       setConversations(convs);
       setIsLoadingContacts(false);
 
-      // Preselect first contact if none active
       if (!activePeer && filtered.length > 0) {
         setActivePeer(filtered[0]);
       }
@@ -140,7 +144,7 @@ export default function MessagingPage() {
     };
   }, [supabase, currentUserId, activePeer]);
 
-  // Attempt to load the current user's shifts for this week.
+  // Load schedule
   useEffect(() => {
     if (!currentUserId) return;
     let cancelled = false;
@@ -246,39 +250,62 @@ export default function MessagingPage() {
     };
   }, [supabase, currentUserId, activePeer?.id]);
 
-  // Realtime subscription for new messages in this DM
+  // Realtime messages + typing indicator
   useEffect(() => {
     if (!currentUserId || !activePeer) return;
 
+    const channelName = dmChannelName(currentUserId, activePeer.id);
     const channel = supabase
-      .channel(`dm:${currentUserId}:${activePeer.id}`)
+      .channel(channelName)
       .on(
         "postgres_changes",
         {
           event: "INSERT",
           schema: "public",
           table: "message",
-          filter: `sender_id=eq.${activePeer.id}`,
         },
         (payload) => {
           const newRow = payload.new as MessageRow;
-
-          if (newRow.recipient_id !== currentUserId) return;
-
+          const ids = [newRow.sender_id, newRow.recipient_id];
+          if (!ids.includes(currentUserId) || !ids.includes(activePeer.id)) {
+            return;
+          }
           setMessages((prev) => {
             if (prev.some((m) => m.id === newRow.id)) return prev;
             return [...prev, newRow];
           });
         }
       )
+      .on("broadcast", { event: "typing" }, ({ payload }) => {
+        const { senderId } = payload as { senderId: UUID };
+        if (senderId === currentUserId) return;
+
+        setIsPeerTyping(true);
+        if (typingTimeoutRef.current) {
+          clearTimeout(typingTimeoutRef.current);
+        }
+        typingTimeoutRef.current = setTimeout(
+          () => setIsPeerTyping(false),
+          3000
+        );
+      })
       .subscribe();
 
+    channelRef.current = channel;
+
     return () => {
-      supabase.removeChannel(channel);
+      setIsPeerTyping(false);
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = null;
+      }
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
     };
   }, [supabase, currentUserId, activePeer?.id]);
 
-  // Derived list of messages honoring search and date filters
   const displayedMessages = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const now = new Date();
@@ -361,6 +388,20 @@ export default function MessagingPage() {
     setSending(false);
   }
 
+  function handleTextareaChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    setNewMessage(e.target.value);
+
+    if (!currentUserId || !activePeer) return;
+    const channel = channelRef.current;
+    if (!channel) return;
+
+    channel.send({
+      type: "broadcast",
+      event: "typing",
+      payload: { senderId: currentUserId },
+    });
+  }
+
   const headerTitle = useMemo(() => {
     if (!activePeer) return "Messages";
     return activePeer.full_name || activePeer.email || "Conversation";
@@ -390,7 +431,7 @@ export default function MessagingPage() {
 
   return (
     <div className="flex h-[calc(100vh-4rem)] min-h-[600px] w-full bg-background gap-4 lg:gap-12">
-      {/* Left sidebar: contacts + (future) groups */}
+      {/* Left sidebar */}
       <aside className="flex w-64 flex-col border-r bg-card/60 backdrop-blur-sm">
         <div className="flex items-center gap-2 border-b px-4 py-3">
           <MessageCircle className="h-5 w-5 text-primary" />
@@ -403,7 +444,6 @@ export default function MessagingPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          {/* Direct Messages section */}
           <div className="px-3 pt-3">
             <div className="mb-1 flex items-center justify-between px-1">
               <span className="text-xs font-semibold uppercase text-muted-foreground">
@@ -464,7 +504,6 @@ export default function MessagingPage() {
             </ul>
           </div>
 
-          {/* Groups (future) */}
           <div className="border-t px-3 pb-3 pt-2">
             <div className="mb-1 flex items-center gap-2 px-1">
               <Users className="h-3 w-3 text-muted-foreground" />
@@ -482,7 +521,6 @@ export default function MessagingPage() {
 
       {/* Main chat panel */}
       <main className="flex min-w-0 flex-1 flex-col">
-        {/* Header */}
         <header className="flex items-center justify-between border-b px-4 py-3">
           <div className="min-w-0">
             <h2 className="truncate text-sm font-semibold">{headerTitle}</h2>
@@ -498,7 +536,6 @@ export default function MessagingPage() {
           </div>
         </header>
 
-        {/* Message list */}
         <div className="flex-1 overflow-y-auto bg-muted/40 px-4 py-3">
           {!activePeer && (
             <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted-foreground">
@@ -554,12 +591,23 @@ export default function MessagingPage() {
                 );
               })}
 
+              {isPeerTyping && activePeer && (
+                <div className="flex w-full justify-start">
+                  <div className="max-w-[40%] rounded-2xl rounded-bl-sm bg-card px-3 py-2 text-xs shadow-sm">
+                    <span className="inline-flex items-center gap-1 text-muted-foreground">
+                      <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:-0.2s]" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:-0.1s]" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce" />
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <div ref={messageEndRef} />
             </div>
           )}
         </div>
 
-        {/* Composer */}
         <footer className="border-t bg-background/80 px-4 py-3">
           <form
             onSubmit={handleSend}
@@ -573,7 +621,7 @@ export default function MessagingPage() {
                   : "Select a coworker to start messaging…"
               }
               value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
+              onChange={handleTextareaChange}
               disabled={!activePeer || sending}
             />
             <button
@@ -592,7 +640,7 @@ export default function MessagingPage() {
         </footer>
       </main>
 
-      {/* Right column: conversation details, search & filters, schedule */}
+      {/* Right column */}
       <aside className="hidden lg:flex lg:flex-col lg:w-64 border-l bg-card/40 px-4 py-4">
         <div className="space-y-4">
           <div>
