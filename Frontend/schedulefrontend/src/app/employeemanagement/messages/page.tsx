@@ -276,6 +276,23 @@ export default function EmployeeMessagingPage() {
           });
         }
       )
+      .on("broadcast", { event: "message" }, ({ payload }) => {
+        const incoming = payload as MessageRow;
+        const participants = [incoming.sender_id, incoming.recipient_id];
+
+        if (
+          !participants.includes(currentUserId) ||
+          !activePeer ||
+          !participants.includes(activePeer.id)
+        ) {
+          return;
+        }
+
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === incoming.id)) return prev;
+          return [...prev, incoming];
+        });
+      })
       .on("broadcast", { event: "typing" }, ({ payload }) => {
         const { senderId } = payload as { senderId: UUID };
         if (senderId === currentUserId) return;
@@ -380,9 +397,18 @@ export default function EmployeeMessagingPage() {
       console.error("Error sending message:", error);
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
     } else if (data) {
+      const savedMessage = data as MessageRow;
       setMessages((prev) =>
-        prev.map((m) => (m.id === tempId ? (data as MessageRow) : m))
+        prev.map((m) => (m.id === tempId ? savedMessage : m))
       );
+
+      if (channelRef.current) {
+        channelRef.current.send({
+          type: "broadcast",
+          event: "message",
+          payload: savedMessage,
+        });
+      }
     }
 
     setSending(false);
