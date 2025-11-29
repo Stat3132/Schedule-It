@@ -13,7 +13,7 @@ export default function Settings() {
       const saved = localStorage.getItem('theme');
       if (saved === 'dark' || saved === 'light') return saved as 'dark' | 'light';
       if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
-    } catch (e) {}
+    } catch {}
     return 'light';
   });
   const { locale, setLocale, t } = useI18n();
@@ -27,31 +27,18 @@ export default function Settings() {
   const [showWeekends, setShowWeekends] = useState(true);
   const [showToast, setShowToast] = useState(false);
 
-  // Apply the initial theme to the document on mount. We initialize `theme`
-  // synchronously from localStorage, so this only needs to run once.
+  // Keep the document's theme class in sync with the current preference.
   useEffect(() => {
     if (typeof document !== 'undefined') {
-      if (theme === 'dark') document.documentElement.classList.add('dark');
-      else document.documentElement.classList.remove('dark');
+      document.documentElement.classList.toggle('dark', theme === 'dark');
     }
-  }, []);
+  }, [theme]);
 
   useEffect(() => {
     if (!showToast) return;
     const timer = setTimeout(() => setShowToast(false), 3200);
     return () => clearTimeout(timer);
   }, [showToast]);
-
-  const applyThemeToDocument = (t: 'light' | 'dark') => {
-    try {
-      if (typeof document !== 'undefined') {
-        if (t === 'dark') document.documentElement.classList.add('dark');
-        else document.documentElement.classList.remove('dark');
-      }
-    } catch (e) {
-      // ignore
-    }
-  };
 
   const saveChanges = async () => {
     try {
@@ -63,7 +50,7 @@ export default function Settings() {
         // supabase.auth.updateUser will merge into user_metadata
         await supabase.auth.updateUser({ data: { theme } });
       }
-    } catch (e) {
+    } catch {
       // ignore errors — still persist locally
     }
 
@@ -75,7 +62,7 @@ export default function Settings() {
       const expires = 60 * 60 * 24 * 365; // seconds
       const cookieVal = encodeURIComponent(theme);
       document.cookie = `theme=${cookieVal}; Max-Age=${expires}; Path=/; SameSite=Lax`;
-    } catch (e) {
+    } catch {
       // ignore cookie errors in restricted environments
     }
       setShowToast(true);
@@ -136,10 +123,7 @@ export default function Settings() {
               </div>
               <div className="flex gap-2">
                 <button
-                  onClick={() => {
-                    setTheme('light');
-                    applyThemeToDocument('light');
-                  }}
+                  onClick={() => setTheme('light')}
                   className={`px-4 py-2 rounded-lg transition-colors ${
                     theme === 'light'
                       ? 'bg-blue-600 text-white'
@@ -149,10 +133,7 @@ export default function Settings() {
                   {t('light')}
                 </button>
                 <button
-                  onClick={() => {
-                    setTheme('dark');
-                    applyThemeToDocument('dark');
-                  }}
+                  onClick={() => setTheme('dark')}
                   className={`px-4 py-2 rounded-lg transition-colors ${
                     theme === 'dark'
                       ? 'bg-blue-600 text-white'

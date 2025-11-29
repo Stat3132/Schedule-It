@@ -65,6 +65,12 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     } catch {}
   }, [locale]);
 
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.documentElement.lang = locale;
+    }
+  }, [locale]);
+
   const setLocale = (next: string) => setLocaleState(resolveLocale(next));
 
   const value = useMemo<I18nContextValue>(() => {

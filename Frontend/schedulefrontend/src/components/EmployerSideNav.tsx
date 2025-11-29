@@ -78,7 +78,7 @@ export default function EmployerSideNav() {
   const handleLogout = async () => {
     try {
       await supabase.auth.signOut();
-    } catch (_) {
+    } catch {
       // ignore
     }
     if (typeof window !== "undefined") {

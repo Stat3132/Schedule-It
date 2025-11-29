@@ -1265,7 +1265,7 @@ export default function EmployerMessagingPage() {
           setScheduleEditorError(
             err instanceof Error
               ? err.message
-              : "Unable to load this employee's schedule. Please try again.",
+              : "Unable to load this employee schedule. Please try again.",
           );
           setScheduleEditorDays([]);
         }
@@ -2215,7 +2215,7 @@ export default function EmployerMessagingPage() {
                   />
                 </label>
                 <p className="mt-2 text-[10px] text-muted-foreground">
-                  You're automatically included—pick at least two teammates. · {groupDraftSelectionCount} selected
+                  You are automatically included—pick at least two teammates. · {groupDraftSelectionCount} selected
                 </p>
                 <div className="mt-2 max-h-32 space-y-1 overflow-y-auto rounded-md border border-dashed border-border/70 p-2">
                   {contacts.length === 0 ? (
