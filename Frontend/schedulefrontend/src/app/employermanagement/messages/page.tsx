@@ -262,7 +262,7 @@ export default function EmployerMessagingPage() {
 
       const { data, error } = await supabase
         .from("message")
-        .select("sender_id,message_count:count(id)")
+        .select("sender_id")
         .eq("recipient_id", currentUserId)
         .in("sender_id", peerIds);
 
@@ -274,12 +274,9 @@ export default function EmployerMessagingPage() {
       }
 
       const next: Record<string, number> = {};
-      for (const row of (data ?? []) as {
-        sender_id: string;
-        message_count: number | null;
-      }[]) {
+      for (const row of (data ?? []) as Array<{ sender_id: string }>) {
         if (row.sender_id) {
-          next[row.sender_id] = row.message_count ?? 0;
+          next[row.sender_id] = (next[row.sender_id] ?? 0) + 1;
         }
       }
       setIncomingCounts(next);
@@ -308,7 +305,7 @@ export default function EmployerMessagingPage() {
 
       const { data, error } = await supabase
         .from("group_message")
-        .select("group_id,message_count:count(id)")
+        .select("group_id")
         .in("group_id", groupIds)
         .neq("sender_id", currentUserId);
 
@@ -320,12 +317,9 @@ export default function EmployerMessagingPage() {
       }
 
       const next: Record<string, number> = {};
-      for (const row of (data ?? []) as {
-        group_id: string;
-        message_count: number | null;
-      }[]) {
+      for (const row of (data ?? []) as Array<{ group_id: string | null }>) {
         if (row.group_id) {
-          next[row.group_id] = row.message_count ?? 0;
+          next[row.group_id] = (next[row.group_id] ?? 0) + 1;
         }
       }
       setGroupIncomingCounts(next);
