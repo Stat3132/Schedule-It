@@ -1,7 +1,8 @@
 "use client";
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { JSX, useState } from "react";
+import { JSX, useMemo, useState } from "react";
+import { useI18n } from "../../lib/i18n";
 
 interface CalendarProps {
   onDateSelect: (date: Date) => void;
@@ -10,6 +11,7 @@ interface CalendarProps {
 
 export function Calendar({ onDateSelect, selectedDate }: CalendarProps) {
   const [currentMonth, setCurrentMonth] = useState(new Date());
+  const { locale } = useI18n();
 
   const daysInMonth = new Date(
     currentMonth.getFullYear(),
@@ -23,22 +25,23 @@ export function Calendar({ onDateSelect, selectedDate }: CalendarProps) {
     1,
   ).getDay();
 
-  const monthNames = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-  ];
+  const monthLabel = useMemo(() => {
+    const formatter = new Intl.DateTimeFormat(locale, {
+      month: "long",
+      year: "numeric",
+    });
+    return formatter.format(currentMonth);
+  }, [currentMonth, locale]);
 
-  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const dayNames = useMemo(() => {
+    const formatter = new Intl.DateTimeFormat(locale, { weekday: "short" });
+    const base = new Date(Date.UTC(2023, 0, 1));
+    return Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(base);
+      date.setUTCDate(base.getUTCDate() + index);
+      return formatter.format(date);
+    });
+  }, [locale]);
 
   const prevMonth = () => {
     setCurrentMonth(
@@ -103,9 +106,7 @@ export function Calendar({ onDateSelect, selectedDate }: CalendarProps) {
         >
           <ChevronLeft className="w-5 h-5 text-foreground/70" />
         </button>
-        <h3 className="font-semibold text-foreground">
-          {monthNames[currentMonth.getMonth()]} {currentMonth.getFullYear()}
-        </h3>
+        <h3 className="font-semibold text-foreground">{monthLabel}</h3>
         <button
           onClick={nextMonth}
           className="p-2 hover:bg-background/95 rounded-lg transition-colors"

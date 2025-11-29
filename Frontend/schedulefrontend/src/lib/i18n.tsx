@@ -50,33 +50,19 @@ const resolveLocale = (candidate?: string | null) =>
   candidate && SUPPORTED_LOCALES.has(candidate) ? candidate : DEFAULT_LOCALE;
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<string>(DEFAULT_LOCALE);
-
-  useEffect(() => {
-    let cancelled = false;
+  const [locale, setLocaleState] = useState<string>(() => {
+    if (typeof window === "undefined") return DEFAULT_LOCALE;
     try {
-      const stored = resolveLocale(localStorage.getItem("locale"));
-      if (!cancelled) {
-        setLocaleState(stored);
-      }
+      return resolveLocale(localStorage.getItem("locale"));
     } catch {
-      // ignore and stay on default locale until the user picks another one
+      return DEFAULT_LOCALE;
     }
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  });
 
   useEffect(() => {
     try {
       localStorage.setItem("locale", locale);
     } catch {}
-  }, [locale]);
-
-  useEffect(() => {
-    if (typeof document !== "undefined") {
-      document.documentElement.lang = locale;
-    }
   }, [locale]);
 
   const setLocale = (next: string) => setLocaleState(resolveLocale(next));

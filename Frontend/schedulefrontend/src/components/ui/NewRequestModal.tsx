@@ -1,10 +1,11 @@
 "use client";
 
 import { X } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Calendar } from "./Calendar";
 import { WeekSchedule } from "./WeekSchedule";
 import type { AvailabilityStatus, DayOfWeek } from "../../lib/supabase";
+import { useI18n } from "../../lib/i18n";
 
 interface NewRequestModalProps {
   isOpen: boolean;
@@ -43,31 +44,72 @@ export function NewRequestModal({ isOpen, onClose, onSubmit }: NewRequestModalPr
   const [step, setStep] = useState<"date" | "schedule">("date");
   const [startDate, setStartDate] = useState<Date | null>(null);
   const [endDate, setEndDate] = useState<Date | null>(null);
-  const [schedule, setSchedule] =
-    useState<Record<DayOfWeek, AvailabilityStatus>>(DEFAULT_SCHEDULE);
-  const [timeRanges, setTimeRanges] =
-    useState<Record<DayOfWeek, { start: string | null; end: string | null }>>(
-      DEFAULT_TIME_RANGES
-    );
+  const [schedule, setSchedule] = useState<Record<DayOfWeek, AvailabilityStatus>>(
+    DEFAULT_SCHEDULE
+  );
+  const [timeRanges, setTimeRanges] = useState<
+    Record<DayOfWeek, { start: string | null; end: string | null }>
+  >(DEFAULT_TIME_RANGES);
   const [reason, setReason] = useState("");
+  const { t, locale } = useI18n();
+
+  const formatDate = useMemo(() => {
+    const formatter = new Intl.DateTimeFormat(locale, {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+    return (date: Date | null) => (date ? formatter.format(date) : "");
+  }, [locale]);
 
   if (!isOpen) return null;
 
+  const resetState = () => {
+    setStep("date");
+    setStartDate(null);
+    setEndDate(null);
+    setSchedule(DEFAULT_SCHEDULE);
+    setTimeRanges(DEFAULT_TIME_RANGES);
+    setReason("");
+  };
+
+  const handleClose = () => {
+    resetState();
+    onClose();
+  };
+
   const handleDateSelect = (date: Date) => {
+    const normalized = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
     if (!startDate || (startDate && endDate)) {
-      setStartDate(date);
+      setStartDate(normalized);
       setEndDate(null);
-    } else {
-      if (date < startDate) {
-        setEndDate(startDate);
-        setStartDate(date);
-      } else {
-        setEndDate(date);
+      return;
+    }
+
+    if (!endDate && startDate) {
+      if (normalized.getTime() === startDate.getTime()) {
+        setEndDate(normalized);
+        return;
       }
+
+      if (normalized < startDate) {
+        setEndDate(startDate);
+        setStartDate(normalized);
+        return;
+      }
+
+      setEndDate(normalized);
     }
   };
 
   const handleContinue = () => {
+    if (startDate && !endDate) {
+      setEndDate(startDate);
+      setStep("schedule");
+      return;
+    }
+
     if (startDate && endDate) {
       setStep("schedule");
     }
@@ -85,38 +127,63 @@ export function NewRequestModal({ isOpen, onClose, onSubmit }: NewRequestModalPr
   };
 
   const handleSubmit = () => {
-    if (startDate && endDate && reason.trim()) {
-      onSubmit({
-        startDate,
-        endDate,
-        schedule,
-        timeRanges,
-        reason,
-      });
-      handleClose();
-    }
+    if (!startDate || !reason.trim()) return;
+
+    const effectiveEnd = endDate ?? startDate;
+
+    onSubmit({
+      startDate,
+      endDate: effectiveEnd,
+      schedule,
+      timeRanges,
+      reason: reason.trim(),
+    });
+    handleClose();
   };
 
-  const handleClose = () => {
-    setStep("date");
-    setStartDate(null);
-    setEndDate(null);
-    setSchedule(DEFAULT_SCHEDULE);
-    setTimeRanges(DEFAULT_TIME_RANGES);
-    setReason("");
-    onClose();
+  const renderDateStatus = () => {
+    if (startDate && !endDate) {
+      return (
+        <p className="text-sm text-foreground/70">
+          {t("employee.availability.modal.startSelected", {
+            date: formatDate(startDate),
+          })}
+        </p>
+      );
+    }
+
+    if (startDate && endDate) {
+      return (
+        <p className="text-sm text-foreground/70">
+          {t("employee.availability.modal.rangeSelected", {
+            start: formatDate(startDate),
+            end: formatDate(endDate),
+          })}
+        </p>
+      );
+    }
+
+    return (
+      <p className="text-sm text-foreground/70">
+        {t("employee.availability.modal.dateInstructions")}
+      </p>
+    );
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="bg-background rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
         <div className="sticky top-0 bg-background border-b border-border p-4 flex items-center justify-between">
           <h2 className="text-xl font-semibold text-foreground">
-            {step === "date" ? "Select Date Range" : "Set Weekly Schedule"}
+            {step === "date"
+              ? t("employee.availability.modal.dateTitle")
+              : t("employee.availability.modal.scheduleTitle")}
           </h2>
           <button
+            type="button"
             onClick={handleClose}
-            className="p-2 rounded-lg transition-colors"
+            aria-label={t("shared.buttons.close")}
+            className="p-2 rounded-lg hover:bg-muted transition-colors"
           >
             <X className="w-5 h-5 text-foreground/70" />
           </button>
@@ -125,55 +192,31 @@ export function NewRequestModal({ isOpen, onClose, onSubmit }: NewRequestModalPr
         <div className="p-6">
           {step === "date" ? (
             <div className="space-y-4">
-              <div className="text-center mb-4">
-                {startDate && !endDate && (
-                  <p className="text-sm text-foreground/70">
-                    Start:{" "}
-                    <span className="font-medium text-foreground">
-                      {startDate.toLocaleDateString()}
-                    </span>
-                    <br />
-                    <span className="text-xs text-foreground/60">
-                      Now select an end date
-                    </span>
-                  </p>
-                )}
-                {startDate && endDate && (
-                  <p className="text-sm text-foreground/70">
-                    <span className="font-medium text-foreground">
-                      {startDate.toLocaleDateString()}
-                    </span>{" "}
-                    -{" "}
-                    <span className="font-medium text-foreground">
-                      {endDate.toLocaleDateString()}
-                    </span>
-                  </p>
-                )}
-              </div>
+              <div className="text-center mb-4 space-y-1">{renderDateStatus()}</div>
 
-              <Calendar
-                onDateSelect={handleDateSelect}
-                selectedDate={endDate || startDate}
-              />
+              <Calendar onDateSelect={handleDateSelect} selectedDate={endDate || startDate} />
 
               <button
+                type="button"
                 onClick={handleContinue}
                 disabled={!startDate || !endDate}
-                className="w-full py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors disabled:bg-muted/50 disabled:cursor-not-allowed"
+                className="w-full py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors disabled:bg-muted/50 disabled:text-muted-foreground disabled:cursor-not-allowed"
               >
-                Continue to Schedule
+                {t("employee.availability.modal.continue")}
               </button>
             </div>
           ) : (
             <div className="space-y-6">
-              <div className="text-sm text-foreground/70 mb-4">
-                <p>
-                  Period:{" "}
-                  <span className="font-medium text-foreground">
-                    {startDate?.toLocaleDateString()} -{" "}
-                    {endDate?.toLocaleDateString()}
-                  </span>
-                </p>
+              <div className="text-sm text-foreground/70 mb-2">
+                <span className="font-medium text-foreground">
+                  {t("shared.labels.period")}:
+                </span>{" "}
+                <span>
+                  {t("employee.availability.modal.rangeSelected", {
+                    start: formatDate(startDate),
+                    end: formatDate(endDate),
+                  })}
+                </span>
               </div>
 
               <WeekSchedule
@@ -185,30 +228,33 @@ export function NewRequestModal({ isOpen, onClose, onSubmit }: NewRequestModalPr
 
               <div>
                 <label className="block text-sm font-medium text-foreground mb-2">
-                  Reason for Availability Change <span className="text-red-500">*</span>
+                  {t("employee.availability.modal.reasonLabel")}
+                  <span className="text-red-500">*</span>
                 </label>
                 <textarea
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
-                  placeholder="Please explain why your availability is changing..."
-                  className="w-full px-4 py-3 border border-border rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent resize-none"
+                  placeholder={t("employee.availability.modal.reasonPlaceholder")}
+                  className="w-full px-4 py-3 border border-border rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent resize-none bg-background"
                   rows={4}
                 />
               </div>
 
               <div className="flex gap-3">
                 <button
+                  type="button"
                   onClick={() => setStep("date")}
-                  className="flex-1 py-3 border border-border text-foreground rounded-lg font-medium transition-colors"
+                  className="flex-1 py-3 border border-border text-foreground rounded-lg font-medium hover:bg-muted/50 transition-colors"
                 >
-                  Back
+                  {t("shared.buttons.back")}
                 </button>
                 <button
+                  type="button"
                   onClick={handleSubmit}
                   disabled={!reason.trim()}
-                  className="flex-1 py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors disabled:bg-muted/50 disabled:cursor-not-allowed"
+                  className="flex-1 py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors disabled:bg-muted/50 disabled:text-muted-foreground disabled:cursor-not-allowed"
                 >
-                  Submit Request
+                  {t("employee.availability.modal.submit")}
                 </button>
               </div>
             </div>

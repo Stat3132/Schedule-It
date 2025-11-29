@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Calendar as CalendarIcon } from "lucide-react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
@@ -8,6 +8,7 @@ import { createAnnouncement } from "../../../lib/announcements";
 import type { DayOfWeek, AvailabilityStatus } from "../../../lib/supabase";
 import { CurrentAvailability } from "../../../components/ui/CurrentAvailability";
 import { NewRequestModal } from "../../../components/ui/NewRequestModal";
+import { useI18n } from "../../../lib/i18n";
 
 type WeeklyPattern = Record<DayOfWeek, AvailabilityStatus>;
 
@@ -84,6 +85,7 @@ function extractReason(raw: unknown): string | undefined {
 export default function AvailabilityPage() {
   const supabase = createClientComponentClient();
   const router = useRouter();
+  const { t, locale } = useI18n();
 
   const [currentSchedule, setCurrentSchedule] =
     useState<WeeklyPattern | null>(null);
@@ -162,7 +164,7 @@ export default function AvailabilityPage() {
     reason: string;
   }) => {
     if (!userId) {
-      alert("No user id; please sign in again.");
+      alert(t("employee.availability.request.noUser"));
       return;
     }
 
@@ -187,13 +189,18 @@ export default function AvailabilityPage() {
       if (error) throw error;
 
       try {
+        const reasonBlock = requestData.reason
+          ? `\n\n${t("shared.labels.reason")}: ${requestData.reason}`
+          : "";
         await createAnnouncement(
           supabase,
           userId,
-          `Availability request submitted`,
-          `Availability requested for ${startDateStr} → ${endDateStr}${
-            requestData.reason ? `\n\nReason: ${requestData.reason}` : ""
-          }`,
+          t("employee.availability.request.announcementTitle"),
+          t("employee.availability.request.announcementBody", {
+            start: startDateStr,
+            end: endDateStr,
+            reasonBlock,
+          }),
           [],
         );
       } catch (e) {
@@ -205,17 +212,26 @@ export default function AvailabilityPage() {
 
       await loadAvailability(userId);
       setIsModalOpen(false);
-      alert("Availability request submitted successfully.");
+      alert(t("employee.availability.request.success"));
     } catch (err) {
       console.error("Error submitting availability change:", err);
-      alert("Failed to submit availability change. Please try again.");
+      alert(t("employee.availability.request.error"));
     }
   };
+
+  const formatDate = useMemo(() => {
+    const formatter = new Intl.DateTimeFormat(locale, {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+    return (value: string) => formatter.format(new Date(value));
+  }, [locale]);
 
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-muted-foreground">Loading...</div>
+        <div className="text-muted-foreground">{t("shared.state.loading")}</div>
       </div>
     );
   }
@@ -228,10 +244,10 @@ export default function AvailabilityPage() {
           <div className="flex items-center gap-4">
             <div>
               <h1 className="text-3xl font-bold text-foreground">
-                Availability
+                {t("employee.availability.title")}
               </h1>
               <p className="text-muted-foreground mt-1">
-                Manage your work schedule
+                {t("employee.availability.subtitle")}
               </p>
             </div>
           </div>
@@ -245,23 +261,23 @@ export default function AvailabilityPage() {
         <div className="bg-card rounded-xl shadow-sm border border-border p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-semibold text-card-foreground">
-              Availability History
+              {t("employee.availability.history.title")}
             </h2>
             <button
               onClick={() => setIsModalOpen(true)}
               className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors"
             >
               <Plus className="w-5 h-5" />
-              New Availability Period
+              {t("employee.availability.history.cta")}
             </button>
           </div>
 
           {history.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               <CalendarIcon className="w-12 h-12 mx-auto mb-3 text-muted" />
-              <p>No availability records yet</p>
+              <p>{t("employee.availability.history.emptyTitle")}</p>
               <p className="text-sm mt-1">
-                Click &quot;New Availability Period&quot; to create one.
+                {t("employee.availability.history.emptyBody")}
               </p>
             </div>
           ) : (
@@ -270,11 +286,18 @@ export default function AvailabilityPage() {
                 const reason = extractReason(row.weekly_pattern_json);
                 const start = new Date(row.effective_from);
                 const end = row.effective_to ? new Date(row.effective_to) : null;
+                const startLabel = formatDate(row.effective_from);
                 const rangeLabel = end
-                  ? `${start.toLocaleDateString()} – ${end.toLocaleDateString()}`
-                  : `${start.toLocaleDateString()} onward`;
+                  ? t("employee.availability.history.rangeFull", {
+                      start: startLabel,
+                      end: formatDate(row.effective_to!),
+                    })
+                  : t("employee.availability.history.rangeOpen", {
+                      start: startLabel,
+                    });
                 const isLatest = idx === 0;
                 const statusLabel = row.status ?? "pending";
+                const statusText = t(`shared.status.${statusLabel}`);
 
                 return (
                   <div
@@ -286,18 +309,18 @@ export default function AvailabilityPage() {
                         {rangeLabel}{" "}
                         {isLatest && (
                           <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/30">
-                            Latest
+                            {t("employee.availability.history.latestBadge")}
                           </span>
                         )}
                       </p>
                       {reason && (
                         <p className="text-sm text-muted-foreground mt-1">
-                          Reason: {reason}
+                          {t("employee.availability.history.reasonPrefix")} {reason}
                         </p>
                       )}
                     </div>
                     <span className="text-xs px-2 py-1 rounded-full border border-border text-foreground bg-muted">
-                      {statusLabel}
+                      {statusText}
                     </span>
                   </div>
                 );

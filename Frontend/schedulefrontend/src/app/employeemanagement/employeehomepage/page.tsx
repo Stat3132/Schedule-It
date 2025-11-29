@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { createAnnouncement } from "../../../lib/announcements";
 import { Calendar, Clock, Bell, Settings, LogOut, AlertCircle } from "lucide-react";
+import { useI18n } from "../../../lib/i18n";
 
 // ---- Types ----
 type Employment = {
@@ -83,16 +84,6 @@ type AvailabilityRowLite = {
   effective_to: string | null;
   status?: string | null;
 };
-
-const WEEKDAY_LABELS = [
-  "Sunday",
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-] as const;
 
 const DAY_KEYS: DayOfWeek[] = [
   "sunday",
@@ -190,15 +181,19 @@ function endOfWeek(d: Date, weekStartsOn: 0 | 1 = 0): Date {
   return out;
 }
 
-function fmtDateMMDD(d: Date): string {
-  const mm = (d.getMonth() + 1).toString().padStart(2, "0");
-  const dd = d.getDate().toString().padStart(2, "0");
-  return `${mm}/${dd}`;
+function fmtDateMMDD(d: Date, locale?: string): string {
+  return d.toLocaleDateString(locale ?? undefined, {
+    month: "2-digit",
+    day: "2-digit",
+  });
 }
 
-function fmtTimeLocal(iso: string): string {
+function fmtTimeLocal(iso: string, locale?: string): string {
   const dt = new Date(iso);
-  return dt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return dt.toLocaleTimeString(locale ?? undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function normalizeToLocalDay(d: Date): Date {
@@ -242,6 +237,25 @@ function normalizePattern(raw: unknown): WeeklyPattern {
 export default function EmployeeHomePage() {
   const supabase = createClientComponentClient();
   const router = useRouter();
+  const { t, locale } = useI18n();
+
+  const weekdayLabels = useMemo(
+    () => DAY_KEYS.map((day) => t(`shared.weekdays.${day}`)),
+    [t],
+  );
+  const shiftFallbackLabel = useMemo(
+    () => t("employee.home.labels.shiftFallback"),
+    [t],
+  );
+  const typicalShiftLabel = useMemo(
+    () => t("employee.home.labels.typicalShift"),
+    [t],
+  );
+  const weekPrefix = useMemo(() => t("employee.home.week.prefix"), [t]);
+  const typicalWeekSuffix = useMemo(
+    () => t("employee.home.week.typicalSuffix"),
+    [t],
+  );
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [employmentState, setEmploymentState] = useState<Employment | null>(null);
@@ -265,6 +279,8 @@ export default function EmployeeHomePage() {
     announcement: AnnouncementLite;
     senderName: string;
   } | null>(null);
+  const [announcementDeleteLoading, setAnnouncementDeleteLoading] =
+    useState(false);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -295,6 +311,7 @@ export default function EmployeeHomePage() {
     const all = data as AnnouncementLite[];
 
     const applicable = all.filter((a) => {
+      if (a.created_by === userId) return false;
       const targets = a.target_role_ids;
       if (!targets || targets.length === 0) return true; // broadcast
       return targets.includes(roleId);
@@ -329,7 +346,7 @@ export default function EmployeeHomePage() {
       (sender?.full_name as string | null) ||
       (sender?.display_name as string | null) ||
       (sender?.email as string | null) ||
-      "Manager";
+      t("shared.messages.managerFallback");
 
     // Mark as seen and persist
     try {
@@ -374,6 +391,31 @@ export default function EmployeeHomePage() {
     setAnnouncementToShow(null);
   };
 
+  const handleDeleteAnnouncement = async (announcementId: string) => {
+    setAnnouncementDeleteLoading(true);
+    try {
+      const { error } = await supabase
+        .from("announcements")
+        .delete()
+        .eq("id", announcementId);
+      if (error) {
+        console.error("[EmployeeHome] delete announcement error", error);
+      }
+    } finally {
+      setAnnouncementDeleteLoading(false);
+      setAnnouncementToShow(null);
+    }
+  };
+
+  const announcementTimestampLabel = (iso: string) =>
+    new Intl.DateTimeFormat(locale, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date(iso));
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -386,7 +428,7 @@ export default function EmployeeHomePage() {
       if (!uid) {
         if (!cancelled) {
           setDays(defaultEmptyWeek());
-          setWeekLabel(labelForWeek(new Date()));
+          setWeekLabel(labelForWeek(new Date(), locale, weekPrefix));
           setHadRealAssignments(false);
           setDayFlags({});
           setDroppedShifts([]);
@@ -407,7 +449,7 @@ export default function EmployeeHomePage() {
       if (empErr || !emps || emps.length === 0) {
         if (!cancelled) {
           setDays(defaultEmptyWeek());
-          setWeekLabel(labelForWeek(new Date()));
+          setWeekLabel(labelForWeek(new Date(), locale, weekPrefix));
           setHadRealAssignments(false);
           setDayFlags({});
           setDroppedShifts([]);
@@ -422,7 +464,7 @@ export default function EmployeeHomePage() {
       const now = new Date();
       const weekStart = startOfWeek(now, 0);
       const weekEnd = endOfWeek(now, 0);
-      const label = labelForWeek(now);
+      const label = labelForWeek(now, locale, weekPrefix);
 
       const flagsByIndex: Record<number, DayFlags> = {};
       for (let i = 0; i < 7; i++) {
@@ -573,7 +615,7 @@ export default function EmployeeHomePage() {
 
             const shiftDate = new Date(s.start_ts);
             const weekdayIndex = shiftDate.getDay();
-            const role = roleById[s.role_id]?.name ?? "Shift";
+            const role = roleById[s.role_id]?.name ?? shiftFallbackLabel;
             const color = roleById[s.role_id]?.color ?? null;
             const locationName = locById[s.location_id]?.name ?? null;
 
@@ -585,8 +627,8 @@ export default function EmployeeHomePage() {
                 weekdayIndex,
                 role,
                 locationName,
-                start: fmtTimeLocal(s.start_ts),
-                end: fmtTimeLocal(s.end_ts),
+                start: fmtTimeLocal(s.start_ts, locale),
+                end: fmtTimeLocal(s.end_ts, locale),
                 status: "dropped",
               });
               activeShiftRows.push(s);
@@ -601,7 +643,12 @@ export default function EmployeeHomePage() {
             location: locById[s.location_id] ?? null,
           }));
 
-          const buckets = buildBucketsFromShifts(withMeta, assignmentByShiftId);
+          const buckets = buildBucketsFromShifts(
+            withMeta,
+            assignmentByShiftId,
+            locale,
+            shiftFallbackLabel,
+          );
 
           dropped.sort((a, b) => {
             if (a.date.getTime() !== b.date.getTime()) {
@@ -645,13 +692,15 @@ export default function EmployeeHomePage() {
           bucketsFromTemplates = buildBucketsFromTemplates(
             filtered,
             weekStart,
+            locale,
+            typicalShiftLabel,
           );
       }
 
       if (!cancelled) {
         if (bucketsFromTemplates) {
           setDays(bucketsFromTemplates);
-          setWeekLabel(label + " • typical week");
+          setWeekLabel(`${label} • ${typicalWeekSuffix}`);
         } else {
           setDays(defaultEmptyWeek());
           setWeekLabel(label);
@@ -665,7 +714,15 @@ export default function EmployeeHomePage() {
     return () => {
       cancelled = true;
     };
-  }, [supabase, refreshKey]);
+  }, [
+    supabase,
+    refreshKey,
+    locale,
+    weekPrefix,
+    shiftFallbackLabel,
+    typicalShiftLabel,
+    typicalWeekSuffix,
+  ]);
 
   // When we know the current user and employment, check for announcements
   useEffect(() => {
@@ -673,7 +730,7 @@ export default function EmployeeHomePage() {
       if (!currentUserId || !employmentState) return;
       await maybeShowAnnouncementForUser(currentUserId, employmentState.role_id);
     })();
-  }, [currentUserId, employmentState, supabase]);
+  }, [currentUserId, employmentState, supabase, t]);
 
   const todayIdx = new Date().getDay();
   const todayFlags = dayFlags[todayIdx];
@@ -736,7 +793,8 @@ export default function EmployeeHomePage() {
       const profList = (profs ?? []) as ProfileRow[];
       const mapped: Coworker[] = profList.map((p) => ({
         id: p.id,
-        name: p.full_name || p.display_name || p.email || "Unnamed",
+        name:
+          p.full_name || p.display_name || p.email || t("shared.labels.unnamed"),
       }));
 
       setCoworkers(mapped);
@@ -773,7 +831,7 @@ export default function EmployeeHomePage() {
 
     const reason = dropReason.trim();
     if (!reason) {
-      setDropError("Please provide a reason for dropping this shift.");
+      setDropError(t("employee.home.errors.reasonRequired"));
       return;
     }
 
@@ -792,7 +850,7 @@ export default function EmployeeHomePage() {
 
       if (error) {
         console.error("[EmployeeHome] drop shift error", error);
-        setDropError("Unable to drop this shift. Please try again.");
+        setDropError(t("employee.home.errors.dropFailed"));
         setDropSubmitting(false);
         return;
       }
@@ -804,7 +862,7 @@ export default function EmployeeHomePage() {
 
       // create announcement for dropped shift
       try {
-        let senderName = "Employee";
+        let senderName = t("shared.messages.employeeFallback");
         try {
           const { data: prof } = await supabase
             .from("profiles")
@@ -816,10 +874,16 @@ export default function EmployeeHomePage() {
           // ignore profile lookup errors
         }
 
-        const title = `${senderName} requested to drop a shift`;
-        const content = `${WEEKDAY_LABELS[selectedShift.weekdayIndex]} · ${fmtDateMMDD(
-          selectedShift.date
-        )} · ${selectedShift.start} – ${selectedShift.end}${reason ? `\n\nReason: ${reason}` : ""}`;
+        const title = t("employee.home.drop.announcementTitle", { name: senderName });
+        const baseContent = t("employee.home.drop.announcementBody", {
+          day: weekdayLabels[selectedShift.weekdayIndex],
+          date: fmtDateMMDD(selectedShift.date, locale),
+          range: `${selectedShift.start} – ${selectedShift.end}`,
+        });
+        const reasonBlock = reason
+          ? `\n\n${t("shared.labels.reason")}: ${reason}`
+          : "";
+        const content = `${baseContent}${reasonBlock}`;
         if (currentUserId) {
           await createAnnouncement(supabase, currentUserId, title, content, []);
         }
@@ -828,7 +892,7 @@ export default function EmployeeHomePage() {
       }
     } catch (e) {
       console.error("[EmployeeHome] drop shift exception", e);
-      setDropError("Something went wrong. Please try again.");
+      setDropError(t("employee.home.errors.generic"));
     } finally {
       setDropSubmitting(false);
     }
@@ -839,10 +903,14 @@ export default function EmployeeHomePage() {
     <div className="min-h-screen bg-background">
       <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-6">
-          <h1 className="text-3xl font-bold text-foreground">Your Schedule</h1>
+          <h1 className="text-3xl font-bold text-foreground">
+            {t("employee.home.title")}
+          </h1>
           <p className="text-foreground/70 mt-1">
-            {loading ? "Loading…" : weekLabel}
-            {!loading && !hadRealAssignments ? " • no assigned shifts" : ""}
+            {loading ? t("shared.state.loading") : weekLabel}
+            {!loading && !hadRealAssignments
+              ? t("employee.home.week.noAssignments")
+              : ""}
           </p>
 
           {!loading &&
@@ -852,17 +920,15 @@ export default function EmployeeHomePage() {
                 {todayFlags.hasTimeOff && (
                   <div className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800">
                     <AlertCircle className="w-3 h-3 mr-1" />
-                    You have{" "}
                     {todayFlags.timeOffStatus === "approved"
-                      ? "approved time off"
-                      : "a time off request"}{" "}
-                    today.
+                      ? t("employee.home.alerts.timeOffApproved")
+                      : t("employee.home.alerts.timeOffRequested")}
                   </div>
                 )}
                 {todayFlags.isUnavailableByAvailability && (
                   <div className="inline-flex items-center rounded-full border border-purple-200 bg-purple-50 px-3 py-1 text-xs font-medium text-purple-800">
                     <AlertCircle className="w-3 h-3 mr-1" />
-                    You are marked unavailable today in your availability.
+                    {t("employee.home.alerts.unavailable")}
                   </div>
                 )}
               </div>
@@ -881,10 +947,10 @@ export default function EmployeeHomePage() {
                 >
                   <div className="text-center mb-2">
                     <div className="text-sm font-semibold text-foreground">
-                      {WEEKDAY_LABELS[bucket.dayIndex]}
+                        {weekdayLabels[bucket.dayIndex]}
                     </div>
                     <div className="text-xs text-foreground/60 mt-1">
-                      {fmtDateMMDD(bucket.date)}
+                      {fmtDateMMDD(bucket.date, locale)}
                     </div>
                   </div>
 
@@ -893,15 +959,14 @@ export default function EmployeeHomePage() {
                       <div className="mb-3 space-y-1">
                         {flags.hasTimeOff && (
                           <div className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-medium text-amber-800">
-                            Time off{" "}
                             {flags.timeOffStatus === "approved"
-                              ? "(approved)"
-                              : "(requested)"}
+                              ? t("employee.home.dayStatus.timeOffApproved")
+                              : t("employee.home.dayStatus.timeOffRequested")}
                           </div>
                         )}
                         {flags.isUnavailableByAvailability && (
                           <div className="inline-flex items-center rounded-full border border-purple-200 bg-purple-50 px-2.5 py-0.5 text-[11px] font-medium text-purple-800">
-                            Unavailable (availability)
+                            {t("employee.home.dayStatus.unavailableAvailability")}
                           </div>
                         )}
                       </div>
@@ -926,12 +991,12 @@ export default function EmployeeHomePage() {
                             <span className="flex gap-1">
                               {s.isPickedUp && (
                                 <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-800">
-                                  Picked up
+                                  {t("employee.home.shiftTags.pickedUp")}
                                 </span>
                               )}
                               {s.isDropPending && (
                                 <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800">
-                                  Drop requested
+                                  {t("employee.home.shiftTags.dropPending")}
                                 </span>
                               )}
                             </span>
@@ -947,11 +1012,11 @@ export default function EmployeeHomePage() {
                         <div className="text-xs text-foreground/60">
                           {flags?.hasTimeOff
                             ? flags.timeOffStatus === "approved"
-                              ? "Time off (approved)"
-                              : "Time off requested"
+                              ? t("employee.home.dayStatus.timeOffApproved")
+                              : t("employee.home.dayStatus.timeOffRequested")
                             : flags?.isUnavailableByAvailability
-                            ? "Unavailable"
-                            : "Off"}
+                            ? t("employee.home.dayStatus.unavailable")
+                            : t("employee.home.dayStatus.off")}
                         </div>
                       </div>
                     )}
@@ -963,16 +1028,17 @@ export default function EmployeeHomePage() {
         </div>
 
         <section className="mt-8">
-          <h2 className="text-lg font-semibold text-foreground">Dropped shifts</h2>
+          <h2 className="text-lg font-semibold text-foreground">
+            {t("employee.home.section.dropped.title")}
+          </h2>
           <p className="text-sm text-foreground/70 mt-1">
-            Shifts you have requested to drop for this week. These remain on your
-            schedule until a manager approves the change.
+            {t("employee.home.section.dropped.description")}
           </p>
 
           <div className="mt-3 bg-background rounded-xl shadow-sm border border-border overflow-hidden">
             {droppedShifts.length === 0 ? (
               <div className="px-4 py-6 text-sm text-foreground/60 text-center">
-                You have no dropped shifts for this week.
+                {t("employee.home.section.dropped.empty")}
               </div>
             ) : (
               <ul className="divide-y divide-border">
@@ -983,7 +1049,7 @@ export default function EmployeeHomePage() {
                   >
                     <div className="min-w-0">
                       <div className="text-sm font-medium text-foreground">
-                        {WEEKDAY_LABELS[ds.weekdayIndex]} · {fmtDateMMDD(ds.date)}
+                        {weekdayLabels[ds.weekdayIndex]} · {fmtDateMMDD(ds.date, locale)}
                       </div>
                       <div className="text-xs text-foreground/70 mt-0.5">
                         {ds.locationName && (
@@ -996,7 +1062,7 @@ export default function EmployeeHomePage() {
                       </div>
                     </div>
                     <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-medium text-amber-800">
-                      Pending manager review
+                      {t("employee.home.section.dropped.badge")}
                     </span>
                   </li>
                 ))}
@@ -1008,42 +1074,66 @@ export default function EmployeeHomePage() {
 
       {/* Announcement popup */}
       {announcementToShow && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-background rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
-            <div className="flex items-start justify-between gap-3">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4">
+          <div className="w-full max-w-lg rounded-2xl border border-border bg-background shadow-2xl">
+            <div className="flex items-start justify-between border-b border-border/70 px-6 py-5">
               <div>
-                <p className="text-xs font-semibold uppercase text-blue-600 mb-1">
-                  New announcement
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-primary/80">
+                  {t("employee.home.announcement.newLabel")}
                 </p>
-                <h2 className="text-lg font-semibold text-gray-900">
+                <h2 className="text-xl font-semibold text-foreground">
                   {announcementToShow.announcement.title}
                 </h2>
-                <p className="mt-1 text-sm text-gray-500">
-                  From {announcementToShow.senderName}
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {t("employee.announcements.from", {
+                    name: announcementToShow.senderName,
+                  })}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={handleDismissAnnouncement}
-                className="text-gray-400 hover:text-gray-600"
+                className="rounded-full border border-border/70 p-1 text-muted-foreground transition hover:border-border hover:text-foreground"
               >
-                <span className="sr-only">Close</span>
+                <span className="sr-only">{t("shared.buttons.close")}</span>
                 ×
               </button>
             </div>
-
-            <div className="mt-4 text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+            <div className="px-6 py-5 text-sm leading-relaxed text-foreground">
               {announcementToShow.announcement.content}
             </div>
-
-            <div className="mt-6 flex justify-end">
-              <button
-                type="button"
-                onClick={handleDismissAnnouncement}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
-              >
-                Got it
-              </button>
+            <div className="flex items-center justify-between gap-3 border-t border-border/70 px-6 py-4 text-xs text-muted-foreground">
+              <span>
+                {t("employee.home.announcement.timestamp", {
+                  time: announcementTimestampLabel(
+                    announcementToShow.announcement.created_at,
+                  ),
+                })}
+              </span>
+              <div className="flex gap-2">
+                {announcementToShow.announcement.created_by ===
+                  currentUserId && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleDeleteAnnouncement(announcementToShow.announcement.id)
+                    }
+                    disabled={announcementDeleteLoading}
+                    className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-destructive/80 hover:border-destructive disabled:opacity-50"
+                  >
+                    {announcementDeleteLoading
+                      ? t("employee.home.announcement.deleting")
+                      : t("employee.home.announcement.delete")}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleDismissAnnouncement}
+                  className="rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground"
+                >
+                  {t("shared.buttons.gotIt")}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1062,8 +1152,8 @@ export default function EmployeeHomePage() {
                     : ""}
                 </h2>
                 <p className="text-sm text-gray-600 mt-1">
-                  {WEEKDAY_LABELS[selectedShift.weekdayIndex]} ·{" "}
-                  {fmtDateMMDD(selectedShift.date)} · {selectedShift.start} –{" "}
+                  {weekdayLabels[selectedShift.weekdayIndex]} · {" "}
+                  {fmtDateMMDD(selectedShift.date, locale)} · {selectedShift.start} –{" "}
                   {selectedShift.end}
                 </p>
               </div>
@@ -1072,27 +1162,31 @@ export default function EmployeeHomePage() {
                 onClick={() => setSelectedShift(null)}
                 className="text-gray-400 hover:text-gray-600"
               >
-                <span className="sr-only">Close</span>
+                <span className="sr-only">{t("shared.buttons.close")}</span>
                 ×
               </button>
             </div>
 
             <div className="mt-4">
               <h3 className="text-sm font-medium text-gray-900">
-                Coworkers that day
+                {t("employee.home.coworkers.header")}
               </h3>
               {coworkersLoading ? (
-                <p className="mt-1 text-sm text-gray-500">Loading…</p>
+                <p className="mt-1 text-sm text-gray-500">
+                  {t("shared.state.loading")}
+                </p>
               ) : coworkers.length === 0 ? (
                 <p className="mt-1 text-sm text-gray-500">
-                  No other coworkers found for this day yet.
+                  {t("employee.home.coworkers.empty")}
                 </p>
               ) : (
                 <ul className="mt-2 space-y-1 max-h-32 overflow-y-auto text-sm text-gray-700">
                   {coworkers.map((c) => (
                     <li key={c.id}>
                       {c.name}
-                      {c.id === currentUserId ? " (you)" : ""}
+                      {c.id === currentUserId
+                        ? ` ${t("shared.labels.youIndicator")}`
+                        : ""}
                     </li>
                   ))}
                 </ul>
@@ -1101,14 +1195,14 @@ export default function EmployeeHomePage() {
 
             <div className="mt-5">
               <label className="block text-sm font-medium text-gray-900 mb-1">
-                Reason for dropping this shift
+                {t("employee.home.modal.reasonLabel")}
               </label>
               <textarea
                 value={dropReason}
                 onChange={(e) => setDropReason(e.target.value)}
                 rows={3}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
-                placeholder="Explain why you need to drop this shift..."
+                placeholder={t("employee.home.modal.reasonPlaceholder")}
               />
               {dropError && (
                 <p className="mt-1 text-sm text-red-600">{dropError}</p>
@@ -1122,7 +1216,7 @@ export default function EmployeeHomePage() {
                 className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
                 disabled={dropSubmitting}
               >
-                Cancel
+                {t("cancel")}
               </button>
               <button
                 type="button"
@@ -1130,7 +1224,9 @@ export default function EmployeeHomePage() {
                 className="px-4 py-2 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-60"
                 disabled={dropSubmitting}
               >
-                {dropSubmitting ? "Dropping…" : "Drop this shift"}
+                {dropSubmitting
+                  ? t("employee.home.modal.submitting")
+                  : t("employee.home.modal.confirm")}
               </button>
             </div>
           </div>
@@ -1151,31 +1247,33 @@ function defaultEmptyWeek(): DayBucket[] {
   });
 }
 
-function labelForWeek(reference: Date): string {
+function labelForWeek(reference: Date, locale?: string, prefix = "Week of"): string {
   const start = startOfWeek(reference, 0);
   const end = new Date(start);
   end.setDate(start.getDate() + 6);
-  const startLabel = start.toLocaleDateString([], {
+  const startLabel = start.toLocaleDateString(locale ?? undefined, {
     month: "long",
     day: "numeric",
   });
-  const endLabel = end.toLocaleDateString([], {
+  const endLabel = end.toLocaleDateString(locale ?? undefined, {
     month: "long",
     day: "numeric",
     year: "numeric",
   });
-  return `Week of ${startLabel} - ${endLabel}`;
+  return `${prefix} ${startLabel} - ${endLabel}`;
 }
 
 function buildBucketsFromShifts(
   rows: ShiftWithMeta[],
   assignmentByShiftId: Record<string, ShiftAssignmentRow>,
+  locale?: string,
+  shiftFallback = "Shift",
 ): DayBucket[] {
   const buckets = defaultEmptyWeek();
   for (const r of rows) {
     const s = new Date(r.shift.start_ts);
     const idx = s.getDay();
-    const roleName = r.role?.name ?? "Shift";
+    const roleName = r.role?.name ?? shiftFallback;
     const color = r.role?.color ?? null;
     const locationName = r.location?.name ?? null;
     const assignment = assignmentByShiftId[r.shift.id];
@@ -1184,8 +1282,8 @@ function buildBucketsFromShifts(
       shiftId: r.shift.id,
       assignmentId: assignment?.id ?? null,
       role: roleName,
-      start: fmtTimeLocal(r.shift.start_ts),
-      end: fmtTimeLocal(r.shift.end_ts),
+      start: fmtTimeLocal(r.shift.start_ts, locale),
+      end: fmtTimeLocal(r.shift.end_ts, locale),
       color,
       locationName,
       isDropPending: assignment?.status === "dropped",
@@ -1201,6 +1299,8 @@ function buildBucketsFromShifts(
 function buildBucketsFromTemplates(
   templates: ShiftTemplateRow[],
   weekStart: Date,
+  locale?: string,
+  typicalShiftLabel = "Typical shift",
 ): DayBucket[] {
   const buckets = defaultEmptyWeek();
   for (const t of templates) {
@@ -1223,9 +1323,15 @@ function buildBucketsFromTemplates(
       0,
     );
     buckets[t.weekday].shifts.push({
-      role: "Typical shift",
-      start: s.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
-      end: e.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+      role: typicalShiftLabel,
+      start: s.toLocaleTimeString(locale ?? undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+      }),
+      end: e.toLocaleTimeString(locale ?? undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+      }),
       color: null,
       locationName: null,
     });

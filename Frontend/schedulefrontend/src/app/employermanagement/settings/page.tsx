@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from 'react';
-import { Moon, Sun, Globe, Bell, Calendar, Clock, Eye, Type } from 'lucide-react';
+import { Moon, Sun, Globe, Bell, Calendar, Clock, Eye, Type, CheckCircle } from 'lucide-react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useI18n } from '../../../lib/i18n';
 
@@ -17,7 +17,6 @@ export default function Settings() {
     return 'light';
   });
   const { locale, setLocale, t } = useI18n();
-  const [language, setLanguage] = useState(locale);
   const [fontSize, setFontSize] = useState('medium');
   const [highContrast, setHighContrast] = useState(false);
   const [notifications, setNotifications] = useState(true);
@@ -26,6 +25,7 @@ export default function Settings() {
   const [weekStart, setWeekStart] = useState('monday');
   const [timeFormat, setTimeFormat] = useState('12h');
   const [showWeekends, setShowWeekends] = useState(true);
+  const [showToast, setShowToast] = useState(false);
 
   // Apply the initial theme to the document on mount. We initialize `theme`
   // synchronously from localStorage, so this only needs to run once.
@@ -35,6 +35,12 @@ export default function Settings() {
       else document.documentElement.classList.remove('dark');
     }
   }, []);
+
+  useEffect(() => {
+    if (!showToast) return;
+    const timer = setTimeout(() => setShowToast(false), 3200);
+    return () => clearTimeout(timer);
+  }, [showToast]);
 
   const applyThemeToDocument = (t: 'light' | 'dark') => {
     try {
@@ -72,10 +78,33 @@ export default function Settings() {
     } catch (e) {
       // ignore cookie errors in restricted environments
     }
+      setShowToast(true);
   };
 
   return (
     <div className={`min-h-screen ${theme === 'dark' ? 'bg-gray-900' : 'bg-gray-50'} transition-colors duration-200`}>
+      <div className="pointer-events-none fixed top-4 left-0 right-0 z-40 flex justify-center px-4">
+        <div
+          role="status"
+          aria-live="polite"
+          className={`pointer-events-auto flex max-w-md items-start gap-3 rounded-2xl border border-emerald-200 bg-white/95 px-4 py-3 text-sm text-emerald-900 shadow-lg backdrop-blur transition-all duration-300 dark:border-emerald-500/40 dark:bg-slate-900/90 dark:text-emerald-100 ${
+            showToast ? 'translate-y-0 opacity-100' : '-translate-y-6 opacity-0'
+          }`}
+        >
+          <CheckCircle className="mt-0.5 h-5 w-5 text-emerald-500" aria-hidden="true" />
+          <div>
+            <p className="text-sm font-semibold">{t('settings.toast.saved')}</p>
+            <p className="text-xs text-emerald-800/80 dark:text-emerald-100/70">{t('settings.toast.savedDescription')}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowToast(false)}
+            className="ml-auto text-xs font-semibold text-emerald-700 underline-offset-2 transition hover:underline dark:text-emerald-200"
+          >
+            OK
+          </button>
+        </div>
+      </div>
       <div className="max-w-4xl mx-auto p-6 space-y-8">
         <div className={`${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
           <h1 className="text-3xl font-bold mb-2">{t('title')}</h1>
@@ -148,11 +177,8 @@ export default function Settings() {
                 </div>
               </div>
               <select
-                value={language}
-                onChange={(e) => {
-                  setLanguage(e.target.value);
-                  setLocale(e.target.value);
-                }}
+                value={locale}
+                onChange={(e) => setLocale(e.target.value)}
                 className={`px-4 py-2 rounded-lg border ${
                   theme === 'dark'
                     ? 'bg-gray-700 border-gray-600 text-white'

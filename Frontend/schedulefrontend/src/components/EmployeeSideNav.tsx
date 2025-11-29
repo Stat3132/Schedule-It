@@ -14,11 +14,13 @@ import {
   LogOut,
   MessageCircle, // ← added
 } from "lucide-react";
+import { useI18n } from "../lib/i18n";
 
 export default function EmployeeSideNav() {
   const pathname = usePathname() ?? "/";
   const router = useRouter();
   const supabase = createClientComponentClient();
+  const { t } = useI18n();
 
   const navBase =
     "px-3 py-2 rounded-md flex items-center gap-3 text-sm w-full text-left";
@@ -29,38 +31,38 @@ export default function EmployeeSideNav() {
 
   const items: { label: string; href: string; icon: React.ReactNode }[] = [
     {
-      label: "Home",
+      label: t("employee.nav.home"),
       href: "/employeemanagement/employeehomepage",
       icon: <Home className="w-4 h-4" />,
     },
     {
-      label: "Entire schedule",
+      label: t("employee.nav.schedule"),
       href: "/employeemanagement/entireschedule",
       icon: <Calendar className="w-4 h-4" />,
     },
     // ← New Messages nav item
     {
-      label: "Messages",
+      label: t("employee.nav.messages"),
       href: "/employeemanagement/messages", // make sure this matches your messages page route
       icon: <MessageCircle className="w-4 h-4" />,
     },
     {
-      label: "Time Off Requests",
+      label: t("employee.nav.timeOff"),
       href: "/employeemanagement/timeoffrequest",
       icon: <Calendar className="w-4 h-4" />,
     },
     {
-      label: "Change Availability",
+      label: t("employee.nav.availability"),
       href: "/employeemanagement/changeavailability",
       icon: <Clock className="w-4 h-4" />,
     },
     {
-      label: "Announcements",
+      label: t("employee.nav.announcements"),
       href: "/employeemanagement/announcements",
       icon: <Bell className="w-4 h-4" />,
     },
     {
-      label: "Settings",
+      label: t("employee.nav.settings"),
       href: "/employeemanagement/settings",
       icon: <Settings className="w-4 h-4" />,
     },
@@ -117,7 +119,7 @@ export default function EmployeeSideNav() {
         <div className="mt-6 px-4">
           <button onClick={handleLogout} className={`${navBase} ${inactive}`}>
             <LogOut className="w-4 h-4" />
-            <span>Log out</span>
+            <span>{t("employee.nav.logout")}</span>
           </button>
         </div>
       </div>

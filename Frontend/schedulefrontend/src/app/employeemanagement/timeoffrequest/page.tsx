@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, X, Plus } from "lucide-react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { createAnnouncement } from "../../../lib/announcements";
+import { useI18n } from "../../../lib/i18n";
 
 /* ========= Types ========= */
 type UUID = string;
@@ -48,6 +49,7 @@ function normalizeToLocalDay(d: Date): Date {
 export default function TimeOffRequestsPage() {
   const supabase = createClientComponentClient();
   const router = useRouter();
+  const { t, locale } = useI18n();
 
   const [requests, setRequests] = useState<RequestVM[]>([]);
   const [showForm, setShowForm] = useState(false);
@@ -58,7 +60,9 @@ export default function TimeOffRequestsPage() {
 
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<UUID | null>(null);
-  const [displayName, setDisplayName] = useState<string>("You");
+  const [displayName, setDisplayName] = useState<string>(
+    t("employee.timeOff.currentUserFallback"),
+  );
 
   /* ----- boot ----- */
   useEffect(() => {
@@ -91,10 +95,11 @@ export default function TimeOffRequestsPage() {
 
       if (pErr) console.error("Profile load error", pErr);
 
+      const fallbackName = t("employee.timeOff.currentUserFallback");
       const name =
         (prof?.full_name && prof.full_name.trim()) ||
         (prof?.email && prof.email.trim()) ||
-        "You";
+        fallbackName;
 
       if (!cancelled) {
         setDisplayName(name);
@@ -106,7 +111,7 @@ export default function TimeOffRequestsPage() {
     return () => {
       cancelled = true;
     };
-  }, [supabase]);
+  }, [supabase, t]);
 
   /* ----- reload requests for this user ----- */
   async function reloadRequests(uid: UUID, name: string) {
@@ -221,6 +226,16 @@ export default function TimeOffRequestsPage() {
     return out;
   }, [currentMonth]);
 
+  const weekdayLabels = useMemo(() => {
+    const reference = new Date(Date.UTC(2023, 0, 1));
+    const formatter = new Intl.DateTimeFormat(locale, { weekday: "short" });
+    return Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(reference);
+      date.setUTCDate(reference.getUTCDate() + index);
+      return formatter.format(date);
+    });
+  }, [locale]);
+
   /* ----- submit ----- */
   async function submitRequest() {
     if (!startDate || !userId) return;
@@ -249,11 +264,19 @@ export default function TimeOffRequestsPage() {
 
         // Create an announcement so managers/employees see the new request
         try {
+          const reasonBlock = payloadReason
+            ? `\n\n${t("shared.labels.reason")}: ${payloadReason}`
+            : "";
           await createAnnouncement(
             supabase,
             userId,
-            `${displayName} requested time off`,
-            `Requested ${formatRange(startISO, endISO)}${payloadReason ? `\n\nReason: ${payloadReason}` : ""}`,
+            t("employee.timeOff.announcementTitle", {
+              name: displayName || t("employee.timeOff.currentUserFallback"),
+            }),
+            t("employee.timeOff.announcementBody", {
+              range: formatRange(startISO, endISO),
+              reasonBlock,
+            }),
             [] // broadcast to all roles
           );
         } catch (e) {
@@ -265,24 +288,23 @@ export default function TimeOffRequestsPage() {
       setReason("");
       setShowForm(false);
 
-      await reloadRequests(userId, displayName || "You");
+      await reloadRequests(userId, displayName || t("employee.timeOff.currentUserFallback"));
     } catch (e) {
       console.error("Submit error", e);
-      alert("Submitting time off request failed.");
+      alert(t("employee.timeOff.alert.submitError"));
     }
   }
 
   /* ----- UI helpers ----- */
   const formatRange = (startISO: string, endISO: string) => {
-    const s = new Date(startISO);
-    const e = new Date(endISO);
-    const fmt: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
-    return s.getTime() === e.getTime()
-      ? s.toLocaleDateString("en-US", fmt)
-      : `${s.toLocaleDateString("en-US", fmt)} - ${e.toLocaleDateString(
-          "en-US",
-          fmt
-        )}`;
+    const formatter = new Intl.DateTimeFormat(locale, {
+      month: "short",
+      day: "numeric",
+    });
+    const startLabel = formatter.format(new Date(startISO));
+    const endLabel = formatter.format(new Date(endISO));
+    if (startLabel === endLabel) return startLabel;
+    return `${startLabel} - ${endLabel}`;
   };
 
   const rowTint = (status: RequestVM["status"]) =>
@@ -304,7 +326,10 @@ export default function TimeOffRequestsPage() {
       : "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200 dark:border-amber-700";
 
   /* ----- render ----- */
-  if (loading) return <div className="text-center py-8">Loading...</div>;
+  if (loading)
+    return (
+      <div className="text-center py-8">{t("shared.state.loading")}</div>
+    );
 
   return (
     <div className="min-h-screen bg-background py-8">
@@ -312,19 +337,25 @@ export default function TimeOffRequestsPage() {
         <div className="mb-8 flex justify-between items-center">
           <div className="flex items-center gap-4">
             <div>
-              <h1 className="text-3xl font-bold text-foreground">Time Off Requests</h1>
-              <p className="text-foreground/70 mt-1">View and submit your own time off requests.</p>
+              <h1 className="text-3xl font-bold text-foreground">
+                {t("employee.timeOff.title")}
+              </h1>
+              <p className="text-foreground/70 mt-1">
+                {t("employee.timeOff.subtitle")}
+              </p>
 
               <div className="mt-3">
                 <label className="block text-sm font-medium text-foreground/70 mb-2">
-                  Requesting as
+                  {t("employee.timeOff.requestingAs")}
                 </label>
                 <div className="px-3 py-2 border border-border rounded-lg bg-background text-sm text-foreground">
-                  {displayName} {" "}
-                  <span className="text-foreground/60 text-xs">(current user)</span>
+                  {displayName}{" "}
+                  <span className="text-foreground/60 text-xs">
+                    {t("employee.timeOff.currentUserTag")}
+                  </span>
                 </div>
               </div>
-           A </div>
+            </div>
           </div>
 
           <div>
@@ -333,7 +364,7 @@ export default function TimeOffRequestsPage() {
               className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
             >
               <Plus className="w-4 h-4" />
-              New Request
+              {t("employee.timeOff.newRequest")}
             </button>
           </div>
         </div>
@@ -342,11 +373,12 @@ export default function TimeOffRequestsPage() {
           <div className="bg-background rounded-lg border border-border shadow-sm p-6 mb-8">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-semibold text-gray-900">
-                Create Time Off Request
+                {t("employee.timeOff.form.title")}
               </h2>
               <button
                 onClick={() => setShowForm(false)}
                 className="text-gray-400 hover:text-gray-600"
+                aria-label={t("shared.buttons.close")}
               >
                 <X className="w-5 h-5" />
               </button>
@@ -358,7 +390,7 @@ export default function TimeOffRequestsPage() {
                 <div className="mb-6">
                   <div className="flex justify-between items-center mb-4">
                     <h3 className="font-semibold text-gray-900">
-                      {currentMonth.toLocaleDateString("en-US", {
+                      {currentMonth.toLocaleDateString(locale, {
                         month: "long",
                         year: "numeric",
                       })}
@@ -395,16 +427,14 @@ export default function TimeOffRequestsPage() {
 
                   <div className="bg-background border border-border rounded-lg p-4">
                     <div className="grid grid-cols-7 gap-1 mb-3">
-                      {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
-                        (day) => (
-                          <div
-                            key={day}
-                            className="text-center text-xs font-semibold text-foreground/60 py-2"
-                          >
-                            {day}
-                          </div>
-                        )
-                      )}
+                      {weekdayLabels.map((day) => (
+                        <div
+                          key={day}
+                          className="text-center text-xs font-semibold text-foreground/60 py-2"
+                        >
+                          {day}
+                        </div>
+                      ))}
                     </div>
 
                     {weeks.map((week, i) => (
@@ -455,18 +485,20 @@ export default function TimeOffRequestsPage() {
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Requesting as
+                    {t("employee.timeOff.requestingAs")}
                   </label>
                   <div className="px-3 py-2 border border-border rounded-lg bg-background text-sm text-foreground">
                     {displayName}{" "}
-                    <span className="text-gray-500 text-xs">(current user)</span>
+                    <span className="text-gray-500 text-xs">
+                      {t("employee.timeOff.currentUserTag")}
+                    </span>
                   </div>
                 </div>
 
                 {startDate && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Date Range
+                      {t("employee.timeOff.form.dateRangeLabel")}
                     </label>
                     <div className="px-3 py-2 border border-border rounded-lg bg-background">
                       <p className="text-sm text-gray-700">
@@ -481,12 +513,12 @@ export default function TimeOffRequestsPage() {
 
                 <div>
                     <label className="block text-sm font-medium text-foreground/70 mb-2">
-                      Reason (Optional)
+                      {t("employee.timeOff.form.reasonOptional")}
                     </label>
                   <textarea
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
-                    placeholder="Vacation, sick leave, personal…"
+                    placeholder={t("employee.timeOff.form.reasonPlaceholder")}
                     className="w-full px-3 py-2 border border-border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none bg-background text-foreground"
                     rows={3}
                   />
@@ -497,14 +529,14 @@ export default function TimeOffRequestsPage() {
                     onClick={() => setShowForm(false)}
                     className="flex-1 px-4 py-2 border border-border text-foreground font-medium rounded-lg hover:bg-background/50 transition-colors"
                   >
-                    Cancel
+                    {t("employee.timeOff.form.cancel")}
                   </button>
                   <button
                     onClick={submitRequest}
                     disabled={!startDate || !userId}
                     className="flex-1 px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
                   >
-                    Submit
+                    {t("employee.timeOff.form.submit")}
                   </button>
                 </div>
               </div>
@@ -514,11 +546,13 @@ export default function TimeOffRequestsPage() {
 
         {/* Requests list */}
         <div className="space-y-3">
-          <h2 className="text-lg font-semibold text-foreground mb-4">Your Requests</h2>
+          <h2 className="text-lg font-semibold text-foreground mb-4">
+            {t("employee.timeOff.section.yourRequests")}
+          </h2>
           {requests.length === 0 ? (
             <div className="bg-background rounded-lg border border-border p-8 text-center">
               <p className="text-foreground/60">
-                You have not submitted any time off yet.
+                {t("employee.timeOff.section.empty")}
               </p>
             </div>
           ) : (
@@ -537,7 +571,7 @@ export default function TimeOffRequestsPage() {
                     </p>
                     {r.reason && (
                       <p className="text-sm text-foreground/70 mt-1">
-                        Reason: {r.reason}
+                        {t("employee.timeOff.request.reasonPrefix")} {r.reason}
                       </p>
                     )}
                   </div>
@@ -546,7 +580,7 @@ export default function TimeOffRequestsPage() {
                       r.status
                     )}`}
                   >
-                    {r.status.charAt(0).toUpperCase() + r.status.slice(1)}
+                    {t(`shared.status.${r.status}`)}
                   </span>
                 </div>
               </div>

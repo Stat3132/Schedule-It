@@ -1,6 +1,8 @@
 "use client";
 
+import { useMemo } from "react";
 import type { AvailabilityStatus, DayOfWeek } from "../../lib/supabase";
+import { useI18n } from "../../lib/i18n";
 
 interface WeekScheduleProps {
   schedule: Record<DayOfWeek, AvailabilityStatus>;
@@ -22,24 +24,15 @@ const DAYS: DayOfWeek[] = [
   "sunday",
 ];
 
-const STATUS_CONFIG: Record<
-  AvailabilityStatus,
-  { label: string; color: string; hoverColor: string }
-> = {
+const STATUS_CONFIG: Record<AvailabilityStatus, { color: string }> = {
   available: {
-    label: "Available",
     color: "bg-green-500",
-    hoverColor: "hover:bg-green-600",
   },
   partial: {
-    label: "Partial",
     color: "bg-yellow-500",
-    hoverColor: "hover:bg-yellow-600",
   },
   unavailable: {
-    label: "Unavailable",
     color: "bg-red-500",
-    hoverColor: "hover:bg-red-600",
   },
 };
 
@@ -49,9 +42,19 @@ export function WeekSchedule({
   onScheduleChange,
   onTimeRangeChange,
 }: WeekScheduleProps) {
+  const { t, locale } = useI18n();
+  const dayLabels = useMemo(() => {
+    const formatter = new Intl.DateTimeFormat(locale, { weekday: "long" });
+    const reference = new Date(Date.UTC(2023, 0, 2));
+    return DAYS.map((_, index) => {
+      const date = new Date(reference);
+      date.setUTCDate(reference.getUTCDate() + index);
+      return formatter.format(date);
+    });
+  }, [locale]);
   return (
     <div className="space-y-4">
-      {DAYS.map((day) => {
+      {DAYS.map((day, index) => {
         const status = schedule[day];
         const range = timeRanges[day] ?? { start: null, end: null };
 
@@ -59,24 +62,25 @@ export function WeekSchedule({
           <div key={day} className="flex flex-col gap-2 border-b pb-3 last:border-b-0">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-foreground capitalize w-28">
-                {day}
+                {dayLabels[index]}
               </span>
               <div className="flex gap-2">
-                {(Object.keys(STATUS_CONFIG) as AvailabilityStatus[]).map((s) => {
-                  const config = STATUS_CONFIG[s];
-                  const isSelected = status === s;
+                {(Object.keys(STATUS_CONFIG) as AvailabilityStatus[]).map((option) => {
+                  const config = STATUS_CONFIG[option];
+                  const label = t(`employee.availability.status.${option}`);
+                  const isSelected = status === option;
                   return (
                     <button
-                      key={s}
+                      key={option}
                       type="button"
-                      onClick={() => onScheduleChange(day, s)}
+                      onClick={() => onScheduleChange(day, option)}
                       className={`px-4 py-2 rounded-lg text-xs font-medium transition-all ${
                         isSelected
                           ? `${config.color} text-white`
                           : "bg-background text-foreground/70 hover:bg-background/95"
                       }`}
                     >
-                      {config.label}
+                      {label}
                     </button>
                   );
                 })}
@@ -85,7 +89,9 @@ export function WeekSchedule({
 
             {status === "partial" && (
               <div className="ml-28 flex items-center gap-3">
-                <label className="text-xs text-foreground/70">From</label>
+                <label className="text-xs text-foreground/70">
+                  {t("shared.labels.from")}
+                </label>
                 <input
                   type="time"
                   value={range.start ?? ""}
@@ -97,7 +103,9 @@ export function WeekSchedule({
                   }
                   className="border border-border rounded-md px-2 py-1 text-xs bg-transparent text-foreground"
                 />
-                <label className="text-xs text-foreground/70">to</label>
+                <label className="text-xs text-foreground/70">
+                  {t("shared.labels.to")}
+                </label>
                 <input
                   type="time"
                   value={range.end ?? ""}
