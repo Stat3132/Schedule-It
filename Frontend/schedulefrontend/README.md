@@ -29,8 +29,47 @@ To learn more about Next.js, take a look at the following resources:
 
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
-## Deploy on Vercel
+## Environment Variables
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Create a `.env.local` file (Next.js automatically loads it) with the following keys:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `NEXT_PUBLIC_SITE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY` (server-side use only)
+- `RESEND_API_KEY` / `RESEND_FROM` (email delivery)
+- `CRON_SECRET` – shared secret that authorizes the scheduled purge job to call `/api/employment/purge`.
+
+Never commit production secrets; the example values in this repo are for local development only.
+
+## Automated purge job
+
+Terminated employees remain visible for seven days. After that window, `/api/employment/purge` deletes their employment rows so they stop appearing anywhere in the product. The endpoint now requires the `x-cron-key` header to match `CRON_SECRET`.
+
+- When deploying on Vercel, the included `vercel.json` schedules a daily cron at 08:00 UTC that hits `/api/employment/purge`. Define an environment variable named `cronSecret` in your Vercel project that matches `CRON_SECRET` so the cron call is authorized.
+	- Keep the two values identical. One easy pattern is:
+
+		```bash
+		# Pick a strong secret once
+		export CRON_SHARED_SECRET="generate-a-random-string"
+
+		# Store it for the cron job header
+		vercel secrets add cronSecret "$CRON_SHARED_SECRET"
+
+		# Reuse the same value for the app env across environments
+		for env in production preview development; do
+			printf "%s" "$CRON_SHARED_SECRET" | vercel env add CRON_SECRET "$env" --force
+		done
+		```
+
+		The local `.env.local` file should use the same string so manual `curl` calls succeed.
+- If you deploy elsewhere, configure your platform’s scheduler (GitHub Actions, Azure Functions timer, Supabase cron, etc.) to issue a `POST` request to `https://<your-domain>/api/employment/purge` with the same header.
+- You can manually trigger a purge locally with:
+
+```bash
+curl -X POST \
+	-H "x-cron-key: $CRON_SECRET" \
+	http://localhost:3000/api/employment/purge
+```
+
+This ensures terminated employees lose access immediately (via `/api/employment/terminate`) and are automatically scrubbed a week later without manual cleanup.

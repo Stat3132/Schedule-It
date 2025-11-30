@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import type { SupabaseClient } from "@supabase/auth-helpers-nextjs";
 import {
@@ -25,6 +25,12 @@ import {
   ScheduleCardPayload,
   ScheduleSlot,
 } from "../../../lib/messagingCards";
+import {
+  loadReadCounts,
+  saveReadCounts,
+  saveUnreadFlag,
+  UnreadScope,
+} from "../../../lib/unreadTracker";
 
 type UUID = string;
 
@@ -76,6 +82,8 @@ type EmploymentMeta = {
   is_manager: boolean | null;
   is_admin: boolean | null;
 };
+
+const EMPLOYEE_SCOPE: UnreadScope = "employee";
 
 type TimeOffRequestSummary = {
   id: UUID;
@@ -288,6 +296,18 @@ export default function EmployeeMessagingPage() {
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [incomingCounts, setIncomingCounts] = useState<Record<string, number>>({});
   const [groupIncomingCounts, setGroupIncomingCounts] = useState<Record<string, number>>({});
+  const dmTotalsRef = useRef<Record<string, number>>({});
+  const groupTotalsRef = useRef<Record<string, number>>({});
+  const dmReadCountsRef = useRef<Record<string, number>>({});
+  const groupReadCountsRef = useRef<Record<string, number>>({});
+  const [readCountsReady, setReadCountsReady] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    dmReadCountsRef.current = loadReadCounts(EMPLOYEE_SCOPE, "dm");
+    groupReadCountsRef.current = loadReadCounts(EMPLOYEE_SCOPE, "group");
+    setReadCountsReady(true);
+  }, []);
 
   const messageEndRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -300,6 +320,52 @@ export default function EmployeeMessagingPage() {
   );
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeGroupRef = useRef<GroupChat | null>(null);
+
+  const persistDmReads = useCallback((next: Record<string, number>) => {
+    dmReadCountsRef.current = next;
+    saveReadCounts(EMPLOYEE_SCOPE, "dm", next);
+  }, []);
+
+  const persistGroupReads = useCallback((next: Record<string, number>) => {
+    groupReadCountsRef.current = next;
+    saveReadCounts(EMPLOYEE_SCOPE, "group", next);
+  }, []);
+
+  const markPeerAsRead = useCallback(
+    (peerId: UUID | null) => {
+      if (!peerId || !readCountsReady) return;
+      const latestTotal = dmTotalsRef.current[peerId] ?? 0;
+      const current = dmReadCountsRef.current[peerId] ?? 0;
+      if (current === latestTotal) return;
+      const next = { ...dmReadCountsRef.current, [peerId]: latestTotal };
+      persistDmReads(next);
+      setIncomingCounts((prev) => {
+        if (!prev[peerId]) return prev;
+        const clone = { ...prev };
+        delete clone[peerId];
+        return clone;
+      });
+    },
+    [readCountsReady, persistDmReads],
+  );
+
+  const markGroupAsRead = useCallback(
+    (groupId: UUID | null) => {
+      if (!groupId || !readCountsReady) return;
+      const latestTotal = groupTotalsRef.current[groupId] ?? 0;
+      const current = groupReadCountsRef.current[groupId] ?? 0;
+      if (current === latestTotal) return;
+      const next = { ...groupReadCountsRef.current, [groupId]: latestTotal };
+      persistGroupReads(next);
+      setGroupIncomingCounts((prev) => {
+        if (!prev[groupId]) return prev;
+        const clone = { ...prev };
+        delete clone[groupId];
+        return clone;
+      });
+    },
+    [readCountsReady, persistGroupReads],
+  );
 
   // Load current user so we can scope data queries
   useEffect(() => {
@@ -723,7 +789,9 @@ export default function EmployeeMessagingPage() {
   }, [activeGroup]);
 
   useEffect(() => {
+    if (!readCountsReady) return;
     if (!currentUserId || conversations.length === 0) {
+      dmTotalsRef.current = {};
       setIncomingCounts({});
       return;
     }
@@ -736,6 +804,7 @@ export default function EmployeeMessagingPage() {
       );
 
       if (peerIds.length === 0) {
+        dmTotalsRef.current = {};
         if (!cancelled) setIncomingCounts({});
         return;
       }
@@ -753,24 +822,45 @@ export default function EmployeeMessagingPage() {
         return;
       }
 
-      const next: Record<string, number> = {};
+      const totals: Record<string, number> = {};
+      const unread: Record<string, number> = {};
+      const occurrences: Record<string, number> = {};
       for (const row of (data ?? []) as { sender_id: string | null }[]) {
-        const senderId = row.sender_id;
-        if (senderId) {
-          next[senderId] = (next[senderId] ?? 0) + 1;
-        }
+        if (!row.sender_id) continue;
+        occurrences[row.sender_id] = (occurrences[row.sender_id] ?? 0) + 1;
       }
-      setIncomingCounts(next);
+
+      Object.entries(occurrences).forEach(([senderId, total]) => {
+        totals[senderId] = total;
+        const readCount = dmReadCountsRef.current[senderId] ?? 0;
+        const diff = total - readCount;
+        if (diff > 0) {
+          unread[senderId] = diff;
+        }
+      });
+
+      peerIds.forEach((peerId) => {
+        if (totals[peerId] === undefined) {
+          totals[peerId] = 0;
+        }
+      });
+
+      dmTotalsRef.current = totals;
+      if (!cancelled) {
+        setIncomingCounts(unread);
+      }
     }
 
     loadIncomingCounts();
     return () => {
       cancelled = true;
     };
-  }, [supabase, currentUserId, conversations]);
+  }, [supabase, currentUserId, conversations, readCountsReady]);
 
   useEffect(() => {
+    if (!readCountsReady) return;
     if (!currentUserId || groups.length === 0) {
+      groupTotalsRef.current = {};
       setGroupIncomingCounts({});
       return;
     }
@@ -780,6 +870,7 @@ export default function EmployeeMessagingPage() {
     async function loadGroupCounts() {
       const groupIds = groups.map((group) => group.id);
       if (groupIds.length === 0) {
+        groupTotalsRef.current = {};
         if (!cancelled) setGroupIncomingCounts({});
         return;
       }
@@ -797,21 +888,40 @@ export default function EmployeeMessagingPage() {
         return;
       }
 
-      const next: Record<string, number> = {};
+      const totals: Record<string, number> = {};
+      const unread: Record<string, number> = {};
+      const occurrences: Record<string, number> = {};
       for (const row of (data ?? []) as { group_id: string | null }[]) {
-        const groupId = row.group_id;
-        if (groupId) {
-          next[groupId] = (next[groupId] ?? 0) + 1;
-        }
+        if (!row.group_id) continue;
+        occurrences[row.group_id] = (occurrences[row.group_id] ?? 0) + 1;
       }
-      setGroupIncomingCounts(next);
+
+      Object.entries(occurrences).forEach(([groupId, total]) => {
+        totals[groupId] = total;
+        const readCount = groupReadCountsRef.current[groupId] ?? 0;
+        const diff = total - readCount;
+        if (diff > 0) {
+          unread[groupId] = diff;
+        }
+      });
+
+      groupIds.forEach((groupId) => {
+        if (totals[groupId] === undefined) {
+          totals[groupId] = 0;
+        }
+      });
+
+      groupTotalsRef.current = totals;
+      if (!cancelled) {
+        setGroupIncomingCounts(unread);
+      }
     }
 
     loadGroupCounts();
     return () => {
       cancelled = true;
     };
-  }, [supabase, currentUserId, groups]);
+  }, [supabase, currentUserId, groups, readCountsReady]);
 
   useEffect(() => {
     if (!currentUserId) return;
@@ -831,10 +941,21 @@ export default function EmployeeMessagingPage() {
           if (!newRow?.sender_id || newRow.sender_id === currentUserId) {
             return;
           }
-          setIncomingCounts((prev) => ({
-            ...prev,
-            [newRow.sender_id]: (prev[newRow.sender_id] ?? 0) + 1,
-          }));
+          const senderId = newRow.sender_id;
+          const existingTotal = dmTotalsRef.current[senderId] ?? dmReadCountsRef.current[senderId] ?? 0;
+          const nextTotal = existingTotal + 1;
+          dmTotalsRef.current[senderId] = nextTotal;
+          const readCount = dmReadCountsRef.current[senderId] ?? 0;
+          const unreadCount = Math.max(nextTotal - readCount, 0);
+          setIncomingCounts((prev) => {
+            if (unreadCount === 0) {
+              if (!prev[senderId]) return prev;
+              const clone = { ...prev };
+              delete clone[senderId];
+              return clone;
+            }
+            return { ...prev, [senderId]: unreadCount };
+          });
         },
       )
       .subscribe();
@@ -866,10 +987,21 @@ export default function EmployeeMessagingPage() {
           if (!groupIds.has(newRow.group_id)) {
             return;
           }
-          setGroupIncomingCounts((prev) => ({
-            ...prev,
-            [newRow.group_id]: (prev[newRow.group_id] ?? 0) + 1,
-          }));
+          const groupId = newRow.group_id;
+          const existingTotal = groupTotalsRef.current[groupId] ?? groupReadCountsRef.current[groupId] ?? 0;
+          const nextTotal = existingTotal + 1;
+          groupTotalsRef.current[groupId] = nextTotal;
+          const readCount = groupReadCountsRef.current[groupId] ?? 0;
+          const unreadCount = Math.max(nextTotal - readCount, 0);
+          setGroupIncomingCounts((prev) => {
+            if (unreadCount === 0) {
+              if (!prev[groupId]) return prev;
+              const clone = { ...prev };
+              delete clone[groupId];
+              return clone;
+            }
+            return { ...prev, [groupId]: unreadCount };
+          });
         },
       )
       .subscribe();
@@ -880,26 +1012,20 @@ export default function EmployeeMessagingPage() {
   }, [supabase, currentUserId, groups]);
 
   useEffect(() => {
-    if (!activePeer) return;
-
-    setIncomingCounts((prev) => {
-      if (!prev[activePeer.id]) return prev;
-      const next = { ...prev };
-      delete next[activePeer.id];
-      return next;
-    });
-  }, [activePeer?.id]);
+    markPeerAsRead(activePeer?.id ?? null);
+  }, [activePeer?.id, markPeerAsRead]);
 
   useEffect(() => {
-    if (!activeGroup) return;
+    markGroupAsRead(activeGroup?.id ?? null);
+  }, [activeGroup?.id, markGroupAsRead]);
 
-    setGroupIncomingCounts((prev) => {
-      if (!prev[activeGroup.id]) return prev;
-      const next = { ...prev };
-      delete next[activeGroup.id];
-      return next;
-    });
-  }, [activeGroup?.id]);
+  useEffect(() => {
+    if (!readCountsReady) return;
+    const hasUnread =
+      Object.values(incomingCounts).some((count) => count > 0) ||
+      Object.values(groupIncomingCounts).some((count) => count > 0);
+    saveUnreadFlag(EMPLOYEE_SCOPE, hasUnread);
+  }, [incomingCounts, groupIncomingCounts, readCountsReady]);
 
   const scheduleShiftFallback = useMemo(
     () => t("employee.messages.schedule.shiftFallback"),
@@ -2546,7 +2672,7 @@ export default function EmployeeMessagingPage() {
                         </p>
                       </div>
                       {incomingCount > 0 && (
-                        <span className="ml-2 inline-flex min-w-[1.5rem] justify-center rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-800 dark:bg-rose-500/20 dark:text-rose-100">
+                        <span className="ml-2 inline-flex min-w-[1.5rem] justify-center rounded-full border border-rose-300 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600 dark:border-rose-400/60 dark:text-rose-200">
                           {incomingCount > 9 ? "9+" : incomingCount}
                         </span>
                       )}
@@ -2686,7 +2812,7 @@ export default function EmployeeMessagingPage() {
                               })}
                             </span>
                             {unreadCount > 0 && (
-                              <span className="inline-flex min-w-[1.5rem] justify-center rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-800 dark:bg-rose-500/20 dark:text-rose-100">
+                              <span className="inline-flex min-w-[1.5rem] justify-center rounded-full border border-rose-300 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600 dark:border-rose-400/60 dark:text-rose-200">
                                 {unreadCount > 9 ? "9+" : unreadCount}
                               </span>
                             )}

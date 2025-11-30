@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { createAnnouncement } from "../../../lib/announcements";
@@ -141,6 +141,7 @@ type ProfileRow = {
   full_name?: string | null;
   display_name?: string | null;
   email?: string | null;
+  photo_url?: string | null;
 };
 
 type SelectedShift = {
@@ -162,6 +163,42 @@ type AnnouncementLite = {
   created_by: string;
   target_role_ids?: string[] | null;
 };
+
+const PROFILE_PHOTO_BUCKET =
+  process.env.NEXT_PUBLIC_SUPABASE_PROFILE_BUCKET ?? "profile-photos";
+const MAX_PROFILE_PHOTO_BYTES = 4 * 1024 * 1024; // 4 MB
+const PRESET_AVATARS = [
+  {
+    id: "aurora",
+    label: "Aurora",
+    url: "/avatars/aurora.svg",
+  },
+  {
+    id: "canyon",
+    label: "Canyon",
+    url: "/avatars/canyon.svg",
+  },
+  {
+    id: "harbor",
+    label: "Harbor",
+    url: "/avatars/harbor.svg",
+  },
+  {
+    id: "meadow",
+    label: "Meadow",
+    url: "/avatars/meadow.svg",
+  },
+  {
+    id: "orbit",
+    label: "Orbit",
+    url: "/avatars/orbit.svg",
+  },
+  {
+    id: "solstice",
+    label: "Solstice",
+    url: "/avatars/solstice.svg",
+  },
+] as const;
 
 // ---- Helpers ----
 function startOfWeek(d: Date, weekStartsOn: 0 | 1 = 0): Date {
@@ -281,6 +318,17 @@ export default function EmployeeHomePage() {
   } | null>(null);
   const [announcementDeleteLoading, setAnnouncementDeleteLoading] =
     useState(false);
+  const [awaitingAuthorization, setAwaitingAuthorization] = useState(false);
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [profileDisplayName, setProfileDisplayName] = useState("");
+  const [profileDescription, setProfileDescription] = useState("");
+  const [profileNeedsSetup, setProfileNeedsSetup] = useState(false);
+  const [profileSubmitting, setProfileSubmitting] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null);
+  const [selectedPresetAvatarId, setSelectedPresetAvatarId] =
+    useState<string | null>(null);
+  const [profilePhotoUploading, setProfilePhotoUploading] = useState(false);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -289,6 +337,10 @@ export default function EmployeeHomePage() {
       localStorage.removeItem("activeLocationIds");
     }
     router.replace("/");
+  };
+
+  const handleReturnToBusinessSelection = () => {
+    router.replace("/business-selection");
   };
 
   const maybeShowAnnouncementForUser = async (
@@ -416,17 +468,149 @@ export default function EmployeeHomePage() {
       minute: "2-digit",
     }).format(new Date(iso));
 
+  const handleSelectPresetAvatar = (avatarId: string, avatarUrl: string) => {
+    setSelectedPresetAvatarId(avatarId);
+    setProfilePhotoUrl(avatarUrl);
+    setProfileError(null);
+  };
+
+  const handleResetPhotoSelection = () => {
+    setSelectedPresetAvatarId(null);
+    setProfilePhotoUrl(null);
+    setProfileError(null);
+  };
+
+  const handleProfilePhotoUpload = async (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    if (!currentUserId) return;
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > MAX_PROFILE_PHOTO_BYTES) {
+      setProfileError(t("employee.home.profilePrompt.errors.photoTooLarge"));
+      event.target.value = "";
+      return;
+    }
+
+    setProfilePhotoUploading(true);
+    setProfileError(null);
+
+    try {
+      const rawExt = file.name.split(".").pop();
+      const normalizedExt = rawExt
+        ? rawExt.toLowerCase().replace(/[^a-z0-9]/g, "")
+        : null;
+      const fileExt = normalizedExt && normalizedExt.length > 0 ? normalizedExt : "jpg";
+      const filePath = `${currentUserId}/${Date.now()}.${fileExt}`;
+
+      const uploadResult = await supabase.storage
+        .from(PROFILE_PHOTO_BUCKET)
+        .upload(filePath, file, {
+          cacheControl: "3600",
+          upsert: true,
+          contentType: file.type,
+        });
+
+      if (uploadResult.error) {
+        throw uploadResult.error;
+      }
+
+      const { data: publicData } = supabase.storage
+        .from(PROFILE_PHOTO_BUCKET)
+        .getPublicUrl(filePath);
+
+      if (!publicData?.publicUrl) {
+        throw new Error("Unable to publish profile photo URL");
+      }
+
+      setProfilePhotoUrl(publicData.publicUrl);
+      setSelectedPresetAvatarId(null);
+    } catch (error) {
+      console.error("[EmployeeHome] profile photo upload failed", error);
+      const message =
+        error instanceof Error
+          ? error.message
+          : t("employee.home.profilePrompt.errors.photoUploadFailed");
+      setProfileError(message);
+    } finally {
+      setProfilePhotoUploading(false);
+      event.target.value = "";
+    }
+  };
+
+  const handleCompleteProfileCustomization = async () => {
+    if (!currentUserId) return;
+    const trimmedName = profileDisplayName.trim();
+    if (!trimmedName) {
+      setProfileError(t("employee.home.profilePrompt.errors.nameRequired"));
+      return;
+    }
+    const trimmedPhotoUrl = profilePhotoUrl?.trim();
+    if (!trimmedPhotoUrl) {
+      setProfileError(t("employee.home.profilePrompt.errors.photoRequired"));
+      return;
+    }
+
+    setProfileSubmitting(true);
+    setProfileError(null);
+    try {
+      const { error: profileErr } = await supabase
+        .from("profiles")
+        .upsert(
+          {
+            id: currentUserId,
+            display_name: trimmedName,
+            photo_url: trimmedPhotoUrl,
+          },
+          { onConflict: "id" },
+        );
+
+      if (profileErr) {
+        throw profileErr;
+      }
+
+      const { error: metadataErr } = await supabase.auth.updateUser({
+        data: {
+          profile_customized: true,
+          profile_title: profileDescription.trim() || null,
+        },
+      });
+
+      if (metadataErr) {
+        throw metadataErr;
+      }
+
+      setProfileNeedsSetup(false);
+      setProfileModalOpen(false);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : t("employee.home.profilePrompt.errors.generic");
+      setProfileError(message);
+    } finally {
+      setProfileSubmitting(false);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
+      setProfileError(null);
 
       // 1) Auth
       const { data: auth } = await supabase.auth.getUser();
-      const uid: string | undefined = auth.user?.id;
+      const user = auth.user ?? null;
+      const uid: string | undefined = user?.id;
       setCurrentUserId(uid ?? null);
       if (!uid) {
         if (!cancelled) {
+          setAwaitingAuthorization(false);
+          setEmploymentState(null);
+          setProfileNeedsSetup(false);
+          setProfileModalOpen(false);
           setDays(defaultEmptyWeek());
           setWeekLabel(labelForWeek(new Date(), locale, weekPrefix));
           setHadRealAssignments(false);
@@ -436,6 +620,45 @@ export default function EmployeeHomePage() {
         }
         return;
       }
+
+      const metadata = (user?.user_metadata ?? {}) as Record<string, unknown>;
+      const metadataProfileDone = Boolean(metadata?.profile_customized);
+      const metadataDescription =
+        typeof metadata?.profile_title === "string"
+          ? (metadata.profile_title as string)
+          : "";
+      if (!cancelled) {
+        setProfileDescription(metadataDescription);
+      }
+
+      let profileNamePrefill = "";
+      let profilePhotoPrefill: string | null = null;
+      try {
+        const { data: profileRow } = await supabase
+          .from("profiles")
+          .select("display_name,photo_url")
+          .eq("id", uid)
+          .maybeSingle();
+        profileNamePrefill = (profileRow?.display_name as string | null) ?? "";
+        profilePhotoPrefill = (profileRow?.photo_url as string | null) ?? null;
+      } catch (e) {
+        console.error("[EmployeeHome] profile prefill error", e);
+      }
+      if (!cancelled) {
+        setProfileDisplayName(profileNamePrefill);
+        const fallbackAvatar = PRESET_AVATARS[0];
+        const nextPhoto = profilePhotoPrefill ?? fallbackAvatar.url;
+        const presetMatch = profilePhotoPrefill
+          ? PRESET_AVATARS.find((avatar) => avatar.url === profilePhotoPrefill)
+          : fallbackAvatar;
+        setProfilePhotoUrl(nextPhoto);
+        setSelectedPresetAvatarId(presetMatch ? presetMatch.id : null);
+      }
+
+      const shouldPromptProfile =
+        !metadataProfileDone ||
+        profileNamePrefill.trim().length === 0 ||
+        !profilePhotoPrefill;
 
       // 2) Active employment
       const { data: emps, error: empErr } = await supabase
@@ -446,8 +669,17 @@ export default function EmployeeHomePage() {
         .eq("user_id", uid)
         .eq("status", "active");
 
-      if (empErr || !emps || emps.length === 0) {
+      if (empErr) {
+        console.error("[EmployeeHome] employment load error", empErr);
+      }
+
+      if (!emps || emps.length === 0) {
+        const awaiting = await hasPendingAccess(supabase, uid);
         if (!cancelled) {
+          setAwaitingAuthorization(awaiting);
+          setEmploymentState(null);
+          setProfileNeedsSetup(false);
+          setProfileModalOpen(false);
           setDays(defaultEmptyWeek());
           setWeekLabel(labelForWeek(new Date(), locale, weekPrefix));
           setHadRealAssignments(false);
@@ -458,7 +690,10 @@ export default function EmployeeHomePage() {
         return;
       }
       const employment: Employment = emps[0];
-      setEmploymentState(employment);
+      if (!cancelled) {
+        setEmploymentState(employment);
+        setAwaitingAuthorization(false);
+      }
 
       // 3) Week window
       const now = new Date();
@@ -663,6 +898,8 @@ export default function EmployeeHomePage() {
             setHadRealAssignments(activeShiftRows.length > 0);
             setDayFlags(flagsByIndex);
             setDroppedShifts(dropped);
+            setProfileNeedsSetup(shouldPromptProfile);
+            setProfileModalOpen(shouldPromptProfile);
             setLoading(false);
           }
           return;
@@ -708,6 +945,8 @@ export default function EmployeeHomePage() {
         setHadRealAssignments(false);
         setDayFlags(flagsByIndex);
         setDroppedShifts([]);
+        setProfileNeedsSetup(shouldPromptProfile);
+        setProfileModalOpen(shouldPromptProfile);
         setLoading(false);
       }
     })();
@@ -727,13 +966,57 @@ export default function EmployeeHomePage() {
   // When we know the current user and employment, check for announcements
   useEffect(() => {
     (async () => {
-      if (!currentUserId || !employmentState) return;
+      if (!currentUserId || !employmentState || awaitingAuthorization) return;
       await maybeShowAnnouncementForUser(currentUserId, employmentState.role_id);
     })();
-  }, [currentUserId, employmentState, supabase, t]);
+  }, [currentUserId, employmentState, supabase, t, awaitingAuthorization]);
 
   const todayIdx = new Date().getDay();
   const todayFlags = dayFlags[todayIdx];
+
+  if (awaitingAuthorization) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center px-4 py-12">
+        <div className="w-full max-w-lg rounded-2xl border border-border bg-card px-6 py-10 text-center shadow-sm">
+          <div className="mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-full bg-amber-50 text-amber-600">
+            <AlertCircle className="h-7 w-7" />
+          </div>
+          <h1 className="text-2xl font-semibold text-foreground">
+            {t("employee.home.awaitingAccess.title")}
+          </h1>
+          <p className="mt-3 text-sm text-muted-foreground">
+            {t("employee.home.awaitingAccess.body")}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t("employee.home.awaitingAccess.helper")}
+          </p>
+          <div className="mt-8 flex flex-col gap-3">
+            <button
+              type="button"
+              onClick={() => setRefreshKey((k) => k + 1)}
+              className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"
+            >
+              {t("employee.home.awaitingAccess.refresh")}
+            </button>
+            <button
+              type="button"
+              onClick={handleReturnToBusinessSelection}
+              className="w-full rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
+            >
+              {t("employee.home.awaitingAccess.selection")}
+            </button>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="w-full rounded-lg border border-destructive/40 px-4 py-2 text-sm font-medium text-destructive hover:bg-destructive/10"
+            >
+              {t("employee.home.awaitingAccess.logout")}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const loadCoworkersForDay = async (date: Date) => {
     if (!employmentState) return;
@@ -1072,6 +1355,140 @@ export default function EmployeeHomePage() {
         </section>
       </main>
 
+        {profileModalOpen && profileNeedsSetup && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4">
+            <div className="w-full max-w-2xl rounded-2xl border border-border bg-background px-6 py-8 shadow-2xl">
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-primary/80">
+                  {t("employee.home.profilePrompt.title")}
+                </p>
+                <h2 className="text-2xl font-semibold text-foreground">
+                  {t("employee.home.profilePrompt.subtitle")}
+                </h2>
+              </div>
+              <div className="mt-6 space-y-6">
+                <div>
+                  <label className="text-sm font-medium text-foreground">
+                    {t("employee.home.profilePrompt.displayNameLabel")}
+                  </label>
+                  <input
+                    type="text"
+                    value={profileDisplayName}
+                    onChange={(event) => setProfileDisplayName(event.target.value)}
+                    placeholder={t("employee.home.profilePrompt.displayNamePlaceholder")}
+                    className="mt-2 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-foreground">
+                    {t("employee.home.profilePrompt.profileLabel")}
+                  </label>
+                  <textarea
+                    value={profileDescription}
+                    onChange={(event) => setProfileDescription(event.target.value)}
+                    placeholder={t("employee.home.profilePrompt.profilePlaceholder")}
+                    className="mt-2 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    rows={2}
+                  />
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t("employee.home.profilePrompt.helper")}
+                  </p>
+                </div>
+                <div>
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium text-foreground">
+                      {t("employee.home.profilePrompt.photoLabel")}
+                    </label>
+                    <p className="text-xs text-muted-foreground">
+                      {t("employee.home.profilePrompt.photoHelper")}
+                    </p>
+                  </div>
+                  <div className="mt-4">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      {t("employee.home.profilePrompt.photoPresetLabel")}
+                    </p>
+                    <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                      {PRESET_AVATARS.map((avatar) => {
+                        const isActive = selectedPresetAvatarId === avatar.id;
+                        return (
+                          <button
+                            key={avatar.id}
+                            type="button"
+                            onClick={() => handleSelectPresetAvatar(avatar.id, avatar.url)}
+                            className={`flex flex-col items-center gap-2 rounded-xl border px-3 py-2 text-center text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${isActive ? "border-primary bg-primary/5 text-primary" : "border-border hover:border-primary/60"}`}
+                            aria-pressed={isActive}
+                          >
+                            <img
+                              src={avatar.url}
+                              alt={avatar.label}
+                              className="h-14 w-14 rounded-full border border-border object-cover"
+                              loading="lazy"
+                            />
+                            <span>{avatar.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      {t("employee.home.profilePrompt.photoUploadLabel")}
+                    </p>
+                    <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <label className="inline-flex w-full cursor-pointer items-center justify-center rounded-lg border border-dashed border-border px-4 py-2 text-sm font-semibold text-foreground shadow-sm transition hover:border-primary/60 sm:w-auto">
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="sr-only"
+                          onChange={handleProfilePhotoUpload}
+                          disabled={profilePhotoUploading}
+                        />
+                        {profilePhotoUploading
+                          ? t("employee.home.profilePrompt.photoUploading")
+                          : t("employee.home.profilePrompt.photoUploadButton")}
+                      </label>
+                      <p className="text-xs text-muted-foreground">
+                        {t("employee.home.profilePrompt.photoUploadHint")}
+                      </p>
+                    </div>
+                  </div>
+                  {profilePhotoUrl && (
+                    <div className="mt-4 flex items-center gap-3">
+                      <img
+                        src={profilePhotoUrl}
+                        alt={t("employee.home.profilePrompt.photoPreviewAlt")}
+                        className="h-16 w-16 rounded-full border border-border object-cover"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleResetPhotoSelection}
+                        className="text-xs font-semibold text-destructive hover:underline"
+                      >
+                        {t("employee.home.profilePrompt.photoRemove")}
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {profileError && (
+                  <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                    {profileError}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={handleCompleteProfileCustomization}
+                  disabled={profileSubmitting || profilePhotoUploading}
+                  className="w-full rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-70"
+                >
+                  {profileSubmitting
+                    ? t("employee.home.profilePrompt.submitting")
+                    : t("employee.home.profilePrompt.submit")}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
       {/* Announcement popup */}
       {announcementToShow && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4">
@@ -1340,4 +1757,33 @@ function buildBucketsFromTemplates(
     b.shifts.sort((a, b2) => a.start.localeCompare(b2.start));
   }
   return buckets;
+}
+
+async function hasPendingAccess(
+  supabaseClient: ReturnType<typeof createClientComponentClient>,
+  userId: string,
+): Promise<boolean> {
+  try {
+    const [{ data: pendingEmployments }, { data: pendingRequests }] =
+      await Promise.all([
+        supabaseClient
+          .from("employment")
+          .select("id")
+          .eq("user_id", userId)
+          .in("status", ["invited", "inactive", "pending"]),
+        supabaseClient
+          .from("employee_join_request")
+          .select("id")
+          .eq("requester_user_id", userId)
+          .eq("status", "pending"),
+      ]);
+
+    return (
+      (pendingEmployments?.length ?? 0) > 0 ||
+      (pendingRequests?.length ?? 0) > 0
+    );
+  } catch (error) {
+    console.error("[EmployeeHome] awaiting access lookup failed", error);
+    return false;
+  }
 }

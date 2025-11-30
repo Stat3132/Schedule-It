@@ -22,6 +22,29 @@ export default function EmployerSideNav() {
   const router = useRouter();
   const supabase = createClientComponentClient();
 
+  const BUSINESS_PLACEHOLDER = /\[businessid\]/i;
+
+  const normalizePlaceholder = (href: string) => href.replace(/\[businessId\]/g, "[businessid]");
+  const placeholderReplacement = /\[businessid\]/gi;
+
+  const resolveHref = (rawHref: string) => {
+    const normalized = normalizePlaceholder(rawHref);
+    if (!BUSINESS_PLACEHOLDER.test(normalized)) return normalized;
+
+    if (typeof window === "undefined") {
+      return normalized.replace(/\/\[businessid\]/gi, "").replace(placeholderReplacement, "");
+    }
+
+    const businessId = localStorage.getItem("activeBusinessId");
+    if (businessId && businessId.trim().length) {
+      return normalized.replace(placeholderReplacement, businessId);
+    }
+
+    // No business selected; drop the placeholder segment entirely so the user
+    // lands on the parent index page instead of a broken dynamic route.
+    return normalized.replace(/\/\[businessid\]/gi, "").replace(placeholderReplacement, "");
+  };
+
   const navBase =
     "px-3 py-2 rounded-md flex items-center gap-3 text-sm w-full text-left";
   const inactive = "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-800";
@@ -40,7 +63,7 @@ export default function EmployerSideNav() {
     },
     {
       label: "Messages",
-      href: "/employermanagement/messages", // make sure this matches your messages page route
+      href: "/employermanagement/messages",
       icon: <MessageCircle className="w-4 h-4" />,
     },
     {
@@ -65,7 +88,7 @@ export default function EmployerSideNav() {
     },
     {
       label: "User Management",
-      href: "/employermanagement/employeeinvitemanagement/[businessid]",
+      href: "/employermanagement/usermanagement/[businessid]",
       icon: <Users className="w-4 h-4" />,
     },
     {
@@ -101,22 +124,7 @@ export default function EmployerSideNav() {
               <button
                 key={it.href}
                 onClick={() => {
-                  let target = it.href;
-                  if (typeof window !== "undefined" && it.href.includes("employeeinvitemanagement")) {
-                    const biz = localStorage.getItem("activeBusinessId");
-                    if (biz && biz.length > 0) {
-                      // If the href contains a bracket placeholder like [businessid], replace it.
-                      if (/\[.+?\]/.test(target)) {
-                        target = target.replace(/\[.+?\]/, biz);
-                      } else {
-                        // otherwise append the id (avoid duplicating slashes)
-                        target = `${target.replace(/\/+$/g, "")}/${biz}`;
-                      }
-                    } else {
-                      // No active business: remove any bracket placeholder so we go to the listing
-                      target = target.replace(/\/?\[.+?\]/, "");
-                    }
-                  }
+                  const target = resolveHref(it.href);
                   router.push(target);
                 }}
                 className={`${navBase} ${isActive ? active : inactive}`}

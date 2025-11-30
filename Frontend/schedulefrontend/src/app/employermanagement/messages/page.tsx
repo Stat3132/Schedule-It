@@ -3,7 +3,7 @@
 "use client";
 
 import type React from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import type { SupabaseClient } from "@supabase/auth-helpers-nextjs";
 import {
@@ -24,6 +24,13 @@ import {
   parseScheduleCard,
   ScheduleCardPayload,
 } from "../../../lib/messagingCards";
+import {
+  loadReadCounts,
+  saveReadCounts,
+  saveUnreadFlag,
+  UnreadScope,
+} from "../../../lib/unreadTracker";
+import { group } from "console";
 
 const DECISION_FEEDBACK_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_SHIFT_START = "09:00";
@@ -110,6 +117,8 @@ type DMConversation = {
   peer: Profile;
   lastMessage: MessageRow | null;
 };
+
+const EMPLOYER_SCOPE: UnreadScope = "employer";
 
 type GroupChat = {
   id: UUID;
@@ -221,6 +230,18 @@ export default function EmployerMessagingPage() {
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [incomingCounts, setIncomingCounts] = useState<Record<string, number>>({});
   const [groupIncomingCounts, setGroupIncomingCounts] = useState<Record<string, number>>({});
+  const dmTotalsRef = useRef<Record<string, number>>({});
+  const groupTotalsRef = useRef<Record<string, number>>({});
+  const dmReadCountsRef = useRef<Record<string, number>>({});
+  const groupReadCountsRef = useRef<Record<string, number>>({});
+  const [readCountsReady, setReadCountsReady] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    dmReadCountsRef.current = loadReadCounts(EMPLOYER_SCOPE, "dm");
+    groupReadCountsRef.current = loadReadCounts(EMPLOYER_SCOPE, "group");
+    setReadCountsReady(true);
+  }, []);
 
   const messageEndRef = useRef<HTMLDivElement | null>(null);
   const channelRef = useRef<ReturnType<SupabaseClient['channel']> | null>(null);
@@ -230,6 +251,52 @@ export default function EmployerMessagingPage() {
   const actionMenuPanelRef = useRef<HTMLDivElement | null>(null);
   const addContactAnchorRef = useRef<HTMLButtonElement | null>(null);
   const addContactPanelRef = useRef<HTMLDivElement | null>(null);
+
+  const persistDmReads = useCallback((next: Record<string, number>) => {
+    dmReadCountsRef.current = next;
+    saveReadCounts(EMPLOYER_SCOPE, "dm", next);
+  }, []);
+
+  const persistGroupReads = useCallback((next: Record<string, number>) => {
+    groupReadCountsRef.current = next;
+    saveReadCounts(EMPLOYER_SCOPE, "group", next);
+  }, []);
+
+  const markPeerAsRead = useCallback(
+    (peerId: UUID | null) => {
+      if (!peerId || !readCountsReady) return;
+      const latestTotal = dmTotalsRef.current[peerId] ?? 0;
+      const current = dmReadCountsRef.current[peerId] ?? 0;
+      if (current === latestTotal) return;
+      const next = { ...dmReadCountsRef.current, [peerId]: latestTotal };
+      persistDmReads(next);
+      setIncomingCounts((prev) => {
+        if (!prev[peerId]) return prev;
+        const clone = { ...prev };
+        delete clone[peerId];
+        return clone;
+      });
+    },
+    [readCountsReady, persistDmReads],
+  );
+
+  const markGroupAsRead = useCallback(
+    (groupId: UUID | null) => {
+      if (!groupId || !readCountsReady) return;
+      const latestTotal = groupTotalsRef.current[groupId] ?? 0;
+      const current = groupReadCountsRef.current[groupId] ?? 0;
+      if (current === latestTotal) return;
+      const next = { ...groupReadCountsRef.current, [groupId]: latestTotal };
+      persistGroupReads(next);
+      setGroupIncomingCounts((prev) => {
+        if (!prev[groupId]) return prev;
+        const clone = { ...prev };
+        delete clone[groupId];
+        return clone;
+      });
+    },
+    [readCountsReady, persistGroupReads],
+  );
 
   // Scroll chat to bottom whenever messages change
   useEffect(() => {
@@ -243,7 +310,25 @@ export default function EmployerMessagingPage() {
   }, [activeGroup]);
 
   useEffect(() => {
+    markPeerAsRead(activePeer?.id ?? null);
+  }, [activePeer?.id, markPeerAsRead]);
+
+  useEffect(() => {
+    markGroupAsRead(activeGroup?.id ?? null);
+  }, [activeGroup?.id, markGroupAsRead]);
+
+  useEffect(() => {
+    if (!readCountsReady) return;
+    const hasUnread =
+      Object.values(incomingCounts).some((count) => count > 0) ||
+      Object.values(groupIncomingCounts).some((count) => count > 0);
+    saveUnreadFlag(EMPLOYER_SCOPE, hasUnread);
+  }, [incomingCounts, groupIncomingCounts, readCountsReady]);
+
+  useEffect(() => {
+    if (!readCountsReady) return;
     if (!currentUserId || conversations.length === 0) {
+      dmTotalsRef.current = {};
       setIncomingCounts({});
       return;
     }
@@ -256,6 +341,7 @@ export default function EmployerMessagingPage() {
       );
 
       if (peerIds.length === 0) {
+        dmTotalsRef.current = {};
         if (!cancelled) setIncomingCounts({});
         return;
       }
@@ -273,23 +359,45 @@ export default function EmployerMessagingPage() {
         return;
       }
 
-      const next: Record<string, number> = {};
-      for (const row of (data ?? []) as Array<{ sender_id: string }>) {
-        if (row.sender_id) {
-          next[row.sender_id] = (next[row.sender_id] ?? 0) + 1;
-        }
+      const totals: Record<string, number> = {};
+      const unread: Record<string, number> = {};
+      const occurrences: Record<string, number> = {};
+
+      for (const row of (data ?? []) as { sender_id: string | null }[]) {
+        if (!row.sender_id) continue;
+        occurrences[row.sender_id] = (occurrences[row.sender_id] ?? 0) + 1;
       }
-      setIncomingCounts(next);
+
+      Object.entries(occurrences).forEach(([senderId, total]) => {
+        totals[senderId] = total;
+        const readCount = dmReadCountsRef.current[senderId] ?? 0;
+        const diff = total - readCount;
+        if (diff > 0) {
+          unread[senderId] = diff;
+        }
+      });
+      peerIds.forEach((peerId) => {
+        if (totals[peerId] === undefined) {
+          totals[peerId] = 0;
+        }
+      });
+
+      dmTotalsRef.current = totals;
+      if (!cancelled) {
+        setIncomingCounts(unread);
+      }
     }
 
     loadIncomingCounts();
     return () => {
       cancelled = true;
     };
-  }, [supabase, currentUserId, conversations]);
+  }, [supabase, currentUserId, conversations, readCountsReady]);
 
   useEffect(() => {
+    if (!readCountsReady) return;
     if (!currentUserId || groups.length === 0) {
+      groupTotalsRef.current = {};
       setGroupIncomingCounts({});
       return;
     }
@@ -299,10 +407,10 @@ export default function EmployerMessagingPage() {
     async function loadGroupCounts() {
       const groupIds = groups.map((group) => group.id);
       if (groupIds.length === 0) {
+        groupTotalsRef.current = {};
         if (!cancelled) setGroupIncomingCounts({});
         return;
       }
-
       const { data, error } = await supabase
         .from("group_message")
         .select("group_id")
@@ -316,20 +424,41 @@ export default function EmployerMessagingPage() {
         return;
       }
 
-      const next: Record<string, number> = {};
-      for (const row of (data ?? []) as Array<{ group_id: string | null }>) {
-        if (row.group_id) {
-          next[row.group_id] = (next[row.group_id] ?? 0) + 1;
-        }
+      const totals: Record<string, number> = {};
+      const unread: Record<string, number> = {};
+      const occurrences: Record<string, number> = {};
+
+      for (const row of (data ?? []) as { group_id: string | null }[]) {
+        if (!row.group_id) continue;
+        occurrences[row.group_id] = (occurrences[row.group_id] ?? 0) + 1;
       }
-      setGroupIncomingCounts(next);
+
+      Object.entries(occurrences).forEach(([groupId, total]) => {
+        totals[groupId] = total;
+        const readCount = groupReadCountsRef.current[groupId] ?? 0;
+        const diff = total - readCount;
+        if (diff > 0) {
+          unread[groupId] = diff;
+        }
+      });
+
+      groupIds.forEach((groupId) => {
+        if (totals[groupId] === undefined) {
+          totals[groupId] = 0;
+        }
+      });
+
+      groupTotalsRef.current = totals;
+      if (!cancelled) {
+        setGroupIncomingCounts(unread);
+      }
     }
 
     loadGroupCounts();
     return () => {
       cancelled = true;
     };
-  }, [supabase, currentUserId, groups]);
+  }, [supabase, currentUserId, groups, readCountsReady]);
 
   useEffect(() => {
     if (!currentUserId) return;
@@ -349,10 +478,21 @@ export default function EmployerMessagingPage() {
           if (!newRow?.sender_id || newRow.sender_id === currentUserId) {
             return;
           }
-          setIncomingCounts((prev) => ({
-            ...prev,
-            [newRow.sender_id]: (prev[newRow.sender_id] ?? 0) + 1,
-          }));
+          const senderId = newRow.sender_id;
+          const existingTotal = dmTotalsRef.current[senderId] ?? dmReadCountsRef.current[senderId] ?? 0;
+          const nextTotal = existingTotal + 1;
+          dmTotalsRef.current[senderId] = nextTotal;
+          const readCount = dmReadCountsRef.current[senderId] ?? 0;
+          const unreadCount = Math.max(nextTotal - readCount, 0);
+          setIncomingCounts((prev) => {
+            if (unreadCount === 0) {
+              if (!prev[senderId]) return prev;
+              const clone = { ...prev };
+              delete clone[senderId];
+              return clone;
+            }
+            return { ...prev, [senderId]: unreadCount };
+          });
         },
       )
       .subscribe();
@@ -384,10 +524,21 @@ export default function EmployerMessagingPage() {
           if (!groupIds.has(newRow.group_id)) {
             return;
           }
-          setGroupIncomingCounts((prev) => ({
-            ...prev,
-            [newRow.group_id]: (prev[newRow.group_id] ?? 0) + 1,
-          }));
+          const groupId = newRow.group_id;
+          const existingTotal = groupTotalsRef.current[groupId] ?? groupReadCountsRef.current[groupId] ?? 0;
+          const nextTotal = existingTotal + 1;
+          groupTotalsRef.current[groupId] = nextTotal;
+          const readCount = groupReadCountsRef.current[groupId] ?? 0;
+          const unreadCount = Math.max(nextTotal - readCount, 0);
+          setGroupIncomingCounts((prev) => {
+            if (unreadCount === 0) {
+              if (!prev[groupId]) return prev;
+              const clone = { ...prev };
+              delete clone[groupId];
+              return clone;
+            }
+            return { ...prev, [groupId]: unreadCount };
+          });
         },
       )
       .subscribe();
@@ -396,28 +547,6 @@ export default function EmployerMessagingPage() {
       supabase.removeChannel(channel);
     };
   }, [supabase, currentUserId, groups]);
-
-  useEffect(() => {
-    if (!activePeer) return;
-
-    setIncomingCounts((prev) => {
-      if (!prev[activePeer.id]) return prev;
-      const next = { ...prev };
-      delete next[activePeer.id];
-      return next;
-    });
-  }, [activePeer?.id]);
-
-  useEffect(() => {
-    if (!activeGroup) return;
-
-    setGroupIncomingCounts((prev) => {
-      if (!prev[activeGroup.id]) return prev;
-      const next = { ...prev };
-      delete next[activeGroup.id];
-      return next;
-    });
-  }, [activeGroup?.id]);
 
   // Load current user
   useEffect(() => {
@@ -2168,7 +2297,7 @@ export default function EmployerMessagingPage() {
                         </p>
                       </div>
                       {incomingCount > 0 && (
-                        <span className="ml-2 inline-flex min-w-[1.5rem] justify-center rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-800 dark:bg-rose-500/20 dark:text-rose-100">
+                        <span className="ml-2 inline-flex min-w-[1.5rem] justify-center rounded-full border border-rose-300 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600 dark:border-rose-400/60 dark:text-rose-200">
                           {incomingCount > 9 ? "9+" : incomingCount}
                         </span>
                       )}
@@ -2295,7 +2424,7 @@ export default function EmployerMessagingPage() {
                               {group.memberIds.length} members
                             </span>
                             {unreadCount > 0 && (
-                              <span className="inline-flex min-w-[1.5rem] justify-center rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-800 dark:bg-rose-500/20 dark:text-rose-100">
+                              <span className="inline-flex min-w-[1.5rem] justify-center rounded-full border border-rose-300 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600 dark:border-rose-400/60 dark:text-rose-200">
                                 {unreadCount > 9 ? "9+" : unreadCount}
                               </span>
                             )}

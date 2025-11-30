@@ -1,0 +1,11 @@
+{
+  "crons": [
+    {
+      "path": "/api/employment/purge",
+      "schedule": "0 8 * * *",
+      "headers": {
+        "x-cron-key": "@cronSecret"
+      }
+    }
+  ]
+}

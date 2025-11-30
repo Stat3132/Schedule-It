@@ -15,6 +15,7 @@ const KINDS: DocKind[] = ["articles","license","cp575","147c","lease","auth_lett
 
 type BusinessRow = {
   id: string;
+  name: string | null;
   legal_name: string | null;
   jurisdiction: string | null;
   state_entity_no: string | null;
@@ -47,6 +48,7 @@ export default function BusinessDocumentationPage() {
   const [biz, setBiz] = useState<BusinessRow | null>(null);
   const [docs, setDocs] = useState<BusinessDocRow[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [businessName, setBusinessName] = useState<string>("");
 
   // form state
   const [legal, setLegal] = useState<{ legal_name: string; jurisdiction: string; state_entity_no: string; domain: string }>({
@@ -78,12 +80,13 @@ export default function BusinessDocumentationPage() {
     setLoading(true); setErr(null);
     const { data: b, error: be } = await supabase
       .from("business")
-      .select("id, legal_name, jurisdiction, state_entity_no, domain, verification_status")
+      .select("id, name, legal_name, jurisdiction, state_entity_no, domain, verification_status")
       .eq("id", businessId).single();  // single() since id is PK
     if (!alive) return;
     if (be) { setErr(be.message); setLoading(false); return; }
 
     setBiz(b);
+    setBusinessName(b.name ?? "");
     setLegal({
       legal_name: b.legal_name ?? "",
       jurisdiction: b.jurisdiction ?? "",
@@ -105,11 +108,19 @@ export default function BusinessDocumentationPage() {
 
   const saveLegal = async (): Promise<void> => {
     setErr(null);
+    const payload = {
+      ...legal,
+      name: businessName.trim() || null,
+    };
     const { error } = await supabase
       .from("business")
-      .update(legal)
+      .update(payload)
       .eq("id", businessId);
-    if (error) setErr(error.message);
+    if (error) {
+      setErr(error.message);
+    } else {
+      setBiz((prev) => (prev ? { ...prev, ...payload } : prev));
+    }
   };
 
   const setEinRpc = async (): Promise<void> => {
@@ -170,6 +181,9 @@ const uploadDoc = async (): Promise<void> => {
         <div>
           <h1 className="text-2xl font-semibold">Business documents</h1>
           <p className="text-sm text-muted-foreground">Provide legal data and upload supporting files.</p>
+          {businessName && (
+            <p className="text-sm text-foreground mt-1">Current name: <span className="font-medium">{businessName}</span></p>
+          )}
         </div>
         <div className="text-right">
           <div className="text-xs">Business ID</div>
@@ -191,6 +205,15 @@ const uploadDoc = async (): Promise<void> => {
       <section className="space-y-3 border rounded-lg p-4">
         <h2 className="font-medium">Business info</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <label className="grid gap-1 text-sm md:col-span-2">
+            <span>Business name (displayed to your team)</span>
+            <input
+              className="border rounded p-2"
+              value={businessName}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setBusinessName(e.target.value)}
+              placeholder="Acme Corp"
+            />
+          </label>
           <label className="grid gap-1 text-sm">
             <span>Legal name</span>
             <input
