@@ -2,8 +2,10 @@
 
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import type { SupabaseClient } from "@supabase/auth-helpers-nextjs";
+import type { PostgrestError } from "@supabase/supabase-js";
 import {
   BellRing,
   CalendarDays,
@@ -16,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { useI18n } from "../../../lib/i18n";
+import { ConversationSkeleton } from "@/components/messages/ConversationSkeleton";
 import {
   encodeForwardCard,
   encodeScheduleCard,
@@ -36,9 +39,11 @@ type UUID = string;
 
 type Profile = {
   id: UUID;
+  display_name: string | null;
   full_name: string | null;
   email: string | null;
   photo_url: string | null;
+  profile_title?: string | null;
 };
 
 type MessageRow = {
@@ -84,6 +89,16 @@ type EmploymentMeta = {
 };
 
 const EMPLOYEE_SCOPE: UnreadScope = "employee";
+
+const PROFILE_SELECT_WITH_TITLE =
+  "id, display_name, full_name, email, photo_url, profile_title";
+const PROFILE_SELECT_FALLBACK = "id, display_name, full_name, email, photo_url";
+
+function isMissingProfileColumn(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const code = (error as PostgrestError).code;
+  return code === "42703";
+}
 
 type TimeOffRequestSummary = {
   id: UUID;
@@ -216,6 +231,65 @@ function groupChannelName(groupId: UUID) {
   return `group:${groupId}`;
 }
 
+function profileDisplayName(profile?: Profile | null, fallback?: string) {
+  const display = profile?.display_name?.trim();
+  if (display) return display;
+  const full = profile?.full_name?.trim();
+  if (full) return full;
+  const email = profile?.email?.trim();
+  if (email) return email;
+  const fallbackValue = fallback?.trim();
+  return fallbackValue && fallbackValue.length ? fallbackValue : "";
+}
+
+function profileInitials(profile?: Profile | null) {
+  const fallback = profile?.email ?? "?";
+  const source = profileDisplayName(profile, fallback).trim() || fallback;
+  if (!source) return "?";
+  const parts = source.split(/\s+/).slice(0, 2);
+  const chars = parts
+    .map(part => (part[0] ?? "").toUpperCase())
+    .join("");
+  return chars || "?";
+}
+
+function AvatarCircle({
+  profile,
+  sizeClass = "h-8 w-8",
+  className = "",
+}: {
+  profile: Profile | null;
+  sizeClass?: string;
+  className?: string;
+}) {
+  const initials = profileInitials(profile);
+  const avatarUrl = profile?.photo_url?.trim() ? profile.photo_url : null;
+  const alt = profileDisplayName(profile, profile?.email ?? "Profile photo") || "Profile photo";
+  return (
+    <div
+      className={[
+        "relative flex items-center justify-center rounded-full border border-border/60 bg-muted/40 text-[11px] font-semibold text-foreground/80 overflow-hidden",
+        sizeClass,
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      {avatarUrl ? (
+        <Image
+          src={avatarUrl}
+          alt={`${alt} avatar`}
+          fill
+          sizes="64px"
+          className="object-cover"
+        />
+      ) : (
+        initials
+      )}
+    </div>
+  );
+}
+
 function isMissingRelationError(err: unknown, table: string) {
   if (!err || typeof err !== "object") {
     return false;
@@ -253,6 +327,7 @@ export default function EmployeeMessagingPage() {
     >
   >({});
   const [contacts, setContacts] = useState<Profile[]>([]);
+  const [selfProfile, setSelfProfile] = useState<Profile | null>(null);
   const [conversations, setConversations] = useState<DMConversation[]>([]);
   const [activePeer, setActivePeer] = useState<Profile | null>(null);
   const [activeGroup, setActiveGroup] = useState<GroupChat | null>(null);
@@ -435,6 +510,77 @@ export default function EmployeeMessagingPage() {
     };
   }, [supabase, currentUserId]);
 
+  useEffect(() => {
+    if (!currentUserId) {
+      setSelfProfile(null);
+      return;
+    }
+
+    const userId = currentUserId;
+
+    let cancelled = false;
+
+    async function loadSelfProfile() {
+      const response = await supabase
+        .from("profiles")
+        .select(PROFILE_SELECT_WITH_TITLE)
+        .eq("id", currentUserId)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      let profileRow = response.data as Profile | null;
+      let profileError = response.error;
+
+      if (profileError && isMissingProfileColumn(profileError)) {
+        const fallback = await supabase
+          .from("profiles")
+          .select(PROFILE_SELECT_FALLBACK)
+          .eq("id", currentUserId)
+          .maybeSingle();
+
+        if (cancelled) return;
+
+        profileRow = fallback.data as Profile | null;
+        profileError = fallback.error;
+      }
+
+      if (profileError) {
+        console.error("Error loading self profile:", profileError);
+        setSelfProfile({
+          id: userId,
+          display_name: null,
+          full_name: null,
+          email: null,
+          photo_url: null,
+          profile_title: null,
+        });
+        return;
+      }
+
+      if (profileRow) {
+        setSelfProfile({
+          ...profileRow,
+          profile_title: profileRow.profile_title ?? null,
+        });
+      } else {
+        setSelfProfile({
+          id: userId,
+          display_name: null,
+          full_name: null,
+          email: null,
+          photo_url: null,
+          profile_title: null,
+        });
+      }
+    }
+
+    loadSelfProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, currentUserId]);
+
   // Load role/location lookups for the active business
   useEffect(() => {
     if (!businessId) {
@@ -524,13 +670,33 @@ export default function EmployeeMessagingPage() {
 
       let profiles: Profile[] = [];
       if (coworkerIds.length > 0) {
-        const { data: profileData, error: profileError } = await supabase
+        const response = await supabase
           .from("profiles")
-          .select("id, full_name, email, photo_url")
+          .select(PROFILE_SELECT_WITH_TITLE)
           .in("id", coworkerIds);
 
-        if (!profileError && profileData) {
-          profiles = profileData as Profile[];
+        if (cancelled) return;
+
+        let profileRows = response.data as Profile[] | null;
+        let profileError = response.error;
+
+        if (profileError && isMissingProfileColumn(profileError)) {
+          const fallback = await supabase
+            .from("profiles")
+            .select(PROFILE_SELECT_FALLBACK)
+            .in("id", coworkerIds);
+
+          if (cancelled) return;
+
+          profileRows = fallback.data as Profile[] | null;
+          profileError = fallback.error;
+        }
+
+        if (!profileError && profileRows) {
+          profiles = profileRows.map((row) => ({
+            ...row,
+            profile_title: row.profile_title ?? null,
+          }));
         } else if (profileError) {
           console.error("Error loading coworker profiles:", profileError);
         }
@@ -1383,6 +1549,18 @@ export default function EmployeeMessagingPage() {
 
     if (activePeer) {
       const channelName = dmChannelName(currentUserId, activePeer.id);
+
+      const appendIncomingDm = (incoming: MessageRow) => {
+        const participants = [incoming.sender_id, incoming.recipient_id];
+        if (!participants.includes(currentUserId) || !participants.includes(activePeer.id)) {
+          return;
+        }
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === incoming.id)) return prev;
+          return [...prev, { ...incoming, kind: "dm" }];
+        });
+      };
+
       const channel = supabase
         .channel(channelName)
         .on(
@@ -1394,28 +1572,11 @@ export default function EmployeeMessagingPage() {
           },
           (payload) => {
             const newRow = payload.new as MessageRow;
-            const ids = [newRow.sender_id, newRow.recipient_id];
-            if (!ids.includes(currentUserId) || !ids.includes(activePeer.id)) {
-              return;
-            }
-            setMessages((prev) => {
-              if (prev.some((m) => m.id === newRow.id)) return prev;
-              return [...prev, { ...newRow, kind: "dm" }];
-            });
-          }
+            appendIncomingDm(newRow);
+          },
         )
         .on("broadcast", { event: "message" }, ({ payload }) => {
-          const incoming = payload as MessageRow;
-          const participants = [incoming.sender_id, incoming.recipient_id];
-
-          if (!participants.includes(currentUserId) || !participants.includes(activePeer.id)) {
-            return;
-          }
-
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === incoming.id)) return prev;
-            return [...prev, { ...incoming, kind: "dm" }];
-          });
+          appendIncomingDm(payload as MessageRow);
         })
         .on("broadcast", { event: "typing" }, ({ payload }) => {
           const { senderId } = payload as { senderId: UUID };
@@ -1427,7 +1588,7 @@ export default function EmployeeMessagingPage() {
           }
           typingTimeoutRef.current = setTimeout(
             () => setIsPeerTyping(false),
-            3000
+            3000,
           );
         })
         .subscribe();
@@ -1449,6 +1610,14 @@ export default function EmployeeMessagingPage() {
 
     if (activeGroup) {
       const channelName = groupChannelName(activeGroup.id);
+
+      const appendIncomingGroup = (incoming: GroupMessageRow) => {
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === incoming.id)) return prev;
+          return [...prev, { ...incoming, kind: "group" }];
+        });
+      };
+
       const channel = supabase
         .channel(channelName)
         .on(
@@ -1461,11 +1630,8 @@ export default function EmployeeMessagingPage() {
           },
           (payload) => {
             const newRow = payload.new as GroupMessageRow;
-            setMessages((prev) => {
-              if (prev.some((m) => m.id === newRow.id)) return prev;
-              return [...prev, { ...newRow, kind: "group" }];
-            });
-          }
+            appendIncomingGroup(newRow);
+          },
         )
         .subscribe();
 
@@ -1480,7 +1646,7 @@ export default function EmployeeMessagingPage() {
     }
 
     return undefined;
-  }, [supabase, currentUserId, activePeer?.id, activeGroup?.id]);
+  }, [supabase, currentUserId, activePeer, activeGroup, t]);
 
   useEffect(() => {
     if (!messages.length) {
@@ -1596,11 +1762,11 @@ export default function EmployeeMessagingPage() {
 
   const activePeerDisplayName = useMemo(() => {
     if (!activePeer) return null;
-    return (
-      activePeer.full_name ||
-      activePeer.email ||
-      t("employee.messages.conversationFallback")
+    const resolved = profileDisplayName(
+      activePeer,
+      t("employee.messages.conversationFallback"),
     );
+    return resolved || t("employee.messages.conversationFallback");
   }, [activePeer, t]);
 
   const activePeerRole = useMemo(() => {
@@ -1617,8 +1783,12 @@ export default function EmployeeMessagingPage() {
     return locationLookup[meta.location_id] ?? null;
   }, [activePeer, employmentMetaByUserId, locationLookup]);
 
+  const activePeerBio = activePeer?.profile_title ?? null;
+
   const activePeerSummary = useMemo(() => {
     if (!activePeerDisplayName) return null;
+    const explicitBio = activePeerBio?.trim();
+    if (explicitBio) return explicitBio;
     const roleLabel =
       activePeerRole ?? t("employee.messages.conversation.roleFallback");
     const locationLabel =
@@ -1632,6 +1802,7 @@ export default function EmployeeMessagingPage() {
     activePeerDisplayName,
     activePeerRole,
     activePeerLocation,
+    activePeerBio,
     t,
   ]);
 
@@ -1698,7 +1869,7 @@ export default function EmployeeMessagingPage() {
     const query = addContactSearch.trim().toLowerCase();
     if (!query) return unaddedContacts;
     return unaddedContacts.filter((profile) => {
-      const haystack = `${profile.full_name ?? ""} ${profile.email ?? ""}`.toLowerCase();
+      const haystack = `${profileDisplayName(profile, "")} ${profile.email ?? ""}`.toLowerCase();
       return haystack.includes(query);
     });
   }, [unaddedContacts, addContactSearch]);
@@ -1713,17 +1884,21 @@ export default function EmployeeMessagingPage() {
       map.set(profile.id, profile);
     });
 
-    if (currentUserId && !map.has(currentUserId)) {
+    if (selfProfile) {
+      map.set(selfProfile.id, selfProfile);
+    } else if (currentUserId && !map.has(currentUserId)) {
       map.set(currentUserId, {
         id: currentUserId,
+        display_name: t("employee.messages.youLabel"),
         full_name: t("employee.messages.youLabel"),
         email: null,
         photo_url: null,
+        profile_title: null,
       });
     }
 
     return map;
-  }, [contacts, currentUserId, t]);
+  }, [contacts, currentUserId, selfProfile, t]);
 
   const ScheduleCardBlock = ({
     payload,
@@ -2496,11 +2671,11 @@ export default function EmployeeMessagingPage() {
   const headerTitle = useMemo(() => {
     if (activeGroup) return activeGroup.name;
     if (activePeer) {
-      return (
-        activePeer.full_name ||
-        activePeer.email ||
-        t("employee.messages.conversationFallback")
+      const resolved = profileDisplayName(
+        activePeer,
+        t("employee.messages.conversationFallback"),
       );
+      return resolved || t("employee.messages.conversationFallback");
     }
     return t("employee.messages.title");
   }, [activeGroup, activePeer, t]);
@@ -2608,7 +2783,10 @@ export default function EmployeeMessagingPage() {
                               className="w-full rounded-md px-2 py-1 text-left text-xs transition hover:bg-muted"
                             >
                               <span className="block font-semibold">
-                                {profile.full_name || profile.email || t("employee.messages.directAddFallback")}
+                                {profileDisplayName(
+                                  profile,
+                                  t("employee.messages.directAddFallback"),
+                                ) || t("employee.messages.directAddFallback")}
                               </span>
                               <span className="block text-[10px] text-muted-foreground">
                                 {profile.email || t("employee.messages.unknownEmail")}
@@ -2636,16 +2814,8 @@ export default function EmployeeMessagingPage() {
             <ul className="space-y-1 pb-3">
               {conversations.map((conv) => {
                 const isActive = !activeGroup && activePeer?.id === conv.peer.id;
-                const initials =
-                  conv.peer.full_name
-                    ?.split(" ")
-                    .map((n) => n[0])
-                    .join("")
-                    .slice(0, 2)
-                    .toUpperCase() ||
-                  conv.peer.email?.[0]?.toUpperCase() ||
-                  "?";
                 const incomingCount = incomingCounts[conv.peer.id] ?? 0;
+                const peerProfile = conv.peer ?? null;
 
                 return (
                   <li key={conv.peer.id}>
@@ -2659,12 +2829,13 @@ export default function EmployeeMessagingPage() {
                           : "hover:bg-muted",
                       ].join(" ")}
                     >
-                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold">
-                        {initials}
-                      </div>
+                      <AvatarCircle profile={peerProfile} sizeClass="h-8 w-8 shrink-0" />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-xs font-medium">
-                          {conv.peer.full_name || conv.peer.email}
+                          {profileDisplayName(
+                            conv.peer,
+                            t("employee.messages.conversationFallback"),
+                          )}
                         </p>
                         <p className="line-clamp-1 text-[11px] text-muted-foreground">
                           {conv.lastMessage?.content ||
@@ -2736,7 +2907,10 @@ export default function EmployeeMessagingPage() {
                           onChange={() => toggleGroupDraftMember(profile.id)}
                         />
                         <span className="truncate">
-                          {profile.full_name || profile.email || t("employee.messages.directAddFallback")}
+                          {profileDisplayName(
+                            profile,
+                            t("employee.messages.directAddFallback"),
+                          ) || t("employee.messages.directAddFallback")}
                         </span>
                       </label>
                     ))
@@ -2780,7 +2954,12 @@ export default function EmployeeMessagingPage() {
                       if (profile.id === currentUserId) {
                         return t("employee.messages.youLabel");
                       }
-                      return profile.full_name || profile.email;
+                      return (
+                        profileDisplayName(
+                          profile,
+                          t("employee.messages.groups.unknownMember"),
+                        ) || t("employee.messages.groups.unknownMember")
+                      );
                     })
                     .filter(Boolean) as string[];
                   const previewNames = memberNames.slice(0, 3).join(", ");
@@ -2833,7 +3012,7 @@ export default function EmployeeMessagingPage() {
       </aside>
 
       {/* Main chat panel */}
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className="relative flex min-w-0 flex-1 flex-col">
         <header className="flex items-center justify-between border-b px-4 py-3">
           <div className="min-w-0">
             <h2 className="truncate text-sm font-semibold">{headerTitle}</h2>
@@ -2858,10 +3037,10 @@ export default function EmployeeMessagingPage() {
           ) : (
             <div className="flex h-full flex-col gap-2">
               {!initialMessagesLoaded && (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  <span>{t("employee.messages.loading")}</span>
-                </div>
+                <ConversationSkeleton
+                  rows={4}
+                  label={t("shared.messages.loadingSkeleton")}
+                />
               )}
 
               {initialMessagesLoaded && displayedMessages.length === 0 && (
@@ -2875,12 +3054,13 @@ export default function EmployeeMessagingPage() {
               {displayedMessages.map((msg) => {
                 const isMine = msg.sender_id === currentUserId;
                 const isGroupMessage = msg.kind === "group";
-                const senderProfile = profileById.get(msg.sender_id);
+                const senderProfile = profileById.get(msg.sender_id) ?? null;
                 const senderLabel =
                   !isMine && isGroupMessage
-                    ? senderProfile?.full_name ||
-                      senderProfile?.email ||
-                      t("employee.messages.groups.unknownMember")
+                    ? profileDisplayName(
+                        senderProfile,
+                        t("employee.messages.groups.unknownMember"),
+                      ) || t("employee.messages.groups.unknownMember")
                     : null;
                 const scheduleCard = parseScheduleCard(msg.content);
                 const forwardCard = parseForwardCard(msg.content);
@@ -2897,10 +3077,13 @@ export default function EmployeeMessagingPage() {
                   <div
                     key={`${msg.kind}-${msg.id}`}
                     className={[
-                      "flex w-full",
+                      "flex w-full items-end gap-2",
                       isMine ? "justify-end" : "justify-start",
                     ].join(" ")}
                   >
+                    {!isMine && (
+                      <AvatarCircle profile={senderProfile} sizeClass="h-8 w-8 shrink-0" />
+                    )}
                     <div
                       className={[
                         "max-w-[92%] rounded-2xl px-3 py-2 text-xs shadow-sm",
@@ -2940,6 +3123,9 @@ export default function EmployeeMessagingPage() {
                         })}
                       </div>
                     </div>
+                    {isMine && (
+                      <AvatarCircle profile={senderProfile} sizeClass="h-8 w-8 shrink-0" />
+                    )}
                   </div>
                 );
               })}
@@ -3414,11 +3600,13 @@ export default function EmployeeMessagingPage() {
                 <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
                   {activeGroup.memberIds.slice(0, 6).map((memberId) => {
                     const profile = profileById.get(memberId);
-                    const label = profile?.full_name ||
-                      profile?.email ||
-                      (memberId === currentUserId
+                    const label =
+                      memberId === currentUserId
                         ? t("employee.messages.youLabel")
-                        : t("employee.messages.groups.unknownMember"));
+                        : profileDisplayName(
+                            profile,
+                            t("employee.messages.groups.unknownMember"),
+                          ) || t("employee.messages.groups.unknownMember");
                     return (
                       <li key={memberId}>
                         • {label}
@@ -3439,20 +3627,20 @@ export default function EmployeeMessagingPage() {
                 <h3 className="text-xs font-semibold text-muted-foreground">
                   {t("employee.messages.conversation.title")}
                 </h3>
-                <div className="mt-2 flex items-center gap-3">
-                  <div className="h-12 w-12 rounded-full bg-muted-foreground/10 flex items-center justify-center text-sm font-semibold text-muted-foreground">
-                    {activePeer?.full_name?.[0] ??
-                      activePeer?.email?.[0] ??
-                      "?"}
-                  </div>
-                  <div className="flex-1">
-                    <div className="text-sm font-medium">
-                      {activePeer?.full_name ?? t("employee.messages.unknown")}
+                <div className="mt-2 flex items-start gap-3">
+                  <AvatarCircle
+                    profile={activePeer ?? null}
+                    sizeClass="h-12 w-12 shrink-0"
+                    className="text-sm font-semibold"
+                  />
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <div className="text-sm font-medium truncate">
+                      {activePeerDisplayName ?? t("employee.messages.unknown")}
                     </div>
-                    <div className="text-xs text-muted-foreground">
+                    <div className="text-xs text-muted-foreground break-words">
                       {activePeer?.email ?? t("employee.messages.unknownEmail")}
                     </div>
-                    <div className="text-xs text-muted-foreground mt-1">
+                    <div className="text-xs text-muted-foreground">
                       {t("employee.messages.conversation.role", {
                         role:
                           activePeerRole ??
@@ -3466,11 +3654,11 @@ export default function EmployeeMessagingPage() {
                           t("employee.messages.conversation.locationFallback"),
                       })}
                     </div>
+                    <p className="text-xs text-muted-foreground leading-snug">
+                      {activePeerSummary ?? t("employee.messages.conversation.bio")}
+                    </p>
                   </div>
                 </div>
-                <p className="mt-3 text-xs text-muted-foreground">
-                  {activePeerSummary ?? t("employee.messages.conversation.bio")}
-                </p>
               </>
             )}
           </div>

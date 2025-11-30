@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { Check, X, ChevronDown, Loader2, UserX } from "lucide-react";
+import Image from "next/image";
 
 type UUID = string;
 
@@ -47,7 +47,13 @@ type Employment = {
   terminated_at: string | null;
 };
 
-type CoworkerProfile = { id: UUID; email: string | null; full_name: string | null; display_name: string | null };
+type CoworkerProfile = {
+  id: UUID;
+  email: string | null;
+  full_name: string | null;
+  display_name: string | null;
+  photo_url: string | null;
+};
 
 type EmploymentWithProfile = Employment & {
   profile: CoworkerProfile | null;
@@ -208,7 +214,6 @@ function parsePayRateNumber(raw: string) {
 
 export default function UserManagement({ businessId }: Props) {
   const supabase = createClientComponentClient();
-  const router = useRouter();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -228,6 +233,7 @@ export default function UserManagement({ businessId }: Props) {
   const [rosterSummary, setRosterSummary] = useState({ total: 0, invited: 0, active: 0, inactive: 0, terminated: 0 });
   const [rosterQuery, setRosterQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
+  const [currentUserId, setCurrentUserId] = useState<UUID | null>(null);
 
   type AcceptTarget =
     | { kind: "invite"; invite: Invite }
@@ -322,6 +328,28 @@ export default function UserManagement({ businessId }: Props) {
   }, [filteredRoster, currentPage]);
 
   const totalPages = Math.max(1, Math.ceil(filteredRoster.length / ROSTER_PAGE_SIZE));
+
+  useEffect(() => {
+    let isMounted = true;
+    async function loadCurrentUser() {
+      const {
+        data: { user },
+        error,
+      } = await supabase.auth.getUser();
+      if (!isMounted) return;
+      if (error) {
+        console.error("User management: failed to load current user", error);
+        setCurrentUserId(null);
+        return;
+      }
+      setCurrentUserId((user?.id as UUID) ?? null);
+    }
+
+    loadCurrentUser();
+    return () => {
+      isMounted = false;
+    };
+  }, [supabase]);
 
   useEffect(() => {
     if (!businessId) {
@@ -423,9 +451,13 @@ export default function UserManagement({ businessId }: Props) {
       const profilesById = new Map<string, CoworkerProfile>();
       if (userIds.length) {
         const { data: profRows, error: profErr } = await supabase
-          .from("profiles").select("id,email,full_name,display_name").in("id", userIds);
+          .from("profiles")
+          .select("id,email,full_name,display_name,photo_url")
+          .in("id", userIds);
         if (profErr) throw profErr;
-        for (const p of profRows ?? []) profilesById.set(p.id, p);
+        for (const p of (profRows ?? []) as CoworkerProfile[]) {
+          profilesById.set(p.id, p);
+        }
       }
 
       const decoratedEmps: EmploymentWithProfile[] = typedEmpRows.map(e => {
@@ -769,6 +801,7 @@ export default function UserManagement({ businessId }: Props) {
   }
 
   function openTerminate(row: EmploymentWithProfile) {
+    if (row.user_id === currentUserId) return;
     setTerminateTarget(row);
     setTerminateReason("");
   }
@@ -816,12 +849,6 @@ export default function UserManagement({ businessId }: Props) {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 pb-12">
         <header className="mb-6">
           <div className="flex items-center gap-4">
-            <button
-              onClick={() => router.replace("/employermanagement/employerhomepage")}
-              className="px-3 py-2 rounded-lg border border-border text-foreground hover:bg-background/95"
-            >
-              Back to Home
-            </button>
             <h1 className="text-2xl font-semibold tracking-tight">User management</h1>
           </div>
           {biz && (
@@ -1010,13 +1037,25 @@ export default function UserManagement({ businessId }: Props) {
                 const hasChanges = canEdit && rosterRowHasChanges(row, draft);
                 const statusBadge = STATUS_BADGE[row.status] || "bg-muted text-foreground";
                 const removalDate = row.terminated_at ? formatDateShort(addDays(row.terminated_at, 7)) : null;
+                const avatarUrl = row.profile?.photo_url || null;
+                const avatarAlt = row.profile?.display_name || row.profile?.full_name || row.profile?.email || "Employee avatar";
 
                 return (
                   <div key={row.id} className="p-4 space-y-4">
                     <div className="flex flex-col gap-4 lg:flex-row lg:gap-6">
                       <div className="flex gap-3 w-full lg:w-72">
-                        <div className="h-12 w-12 rounded-full bg-foreground/10 text-foreground flex items-center justify-center font-semibold">
-                          {profileInitials(row.profile)}
+                        <div className="relative h-12 w-12 rounded-full border border-border bg-foreground/10 text-foreground flex items-center justify-center font-semibold overflow-hidden shrink-0">
+                          {avatarUrl ? (
+                            <Image
+                              src={avatarUrl}
+                              alt={`${avatarAlt} profile photo`}
+                              fill
+                              sizes="48px"
+                              className="object-cover"
+                            />
+                          ) : (
+                            profileInitials(row.profile)
+                          )}
                         </div>
                         <div className="space-y-2 flex-1">
                           <div>
@@ -1230,7 +1269,7 @@ export default function UserManagement({ businessId }: Props) {
                         >
                           Reset
                         </button>
-                        {row.status !== "terminated" && (
+                        {row.status !== "terminated" && row.user_id !== currentUserId && (
                           <button
                             className="inline-flex items-center gap-2 rounded-md bg-rose-600 px-4 py-2 text-sm text-white disabled:opacity-50"
                             onClick={() => openTerminate(row)}

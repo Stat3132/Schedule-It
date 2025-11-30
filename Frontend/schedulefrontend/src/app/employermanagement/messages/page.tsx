@@ -4,8 +4,10 @@
 
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import type { SupabaseClient } from "@supabase/auth-helpers-nextjs";
+import type { PostgrestError } from "@supabase/supabase-js";
 import {
   CalendarDays,
   Check,
@@ -30,7 +32,8 @@ import {
   saveUnreadFlag,
   UnreadScope,
 } from "../../../lib/unreadTracker";
-import { group } from "console";
+import { useI18n } from "../../../lib/i18n";
+import { ConversationSkeleton } from "@/components/messages/ConversationSkeleton";
 
 const DECISION_FEEDBACK_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_SHIFT_START = "09:00";
@@ -100,9 +103,11 @@ type UUID = string;
 
 type Profile = {
   id: UUID;
+  display_name: string | null;
   full_name: string | null;
   email: string | null;
   photo_url: string | null;
+  profile_title?: string | null;
 };
 
 type MessageRow = {
@@ -139,18 +144,19 @@ type ConversationMessage =
   | (MessageRow & { kind: "dm" })
   | (GroupMessageRow & { kind: "group" });
 
-function dmChannelName(a: UUID, b: UUID) {
-  return ["dm", ...[a, b].sort()].join(":");
-}
+type ScheduleSummarySlot = {
+  day: string;
+  time: string;
+  title: string;
+};
 
-function groupChannelName(groupId: UUID) {
-  return `group:${groupId}`;
-}
-
-function formatForwardType(type: ForwardCardPayload["requestType"]) {
-  return type === "timeOff" ? "Time off request" : "Availability change";
-}
-
+type EmploymentSnapshot = {
+  employmentId: UUID | null;
+  businessId: UUID | null;
+  primaryRoleId: UUID | null;
+  roleIds: UUID[];
+  locationId: UUID | null;
+};
 function formatStatusLabel(status: string) {
   switch (status) {
     case "approved":
@@ -164,12 +170,92 @@ function formatStatusLabel(status: string) {
   }
 }
 
+function formatForwardType(type: ForwardCardPayload["requestType"] | null | undefined) {
+  switch (type) {
+    case "timeOff":
+      return "Time off";
+    case "availability":
+      return "Availability";
+    default:
+      return "Request";
+  }
+}
+
+function dmChannelName(a: UUID, b: UUID) {
+  return ["dm", ...[a, b].sort()].join(":");
+}
+
+function groupChannelName(groupId: UUID) {
+  return `group:${groupId}`;
+}
+
+function profileDisplayName(profile?: Profile | null, fallback?: string) {
+  const display = profile?.display_name?.trim();
+  if (display) return display;
+  const full = profile?.full_name?.trim();
+  if (full) return full;
+  const email = profile?.email?.trim();
+  if (email) return email;
+  const fallbackValue = fallback?.trim();
+  return fallbackValue && fallbackValue.length ? fallbackValue : "";
+}
+
+function profileInitials(profile?: Profile | null) {
+  const fallback = profile?.email ?? "?";
+  const source = profileDisplayName(profile, fallback).trim() || fallback;
+  if (!source) return "?";
+  const parts = source.split(/\s+/).slice(0, 2);
+  const chars = parts
+    .map((part) => (part[0] ?? "").toUpperCase())
+    .join("");
+  return chars || "?";
+}
+
+function AvatarCircle({
+  profile,
+  sizeClass = "h-8 w-8",
+  className = "",
+}: {
+  profile: Profile | null;
+  sizeClass?: string;
+  className?: string;
+}) {
+  const initials = profileInitials(profile);
+  const avatarUrl = profile?.photo_url?.trim() ? profile.photo_url : null;
+  const alt = profileDisplayName(profile, profile?.email ?? "Profile photo") || "Profile photo";
+  return (
+    <div
+      className={[
+        "relative flex items-center justify-center rounded-full border border-border/60 bg-muted/40 text-[11px] font-semibold text-foreground/80 overflow-hidden",
+        sizeClass,
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      {avatarUrl ? (
+        <Image
+          src={avatarUrl}
+          alt={`${alt} avatar`}
+          fill
+          sizes="64px"
+          className="object-cover"
+        />
+      ) : (
+        initials
+      )}
+    </div>
+  );
+}
+
 export default function EmployerMessagingPage() {
   const supabase = createClientComponentClient();
+  const { t } = useI18n();
   const [loadingUser, setLoadingUser] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<UUID | null>(null);
 
   const [contacts, setContacts] = useState<Profile[]>([]);
+  const [selfProfile, setSelfProfile] = useState<Profile | null>(null);
   const [conversations, setConversations] = useState<DMConversation[]>([]);
   const [activePeer, setActivePeer] = useState<Profile | null>(null);
   const [activeGroup, setActiveGroup] = useState<GroupChat | null>(null);
@@ -182,13 +268,15 @@ export default function EmployerMessagingPage() {
   const [isLoadingContacts, setIsLoadingContacts] = useState(true);
   const [businessScopeChecked, setBusinessScopeChecked] = useState(false);
   const [managedBusinessIds, setManagedBusinessIds] = useState<UUID[]>([]);
+  const [employmentMetaByUserId, setEmploymentMetaByUserId] = useState<Record<UUID, EmploymentSnapshot>>({});
+  const [roleLookup, setRoleLookup] = useState<Record<UUID, string>>({});
+  const [locationLookup, setLocationLookup] = useState<Record<UUID, string>>({});
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [dateFilter, setDateFilter] = useState<"all" | "today" | "7days">("all");
-  const [weekSchedule, setWeekSchedule] = useState<
-    Array<{ day: string; time: string; title: string }>
-  >([]);
-  const [isLoadingSchedule, setIsLoadingSchedule] = useState(false);
+  const [activePeerSchedule, setActivePeerSchedule] = useState<ScheduleSummarySlot[]>([]);
+  const [isPeerScheduleLoading, setIsPeerScheduleLoading] = useState(false);
+  const [peerScheduleError, setPeerScheduleError] = useState<string | null>(null);
 
   const [isPeerTyping, setIsPeerTyping] = useState(false);
   const [requestStatusMap, setRequestStatusMap] = useState<Record<string, string>>({});
@@ -242,6 +330,104 @@ export default function EmployerMessagingPage() {
     groupReadCountsRef.current = loadReadCounts(EMPLOYER_SCOPE, "group");
     setReadCountsReady(true);
   }, []);
+
+  // Load active peer schedule summary
+  useEffect(() => {
+    const peerId = activePeer?.id ?? null;
+    if (!peerId) {
+      setActivePeerSchedule([]);
+      setPeerScheduleError(null);
+      setIsPeerScheduleLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadScheduleForPeer(userId: UUID) {
+      setIsPeerScheduleLoading(true);
+      setPeerScheduleError(null);
+      try {
+        const startOfWeek = new Date();
+        startOfWeek.setHours(0, 0, 0, 0);
+        const day = startOfWeek.getDay();
+        const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1);
+        startOfWeek.setDate(diff);
+        const endOfWeek = new Date(startOfWeek);
+        endOfWeek.setDate(startOfWeek.getDate() + 7);
+
+        const { data: assignmentRows, error: assignmentError } = await supabase
+          .from("shift_assignment")
+          .select("shift_id")
+          .eq("user_id", userId);
+
+        if (assignmentError) {
+          throw assignmentError;
+        }
+
+        const shiftIds = (assignmentRows ?? [])
+          .map((row) => row.shift_id as string | null)
+          .filter((id): id is string => Boolean(id));
+
+        if (!shiftIds.length) {
+          setActivePeerSchedule([]);
+          return;
+        }
+
+        const weekStartISO = startOfWeek.toISOString();
+        const weekEndISO = endOfWeek.toISOString();
+
+        const { data: shiftRows, error: shiftError } = await supabase
+          .from("shift")
+          .select("id,start_ts,end_ts,role_id,location_id")
+          .in("id", shiftIds)
+          .gte("start_ts", weekStartISO)
+          .lt("start_ts", weekEndISO)
+          .order("start_ts", { ascending: true })
+          .limit(20);
+
+        if (shiftError) {
+          throw shiftError;
+        }
+
+        if (cancelled) return;
+
+        if (Array.isArray(shiftRows)) {
+          const mapped: ScheduleSummarySlot[] = shiftRows.map((shift) => {
+            const start = shift.start_ts;
+            const d = new Date(start);
+            const dayLabel = d.toLocaleDateString([], { weekday: "short" });
+            const timeLabel = d.toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            });
+            const roleName = shift.role_id ? roleLookup[shift.role_id as UUID] : null;
+            const locationName = shift.location_id ? locationLookup[shift.location_id as UUID] : null;
+            const title = (roleName && roleName.trim()) || (locationName && locationName.trim()) || "Shift";
+            return { day: dayLabel, time: timeLabel, title };
+          });
+          setActivePeerSchedule(mapped);
+        } else {
+          setActivePeerSchedule([]);
+        }
+      } catch (err) {
+        console.error("Error loading peer schedule:", err);
+        if (!cancelled) {
+          setActivePeerSchedule([]);
+          setPeerScheduleError("Unable to load this teammate’s schedule.");
+        }
+      } finally {
+        if (!cancelled) {
+          setIsPeerScheduleLoading(false);
+        }
+      }
+    }
+
+    loadScheduleForPeer(peerId);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, activePeer?.id, roleLookup, locationLookup]);
 
   const messageEndRef = useRef<HTMLDivElement | null>(null);
   const channelRef = useRef<ReturnType<SupabaseClient['channel']> | null>(null);
@@ -575,6 +761,55 @@ export default function EmployerMessagingPage() {
     };
   }, [supabase]);
 
+  useEffect(() => {
+    if (!currentUserId) {
+      setSelfProfile(null);
+      return;
+    }
+
+    let cancelled = false;
+    const userId = currentUserId;
+
+    async function loadSelfProfile() {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, display_name, full_name, email, photo_url")
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      if (error) {
+        console.error("Error loading employer profile:", error);
+        setSelfProfile({
+          id: userId,
+          display_name: null,
+          full_name: null,
+          email: null,
+          photo_url: null,
+        });
+        return;
+      }
+
+      if (data) {
+        setSelfProfile(data as Profile);
+      } else {
+        setSelfProfile({
+          id: userId,
+          display_name: null,
+          full_name: null,
+          email: null,
+          photo_url: null,
+        });
+      }
+    }
+
+    loadSelfProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, currentUserId]);
+
   // Determine which businesses this employer can manage
   useEffect(() => {
     if (!currentUserId) {
@@ -643,6 +878,70 @@ export default function EmployerMessagingPage() {
     };
   }, [supabase, currentUserId]);
 
+  // Load role/location lookups for managed businesses
+  useEffect(() => {
+    if (!businessScopeChecked || managedBusinessIds.length === 0) {
+      setRoleLookup({});
+      setLocationLookup({});
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadLookups() {
+      try {
+        const [roleRes, locationRes] = await Promise.all([
+          supabase
+            .from("role")
+            .select("id,name")
+            .in("business_id", managedBusinessIds)
+            .order("name", { ascending: true }),
+          supabase
+            .from("location")
+            .select("id,name")
+            .in("business_id", managedBusinessIds)
+            .order("name", { ascending: true }),
+        ]);
+
+        if (cancelled) return;
+
+        if (!roleRes.error && roleRes.data) {
+          const nextRoles: Record<UUID, string> = {};
+          (roleRes.data as { id: UUID; name: string | null }[]).forEach((row) => {
+            nextRoles[row.id] = (row.name ?? "").trim();
+          });
+          setRoleLookup(nextRoles);
+        } else if (roleRes.error) {
+          console.error("Error loading role lookup:", roleRes.error);
+          setRoleLookup({});
+        }
+
+        if (!locationRes.error && locationRes.data) {
+          const nextLocations: Record<UUID, string> = {};
+          (locationRes.data as { id: UUID; name: string | null }[]).forEach((row) => {
+            nextLocations[row.id] = (row.name ?? "").trim();
+          });
+          setLocationLookup(nextLocations);
+        } else if (locationRes.error) {
+          console.error("Error loading location lookup:", locationRes.error);
+          setLocationLookup({});
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Error building role/location lookups:", err);
+          setRoleLookup({});
+          setLocationLookup({});
+        }
+      }
+    }
+
+    loadLookups();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, managedBusinessIds, businessScopeChecked]);
+
   // Load contacts scoped to managed businesses
   useEffect(() => {
     if (!currentUserId || !businessScopeChecked) return;
@@ -650,6 +949,7 @@ export default function EmployerMessagingPage() {
     if (managedBusinessIds.length === 0) {
       setContacts([]);
       setConversations([]);
+      setEmploymentMetaByUserId({});
       setIsLoadingContacts(false);
       return;
     }
@@ -661,7 +961,7 @@ export default function EmployerMessagingPage() {
       try {
         const { data: employmentRows, error: employmentError } = await supabase
           .from("employment")
-          .select("user_id")
+          .select("id,user_id,business_id,role_id,location_id")
           .in("business_id", managedBusinessIds)
           .eq("status", "active");
 
@@ -669,36 +969,106 @@ export default function EmployerMessagingPage() {
           throw employmentError;
         }
 
+        const typedEmploymentRows = (employmentRows ?? []) as Array<{
+          id: UUID | null;
+          user_id: UUID | null;
+          business_id: UUID | null;
+          role_id: UUID | null;
+          location_id: UUID | null;
+        }>;
+
         const rosterIds = Array.from(
           new Set(
-            (employmentRows ?? [])
+            typedEmploymentRows
               .map((row) => row.user_id as UUID)
               .filter((id) => Boolean(id) && id !== currentUserId),
           ),
         );
 
+        const employmentIds = typedEmploymentRows
+          .map((row) => row.id)
+          .filter((id): id is UUID => Boolean(id)) as UUID[];
+
+        const roleAssignmentsByEmployment = new Map<UUID, UUID[]>();
+        if (employmentIds.length) {
+          const { data: roleAssignmentRows, error: roleAssignmentError } = await supabase
+            .from("employment_roles")
+            .select("employment_id,role_id")
+            .in("employment_id", employmentIds);
+
+          if (roleAssignmentError) {
+            if ((roleAssignmentError as PostgrestError)?.code !== "42P01") {
+              throw roleAssignmentError;
+            }
+          } else {
+            for (const assignment of (roleAssignmentRows ?? []) as Array<{ employment_id: UUID; role_id: UUID | null }>) {
+              if (!assignment.role_id) continue;
+              const bucket = roleAssignmentsByEmployment.get(assignment.employment_id) ?? [];
+              roleAssignmentsByEmployment.set(assignment.employment_id, [...bucket, assignment.role_id]);
+            }
+          }
+        }
+
         if (rosterIds.length === 0) {
           if (!cancelled) {
             setContacts([]);
             setConversations([]);
+            setEmploymentMetaByUserId({});
             setIsLoadingContacts(false);
           }
           return;
         }
 
-        const { data: profileRows, error: profileError } = await supabase
+        let profileRows: Profile[] = [];
+        const profileQuery = await supabase
           .from("profiles")
-          .select("id, full_name, email, photo_url")
+          .select("id, display_name, full_name, email, photo_url, profile_title")
           .in("id", rosterIds)
           .order("full_name", { ascending: true });
 
-        if (profileError) {
-          throw profileError;
+        if (profileQuery.error) {
+          if ((profileQuery.error as PostgrestError).code === "42703") {
+            const fallback = await supabase
+              .from("profiles")
+              .select("id, display_name, full_name, email, photo_url")
+              .in("id", rosterIds)
+              .order("full_name", { ascending: true });
+            if (fallback.error) {
+              throw fallback.error;
+            }
+            profileRows = (fallback.data ?? []) as Profile[];
+          } else {
+            throw profileQuery.error;
+          }
+        } else {
+          profileRows = (profileQuery.data ?? []) as Profile[];
         }
 
+        const employmentMeta: Record<UUID, EmploymentSnapshot> = {};
+        typedEmploymentRows.forEach((row) => {
+          if (!row.user_id) return;
+          const employmentId = row.id as UUID | null;
+          const roleSet = new Set<UUID>();
+          if (row.role_id) {
+            roleSet.add(row.role_id);
+          }
+          if (employmentId) {
+            const assigned = roleAssignmentsByEmployment.get(employmentId) ?? [];
+            assigned.forEach((roleId) => roleSet.add(roleId));
+          }
+          employmentMeta[row.user_id as UUID] = {
+            employmentId,
+            businessId: (row.business_id as UUID) ?? null,
+            primaryRoleId: (row.role_id as UUID) ?? null,
+            roleIds: Array.from(roleSet),
+            locationId: (row.location_id as UUID) ?? null,
+          };
+        });
+
         if (!cancelled) {
-          const roster = (profileRows ?? []) as Profile[];
+          const roster = profileRows;
           setContacts(roster);
+          setEmploymentMetaByUserId(employmentMeta);
           setConversations((prev) => {
             if (prev.length === 0) {
               return roster.map((peer) => ({ peer, lastMessage: null }));
@@ -734,6 +1104,7 @@ export default function EmployerMessagingPage() {
           console.error("Error loading contacts:", err);
           setContacts([]);
           setConversations([]);
+          setEmploymentMetaByUserId({});
           setIsLoadingContacts(false);
         }
       }
@@ -848,71 +1219,7 @@ export default function EmployerMessagingPage() {
     };
   }, [supabase, currentUserId]);
 
-  // Load schedule
-  useEffect(() => {
-    if (!currentUserId) return;
-    let cancelled = false;
-
-    async function loadSchedule() {
-      setIsLoadingSchedule(true);
-      try {
-        const startOfWeek = new Date();
-        startOfWeek.setHours(0, 0, 0, 0);
-        const day = startOfWeek.getDay();
-        const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1);
-        startOfWeek.setDate(diff);
-        const endOfWeek = new Date(startOfWeek);
-        endOfWeek.setDate(startOfWeek.getDate() + 6);
-
-        const { data: shifts, error } = await supabase
-          .from("shifts")
-          .select("id,start_time,end_time,role,location")
-          .gte("start_time", startOfWeek.toISOString())
-          .lte("start_time", endOfWeek.toISOString())
-          .eq("user_id", currentUserId)
-          .order("start_time", { ascending: true })
-          .limit(20);
-
-        if (!cancelled && !error && Array.isArray(shifts)) {
-          const mapped = shifts.map((s: Record<string, unknown>) => {
-            const start = s.start_time as string;
-            const d = new Date(start);
-            const dayLabel = d.toLocaleDateString(undefined, {
-              weekday: "short",
-            });
-            const timeLabel = d.toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            });
-            const title =
-              (s.role as string | undefined) ??
-              (s.location as string | undefined) ??
-              "Shift";
-            return { day: dayLabel, time: timeLabel, title };
-          });
-          setWeekSchedule(mapped);
-          setIsLoadingSchedule(false);
-          return;
-        }
-      } catch {
-        // ignore and fall back to mock
-      }
-
-      if (!cancelled) {
-        setWeekSchedule([
-          { day: "Mon", time: "9:00 AM–5:00 PM", title: "Front Desk" },
-          { day: "Wed", time: "11:00 AM–7:00 PM", title: "Sales" },
-          { day: "Fri", time: "8:00 AM–4:00 PM", title: "Stock" },
-        ]);
-        setIsLoadingSchedule(false);
-      }
-    }
-
-    loadSchedule();
-    return () => {
-      cancelled = true;
-    };
-  }, [supabase, currentUserId]);
+  
 
   // Load messages for active peer or group
   useEffect(() => {
@@ -1041,6 +1348,18 @@ export default function EmployerMessagingPage() {
 
     if (activePeer) {
       const channelName = dmChannelName(currentUserId, activePeer.id);
+
+      const appendIncomingDm = (incoming: MessageRow) => {
+        const participants = [incoming.sender_id, incoming.recipient_id];
+        if (!participants.includes(currentUserId) || !participants.includes(activePeer.id)) {
+          return;
+        }
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === incoming.id)) return prev;
+          return [...prev, { ...incoming, kind: "dm" }];
+        });
+      };
+
       const channel = supabase
         .channel(channelName)
         .on(
@@ -1052,31 +1371,11 @@ export default function EmployerMessagingPage() {
           },
           (payload) => {
             const newRow = payload.new as MessageRow;
-            const ids = [newRow.sender_id, newRow.recipient_id];
-            if (!ids.includes(currentUserId) || !ids.includes(activePeer.id)) {
-              return;
-            }
-            setMessages((prev) => {
-              if (prev.some((m) => m.id === newRow.id)) return prev;
-              return [...prev, { ...newRow, kind: "dm" }];
-            });
-          }
+            appendIncomingDm(newRow);
+          },
         )
         .on("broadcast", { event: "message" }, ({ payload }) => {
-          const incoming = payload as MessageRow;
-          const participants = [incoming.sender_id, incoming.recipient_id];
-
-          if (
-            !participants.includes(currentUserId) ||
-            !participants.includes(activePeer.id)
-          ) {
-            return;
-          }
-
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === incoming.id)) return prev;
-            return [...prev, { ...incoming, kind: "dm" }];
-          });
+          appendIncomingDm(payload as MessageRow);
         })
         .on("broadcast", { event: "typing" }, ({ payload }) => {
           const { senderId } = payload as { senderId: UUID };
@@ -1088,7 +1387,7 @@ export default function EmployerMessagingPage() {
           }
           typingTimeoutRef.current = setTimeout(
             () => setIsPeerTyping(false),
-            3000
+            3000,
           );
         })
         .subscribe();
@@ -1110,6 +1409,14 @@ export default function EmployerMessagingPage() {
 
     if (activeGroup) {
       const channelName = groupChannelName(activeGroup.id);
+
+      const appendIncomingGroup = (incoming: GroupMessageRow) => {
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === incoming.id)) return prev;
+          return [...prev, { ...incoming, kind: "group" }];
+        });
+      };
+
       const channel = supabase
         .channel(channelName)
         .on(
@@ -1122,11 +1429,8 @@ export default function EmployerMessagingPage() {
           },
           (payload) => {
             const newRow = payload.new as GroupMessageRow;
-            setMessages((prev) => {
-              if (prev.some((m) => m.id === newRow.id)) return prev;
-              return [...prev, { ...newRow, kind: "group" }];
-            });
-          }
+            appendIncomingGroup(newRow);
+          },
         )
         .subscribe();
 
@@ -1141,7 +1445,7 @@ export default function EmployerMessagingPage() {
     }
 
     return undefined;
-  }, [supabase, currentUserId, activePeer?.id, activeGroup?.id]);
+  }, [supabase, currentUserId, activePeer, activeGroup, t]);
 
   useEffect(() => {
     if (!messages.length) {
@@ -1443,7 +1747,8 @@ export default function EmployerMessagingPage() {
     const source = unaddedContacts;
     if (!query) return source;
     return source.filter((profile) => {
-      const haystack = `${profile.full_name ?? ""} ${profile.email ?? ""}`.toLowerCase();
+      const haystack = `${profileDisplayName(profile, "")} ${profile.email ?? ""}`
+        .toLowerCase();
       return haystack.includes(query);
     });
   }, [unaddedContacts, addContactSearch]);
@@ -1458,9 +1763,12 @@ export default function EmployerMessagingPage() {
       map.set(profile.id, profile);
     });
 
-    if (currentUserId && !map.has(currentUserId)) {
+    if (selfProfile) {
+      map.set(selfProfile.id, selfProfile);
+    } else if (currentUserId && !map.has(currentUserId)) {
       map.set(currentUserId, {
         id: currentUserId,
+        display_name: "You",
         full_name: "You",
         email: null,
         photo_url: null,
@@ -1468,7 +1776,7 @@ export default function EmployerMessagingPage() {
     }
 
     return map;
-  }, [contacts, currentUserId]);
+  }, [contacts, currentUserId, selfProfile]);
 
   const displayedMessages = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -1495,6 +1803,51 @@ export default function EmployerMessagingPage() {
       return true;
     });
   }, [messages, searchQuery, dateFilter]);
+
+  const activePeerResolvedName = useMemo(() => {
+    if (!activePeer) return null;
+    const resolved = profileDisplayName(activePeer, activePeer.email ?? "");
+    return resolved || activePeer.email || null;
+  }, [activePeer]);
+
+  const activePeerEmploymentMeta = activePeer ? employmentMetaByUserId[activePeer.id] ?? null : null;
+
+  const activePeerRoleNames = useMemo(() => {
+    if (!activePeerEmploymentMeta) return [] as string[];
+    const names = (activePeerEmploymentMeta.roleIds ?? [])
+      .map((roleId) => roleLookup[roleId])
+      .filter((name): name is string => Boolean(name && name.trim()));
+    if (!names.length && activePeerEmploymentMeta.primaryRoleId) {
+      const fallback = roleLookup[activePeerEmploymentMeta.primaryRoleId];
+      if (fallback) {
+        return [fallback];
+      }
+    }
+    return names;
+  }, [activePeerEmploymentMeta, roleLookup]);
+
+  const activePeerLocationName = useMemo(() => {
+    if (!activePeerEmploymentMeta?.locationId) return null;
+    const label = locationLookup[activePeerEmploymentMeta.locationId];
+    return label && label.trim() ? label : null;
+  }, [activePeerEmploymentMeta?.locationId, locationLookup]);
+
+  const activePeerBio = useMemo(() => {
+    if (!activePeer) return null;
+    const explicit = typeof activePeer.profile_title === "string" ? activePeer.profile_title.trim() : "";
+    if (explicit) return explicit;
+    const name = profileDisplayName(activePeer, activePeer.email ?? "This teammate") || "This teammate";
+    if (activePeerRoleNames.length && activePeerLocationName) {
+      return `${name} works as ${activePeerRoleNames.join(", ")} at ${activePeerLocationName}.`;
+    }
+    if (activePeerRoleNames.length) {
+      return `${name} works as ${activePeerRoleNames.join(", ")}.`;
+    }
+    if (activePeerLocationName) {
+      return `${name} is based at ${activePeerLocationName}.`;
+    }
+    return null;
+  }, [activePeer, activePeerRoleNames, activePeerLocationName]);
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
@@ -1734,7 +2087,7 @@ export default function EmployerMessagingPage() {
     if (!activePeer) return;
     setScheduleModalState({
       payload,
-      employeeName: activePeer.full_name || activePeer.email || "Employee",
+      employeeName: activePeerResolvedName || "Employee",
       employeeId: activePeer.id,
     });
   }
@@ -2004,9 +2357,9 @@ export default function EmployerMessagingPage() {
 
   const headerTitle = useMemo(() => {
     if (activeGroup) return activeGroup.name;
-    if (activePeer) return activePeer.full_name || activePeer.email || "Conversation";
+    if (activePeer) return activePeerResolvedName || activePeer.email || "Conversation";
     return "Messages";
-  }, [activeGroup, activePeer]);
+  }, [activeGroup, activePeer, activePeerResolvedName]);
 
   const headerSubtitle = useMemo(() => {
     if (activeGroup) {
@@ -2021,8 +2374,8 @@ export default function EmployerMessagingPage() {
 
   const peerDisplayName = useMemo(() => {
     if (!activePeer) return "there";
-    return activePeer.full_name || activePeer.email || "there";
-  }, [activePeer]);
+    return activePeerResolvedName || activePeer.email || "there";
+  }, [activePeer, activePeerResolvedName]);
 
   const peerFirstName = useMemo(() => {
     if (!peerDisplayName) return "there";
@@ -2233,7 +2586,7 @@ export default function EmployerMessagingPage() {
                               className="w-full rounded-md px-2 py-1 text-left text-xs transition hover:bg-muted"
                             >
                               <span className="block font-semibold">
-                                {profile.full_name || profile.email || "Unnamed coworker"}
+                                {profileDisplayName(profile, profile.email ?? "Unnamed coworker") || "Unnamed coworker"}
                               </span>
                               <span className="block text-[10px] text-muted-foreground">
                                 {profile.email || "No email on file"}
@@ -2262,16 +2615,8 @@ export default function EmployerMessagingPage() {
             <ul className="space-y-1 pb-3">
               {conversations.map((conv) => {
                 const isActive = !activeGroup && activePeer?.id === conv.peer.id;
-                const initials =
-                  conv.peer.full_name
-                    ?.split(" ")
-                    .map((n) => n[0])
-                    .join("")
-                    .slice(0, 2)
-                    .toUpperCase() ||
-                  conv.peer.email?.[0]?.toUpperCase() ||
-                  "?";
                 const incomingCount = incomingCounts[conv.peer.id] ?? 0;
+                const peerProfile = conv.peer ?? null;
 
                 return (
                   <li key={conv.peer.id}>
@@ -2285,12 +2630,10 @@ export default function EmployerMessagingPage() {
                           : "hover:bg-muted",
                       ].join(" ")}
                     >
-                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold">
-                        {initials}
-                      </div>
+                      <AvatarCircle profile={peerProfile ?? null} sizeClass="h-8 w-8 shrink-0" />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-xs font-medium">
-                          {conv.peer.full_name || conv.peer.email}
+                          {profileDisplayName(conv.peer, conv.peer.email ?? "") || conv.peer.email || ""}
                         </p>
                         <p className="line-clamp-1 text-[11px] text-muted-foreground">
                           {conv.lastMessage?.content || "Start a conversation"}
@@ -2359,7 +2702,7 @@ export default function EmployerMessagingPage() {
                           disabled={isCreatingGroup}
                         />
                         <span className="truncate">
-                          {profile.full_name || profile.email || "Unnamed coworker"}
+                          {profileDisplayName(profile, profile.email ?? "Unnamed coworker") || "Unnamed coworker"}
                         </span>
                       </label>
                     ))
@@ -2398,7 +2741,7 @@ export default function EmployerMessagingPage() {
                       const profile = profileById.get(id);
                       if (!profile) return "Coworker";
                       if (profile.id === currentUserId) return "You";
-                      return profile.full_name || profile.email || "Coworker";
+                      return profileDisplayName(profile, profile.email ?? "Coworker") || "Coworker";
                     })
                     .filter(Boolean) as string[];
                   const previewNames = memberNames.slice(0, 3).join(", ");
@@ -2489,7 +2832,7 @@ export default function EmployerMessagingPage() {
                 const isGroupMessage = msg.kind === "group";
                 const senderProfile = profileById.get(msg.sender_id);
                 const senderLabel = !isMine && isGroupMessage
-                  ? senderProfile?.full_name || senderProfile?.email || "Coworker"
+                  ? profileDisplayName(senderProfile, senderProfile?.email ?? "Coworker") || "Coworker"
                   : null;
                 const scheduleCard = parseScheduleCard(msg.content);
                 const forwardCard = parseForwardCard(msg.content);
@@ -2506,10 +2849,13 @@ export default function EmployerMessagingPage() {
                   <div
                     key={`${msg.kind}-${msg.id}`}
                     className={[
-                      "flex w-full",
+                      "flex w-full items-end gap-2",
                       isMine ? "justify-end" : "justify-start",
                     ].join(" ")}
                   >
+                    {!isMine && (
+                      <AvatarCircle profile={senderProfile ?? null} sizeClass="h-8 w-8 shrink-0" />
+                    )}
                     <div
                       className={[
                         "max-w-[92%] rounded-2xl px-3 py-2 text-xs shadow-sm",
@@ -2546,6 +2892,9 @@ export default function EmployerMessagingPage() {
                         })}
                       </div>
                     </div>
+                    {isMine && (
+                      <AvatarCircle profile={senderProfile ?? null} sizeClass="h-8 w-8 shrink-0" />
+                    )}
                   </div>
                 );
               })}
@@ -2576,7 +2925,7 @@ export default function EmployerMessagingPage() {
               className="max-h-32 min-h-[40px] flex-1 resize-none bg-white dark:bg-slate-900 text-sm outline-none placeholder:text-xs placeholder:text-muted-foreground border border-gray-200 dark:border-slate-700 rounded-md px-3 py-2"
               placeholder={
                 activePeer
-                  ? `Message ${activePeer.full_name || activePeer.email}…`
+                  ? `Message ${activePeerResolvedName || activePeer.email || "this teammate"}…`
                   : activeGroup
                     ? `Message ${activeGroup.name}…`
                     : "Select a coworker or group to start messaging…"
@@ -2619,7 +2968,7 @@ export default function EmployerMessagingPage() {
                 <ul className="space-y-2">
                   {activeGroup.memberIds.map((memberId) => {
                     const profile = profileById.get(memberId);
-                    const label = profile?.full_name || profile?.email || "Coworker";
+                    const label = profileDisplayName(profile, profile?.email ?? "Coworker") || "Coworker";
                     const isYou = memberId === currentUserId;
                     return (
                       <li
@@ -2638,25 +2987,30 @@ export default function EmployerMessagingPage() {
             ) : activePeer ? (
               <>
                 <div className="mt-2 flex items-center gap-3">
-                  <div className="h-12 w-12 rounded-full bg-muted-foreground/10 flex items-center justify-center text-sm font-semibold text-muted-foreground">
-                    {activePeer.full_name?.[0] ??
-                      activePeer.email?.[0] ??
-                      "?"}
-                  </div>
+                  <AvatarCircle
+                    profile={activePeer}
+                    sizeClass="h-12 w-12 shrink-0"
+                    className="text-sm font-semibold"
+                  />
                   <div className="flex-1">
                     <div className="text-sm font-medium">
-                      {activePeer.full_name ?? "Unknown"}
+                      {activePeerResolvedName ?? "Unknown"}
                     </div>
                     <div className="text-xs text-muted-foreground">
                       {activePeer.email ?? "—"}
                     </div>
                     <div className="text-xs text-muted-foreground mt-1">
-                      Role: Employee
+                      {activePeerRoleNames.length
+                        ? `Roles: ${activePeerRoleNames.join(", ")}`
+                        : "Roles not set"}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {activePeerLocationName ? `Location: ${activePeerLocationName}` : "Location not set"}
                     </div>
                   </div>
                 </div>
-                <p className="mt-3 text-xs text-muted-foreground">
-                  Short bio or notes about this coworker can go here.
+                <p className="mt-3 text-xs text-muted-foreground whitespace-pre-line">
+                  {activePeerBio ?? "Short bio or notes about this coworker can go here."}
                 </p>
               </>
             ) : (
@@ -2718,34 +3072,44 @@ export default function EmployerMessagingPage() {
 
           <div>
             <h4 className="text-xs font-semibold text-muted-foreground">
-              This Week
+              {activePeer
+                ? `${activePeerResolvedName ?? activePeer.email ?? "Teammate"} · schedule`
+                : "Teammate schedule"}
             </h4>
             <p className="text-xs text-muted-foreground mt-1">
-              Your upcoming shifts this week.
+              {activePeer
+                ? "Upcoming shifts for this teammate."
+                : "Select a coworker to preview their week."}
             </p>
             <div className="mt-3">
-              {isLoadingSchedule ? (
-                <div className="text-xs text-muted-foreground">
-                  Loading schedule…
-                </div>
+              {isPeerScheduleLoading ? (
+                <div className="text-xs text-muted-foreground">Loading schedule…</div>
+              ) : peerScheduleError ? (
+                <div className="text-xs text-rose-600">{peerScheduleError}</div>
               ) : (
                 <ul className="space-y-2">
-                  {weekSchedule.length === 0 ? (
-                    <li className="text-xs text-muted-foreground">
-                      No shifts scheduled this week.
-                    </li>
-                  ) : (
-                    weekSchedule.map((s, i) => (
-                      <li
-                        key={i}
-                        className="flex items-center justify-between"
-                      >
-                        <div className="text-sm font-medium">{s.day}</div>
-                        <div className="text-sm text-muted-foreground">
-                          {s.time} · {s.title}
-                        </div>
+                  {activePeer ? (
+                    activePeerSchedule.length === 0 ? (
+                      <li className="text-xs text-muted-foreground">
+                        No shifts scheduled this week.
                       </li>
-                    ))
+                    ) : (
+                      activePeerSchedule.map((slot, index) => (
+                        <li
+                          key={`${slot.day}-${slot.time}-${index}`}
+                          className="flex items-center justify-between"
+                        >
+                          <div className="text-sm font-medium">{slot.day}</div>
+                          <div className="text-sm text-muted-foreground">
+                            {slot.time} · {slot.title}
+                          </div>
+                        </li>
+                      ))
+                    )
+                  ) : (
+                    <li className="text-xs text-muted-foreground">
+                      Pick a coworker to see their schedule.
+                    </li>
                   )}
                 </ul>
               )}
@@ -2915,15 +3279,13 @@ export default function EmployerMessagingPage() {
             />
             <div className="flex-1 space-y-1 text-sm">
               <p className="font-semibold">
-                {decisionFeedback.status === "approved"
-                  ? "Approved!"
-                  : "Denied!"}
+                {decisionFeedback.status === "approved" ? "Approved!" : "Denied!"}
               </p>
               <p className="text-xs text-muted-foreground">
                 {formatForwardType(decisionFeedback.requestType)} · {decisionFeedback.rangeLabel}
               </p>
-              <p className="text-[11px] text-muted-foreground">
-                This notice will auto-dismiss in 24 hours.
+              <p className="text-sm text-muted-foreground">
+                Review the request details, then update Supabase.
               </p>
             </div>
             <button
@@ -2932,20 +3294,27 @@ export default function EmployerMessagingPage() {
               className="rounded-full p-1 text-muted-foreground transition hover:bg-muted"
               aria-label="Dismiss decision notice"
             >
-              <X className="h-3.5 w-3.5" />
+              <X className="h-4 w-4" />
             </button>
           </div>
         </div>
       ) : null}
+
       {forwardActionState.card ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-md rounded-lg bg-background p-6 shadow-lg">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-base font-semibold">
-                  {forwardActionState.action === "approve"
-                    ? "Approve forwarded request"
-                    : "Deny forwarded request"}
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
+          <div className="w-full max-w-md rounded-2xl bg-card p-4 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <div
+                className={`mt-1 h-2.5 w-2.5 rounded-full ${
+                  forwardActionState.action === "approve" ? "bg-emerald-500" : "bg-rose-500"
+                }`}
+              />
+              <div className="flex-1 space-y-1 text-sm">
+                <p className="font-semibold">
+                  {forwardActionState.action === "approve" ? "Approve request" : "Deny request"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {formatForwardType(forwardActionState.card.requestType)} · {forwardActionState.card.rangeLabel}
                 </p>
                 <p className="text-sm text-muted-foreground">
                   Review the request details, then update Supabase.
@@ -2995,9 +3364,7 @@ export default function EmployerMessagingPage() {
               ) : null}
             </div>
             {forwardActionError ? (
-              <p className="mt-3 text-sm text-rose-600">
-                {forwardActionError}
-              </p>
+              <p className="mt-3 text-sm text-rose-600">{forwardActionError}</p>
             ) : null}
             <div className="mt-4 flex gap-2">
               <button

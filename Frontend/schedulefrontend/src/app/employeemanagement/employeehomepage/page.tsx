@@ -2,6 +2,7 @@
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { createAnnouncement } from "../../../lib/announcements";
 import { Calendar, Clock, Bell, Settings, LogOut, AlertCircle } from "lucide-react";
@@ -551,6 +552,7 @@ export default function EmployeeHomePage() {
       setProfileError(t("employee.home.profilePrompt.errors.photoRequired"));
       return;
     }
+    const trimmedDescription = profileDescription.trim();
 
     setProfileSubmitting(true);
     setProfileError(null);
@@ -562,6 +564,7 @@ export default function EmployeeHomePage() {
             id: currentUserId,
             display_name: trimmedName,
             photo_url: trimmedPhotoUrl,
+            profile_title: trimmedDescription || null,
           },
           { onConflict: "id" },
         );
@@ -573,7 +576,6 @@ export default function EmployeeHomePage() {
       const { error: metadataErr } = await supabase.auth.updateUser({
         data: {
           profile_customized: true,
-          profile_title: profileDescription.trim() || null,
         },
       });
 
@@ -627,20 +629,20 @@ export default function EmployeeHomePage() {
         typeof metadata?.profile_title === "string"
           ? (metadata.profile_title as string)
           : "";
-      if (!cancelled) {
-        setProfileDescription(metadataDescription);
-      }
 
       let profileNamePrefill = "";
       let profilePhotoPrefill: string | null = null;
+      let profileDescriptionPrefill = metadataDescription;
       try {
         const { data: profileRow } = await supabase
           .from("profiles")
-          .select("display_name,photo_url")
+          .select("display_name,photo_url,profile_title")
           .eq("id", uid)
           .maybeSingle();
         profileNamePrefill = (profileRow?.display_name as string | null) ?? "";
         profilePhotoPrefill = (profileRow?.photo_url as string | null) ?? null;
+        profileDescriptionPrefill =
+          (profileRow?.profile_title as string | null) ?? metadataDescription;
       } catch (e) {
         console.error("[EmployeeHome] profile prefill error", e);
       }
@@ -653,6 +655,7 @@ export default function EmployeeHomePage() {
           : fallbackAvatar;
         setProfilePhotoUrl(nextPhoto);
         setSelectedPresetAvatarId(presetMatch ? presetMatch.id : null);
+        setProfileDescription(profileDescriptionPrefill ?? "");
       }
 
       const shouldPromptProfile =
@@ -1418,11 +1421,12 @@ export default function EmployeeHomePage() {
                             className={`flex flex-col items-center gap-2 rounded-xl border px-3 py-2 text-center text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${isActive ? "border-primary bg-primary/5 text-primary" : "border-border hover:border-primary/60"}`}
                             aria-pressed={isActive}
                           >
-                            <img
+                            <Image
                               src={avatar.url}
                               alt={avatar.label}
+                              width={56}
+                              height={56}
                               className="h-14 w-14 rounded-full border border-border object-cover"
-                              loading="lazy"
                             />
                             <span>{avatar.label}</span>
                           </button>
@@ -1454,9 +1458,11 @@ export default function EmployeeHomePage() {
                   </div>
                   {profilePhotoUrl && (
                     <div className="mt-4 flex items-center gap-3">
-                      <img
+                      <Image
                         src={profilePhotoUrl}
                         alt={t("employee.home.profilePrompt.photoPreviewAlt")}
+                        width={64}
+                        height={64}
                         className="h-16 w-16 rounded-full border border-border object-cover"
                       />
                       <button

@@ -37,10 +37,26 @@ Create a `.env.local` file (Next.js automatically loads it) with the following k
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `NEXT_PUBLIC_SITE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY` (server-side use only)
+- `SUPABASE_STORAGE_SERVICE_ROLE_KEY` (optional; lightweight service role used by automated smoke tests)
 - `RESEND_API_KEY` / `RESEND_FROM` (email delivery)
 - `CRON_SECRET` – shared secret that authorizes the scheduled purge job to call `/api/employment/purge`.
 
 Never commit production secrets; the example values in this repo are for local development only.
+
+### Storage smoke test
+
+CI can verify that the profile-photo bucket is writable by running:
+
+```bash
+npm run smoke:storage
+```
+
+The script uploads a short text blob to `${NEXT_PUBLIC_SUPABASE_PROFILE_BUCKET}/smoke-tests/`, confirms it appears in a listing response, and deletes it. Provide your Supabase URL plus one of:
+
+- `SUPABASE_STORAGE_SERVICE_ROLE_KEY` – preferred, scoped to storage access only.
+- `SUPABASE_SERVICE_ROLE_KEY` – fallback if you do not have a dedicated storage key.
+
+Add either secret to `.env.local` (and CI) so the smoke test can run without prompting.
 
 ## Automated purge job
 

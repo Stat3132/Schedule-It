@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { Moon, Sun, Globe, Bell, Calendar, Clock, Eye, Type, CheckCircle } from 'lucide-react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import ProfileEditorCard from '@/components/settings/ProfileEditorCard';
 import { useI18n } from '../../../lib/i18n';
 
 const supabase = createClientComponentClient();
@@ -99,6 +100,8 @@ export default function Settings() {
             {t('subtitle')}
           </p>
         </div>
+
+        <ProfileEditorCard isDark={theme === 'dark'} />
 
         <section className={`${theme === 'dark' ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow-sm p-6 space-y-6`}>
           <div className="flex items-center gap-3 mb-4">
