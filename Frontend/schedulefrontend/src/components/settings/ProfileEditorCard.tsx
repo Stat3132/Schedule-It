@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import Cropper, { type Area, type MediaSize } from "react-easy-crop";
-import Image from "next/image";
+import NextImage from "next/image";
 import "react-easy-crop/react-easy-crop.css";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { Camera, Loader2, X } from "lucide-react";
@@ -356,7 +356,7 @@ export default function ProfileEditorCard({ isDark = false }: ProfileEditorCardP
             <div className="flex flex-col items-center gap-3 lg:w-1/3">
               <div className="relative h-28 w-28 overflow-hidden rounded-full border border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-900">
                 {photoUrl ? (
-                  <Image
+                  <NextImage
                     src={photoUrl}
                     alt={t("settings.profile.photoLabel")}
                     fill

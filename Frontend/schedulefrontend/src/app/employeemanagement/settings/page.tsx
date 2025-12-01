@@ -1,21 +1,23 @@
 "use client";
-import { useState, useEffect } from 'react';
-import { Moon, Sun, Globe, Bell, Calendar, Clock, Eye, Type, CheckCircle } from 'lucide-react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
-import ProfileEditorCard from '@/components/settings/ProfileEditorCard';
-import { useI18n } from '../../../lib/i18n';
+import { useState, useEffect } from "react";
+import { Moon, Sun, Globe, Bell, Calendar, Clock, Eye, Type, CheckCircle } from "lucide-react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import ProfileEditorCard from "@/components/settings/ProfileEditorCard";
+import { useI18n } from "../../../lib/i18n";
 
 const supabase = createClientComponentClient();
 
 export default function Settings() {
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    if (typeof window === 'undefined') return 'light';
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    if (typeof window === "undefined") return "light";
     try {
-      const saved = localStorage.getItem('theme');
-      if (saved === 'dark' || saved === 'light') return saved as 'dark' | 'light';
-      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
-    } catch (e) {}
-    return 'light';
+      const saved = localStorage.getItem("theme");
+      if (saved === "dark" || saved === "light") return saved as "dark" | "light";
+      if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) return "dark";
+    } catch {
+      // ignore
+    }
+    return "light";
   });
   const { locale, setLocale, t } = useI18n();
   const [fontSize, setFontSize] = useState('medium');
@@ -31,28 +33,17 @@ export default function Settings() {
   // Apply the initial theme to the document on mount. We initialize `theme`
   // synchronously from localStorage, so this only needs to run once.
   useEffect(() => {
-    if (typeof document !== 'undefined') {
-      if (theme === 'dark') document.documentElement.classList.add('dark');
-      else document.documentElement.classList.remove('dark');
+    if (typeof document !== "undefined") {
+      if (theme === "dark") document.documentElement.classList.add("dark");
+      else document.documentElement.classList.remove("dark");
     }
-  }, []);
+  }, [theme]);
 
   useEffect(() => {
     if (!showToast) return;
     const timer = setTimeout(() => setShowToast(false), 3200);
     return () => clearTimeout(timer);
   }, [showToast]);
-
-  const applyThemeToDocument = (t: 'light' | 'dark') => {
-    try {
-      if (typeof document !== 'undefined') {
-        if (t === 'dark') document.documentElement.classList.add('dark');
-        else document.documentElement.classList.remove('dark');
-      }
-    } catch (e) {
-      // ignore
-    }
-  };
 
   const saveChanges = async () => {
     try {
@@ -62,16 +53,22 @@ export default function Settings() {
       if (user) {
         await supabase.auth.updateUser({ data: { theme } });
       }
-    } catch (e) {
+    } catch (err) {
+      console.error("Failed to persist theme", err);
     }
 
-    try { localStorage.setItem('theme', theme); } catch {}
+    try {
+      localStorage.setItem("theme", theme);
+    } catch (err) {
+      console.error("Failed to write theme to localStorage", err);
+    }
 
     try {
       const expires = 60 * 60 * 24 * 365; // seconds
       const cookieVal = encodeURIComponent(theme);
       document.cookie = `theme=${cookieVal}; Max-Age=${expires}; Path=/; SameSite=Lax`;
-    } catch (e) {
+    } catch (err) {
+      console.error("Failed to set theme cookie", err);
     }
 
     setShowToast(true);
@@ -135,8 +132,7 @@ export default function Settings() {
               <div className="flex gap-2">
                 <button
                   onClick={() => {
-                    setTheme('light');
-                    applyThemeToDocument('light');
+                    setTheme("light");
                   }}
                   className={`px-4 py-2 rounded-lg transition-colors ${
                     theme === 'light'
@@ -148,8 +144,7 @@ export default function Settings() {
                 </button>
                 <button
                   onClick={() => {
-                    setTheme('dark');
-                    applyThemeToDocument('dark');
+                    setTheme("dark");
                   }}
                   className={`px-4 py-2 rounded-lg transition-colors ${
                     theme === 'dark'

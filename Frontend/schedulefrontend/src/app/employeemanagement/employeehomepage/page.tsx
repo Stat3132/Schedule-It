@@ -1,11 +1,11 @@
 "use client";
 
-import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { createAnnouncement } from "../../../lib/announcements";
-import { Calendar, Clock, Bell, Settings, LogOut, AlertCircle } from "lucide-react";
+import { Clock, AlertCircle } from "lucide-react";
 import { useI18n } from "../../../lib/i18n";
 
 // ---- Types ----
@@ -344,10 +344,8 @@ export default function EmployeeHomePage() {
     router.replace("/business-selection");
   };
 
-  const maybeShowAnnouncementForUser = async (
-    userId: string,
-    roleId: string | null,
-  ) => {
+  const maybeShowAnnouncementForUser = useCallback(
+    async (userId: string, roleId: string | null) => {
     if (!roleId) return;
     if (typeof window === "undefined") return;
 
@@ -415,7 +413,9 @@ export default function EmployeeHomePage() {
     }
 
     setAnnouncementToShow({ announcement: firstUnseen, senderName });
-  };
+  },
+  [supabase, t],
+  );
 
   const handleDismissAnnouncement = () => {
     if (!announcementToShow || !currentUserId) {
@@ -854,7 +854,6 @@ export default function EmployeeHomePage() {
             const shiftDate = new Date(s.start_ts);
             const weekdayIndex = shiftDate.getDay();
             const role = roleById[s.role_id]?.name ?? shiftFallbackLabel;
-            const color = roleById[s.role_id]?.color ?? null;
             const locationName = locById[s.location_id]?.name ?? null;
 
             if (a.status === "dropped") {
@@ -972,7 +971,7 @@ export default function EmployeeHomePage() {
       if (!currentUserId || !employmentState || awaitingAuthorization) return;
       await maybeShowAnnouncementForUser(currentUserId, employmentState.role_id);
     })();
-  }, [currentUserId, employmentState, supabase, t, awaitingAuthorization]);
+  }, [currentUserId, employmentState, awaitingAuthorization, maybeShowAnnouncementForUser]);
 
   const todayIdx = new Date().getDay();
   const todayFlags = dayFlags[todayIdx];

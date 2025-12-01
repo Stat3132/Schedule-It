@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, X, Plus } from "lucide-react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { createAnnouncement } from "../../../lib/announcements";
@@ -48,7 +47,6 @@ function normalizeToLocalDay(d: Date): Date {
 /* ========= Page ========= */
 export default function TimeOffRequestsPage() {
   const supabase = createClientComponentClient();
-  const router = useRouter();
   const { t, locale } = useI18n();
 
   const [requests, setRequests] = useState<RequestVM[]>([]);
@@ -62,6 +60,51 @@ export default function TimeOffRequestsPage() {
   const [userId, setUserId] = useState<UUID | null>(null);
   const [displayName, setDisplayName] = useState<string>(
     t("employee.timeOff.currentUserFallback"),
+  );
+
+  /* ----- reload requests for this user ----- */
+  const reloadRequests = useCallback(
+    async (uid: UUID, name: string) => {
+      const { data: rows, error } = await supabase
+        .from("time_off_request")
+        .select("id,user_id,start_ts,end_ts,reason,status")
+        .eq("user_id", uid)
+        .order("start_ts", { ascending: false });
+
+      if (error) {
+        console.error("Time off load error", error);
+        setRequests([]);
+        return;
+      }
+
+      const reqs = (rows ?? []) as TORow[];
+
+      const vms: RequestVM[] = reqs.map((r) => {
+        const startRaw = new Date(r.start_ts); // stored start (inclusive)
+        const endRaw = new Date(r.end_ts); // stored exclusive end
+
+        // Last included local day is endRaw - 1 ms
+        const lastIncluded = new Date(endRaw.getTime() - 1);
+
+        const firstDay = normalizeToLocalDay(startRaw);
+        const lastDay = normalizeToLocalDay(lastIncluded);
+
+        return {
+          id: r.id,
+          employee_id: r.user_id,
+          employee_name: name,
+          startISO: firstDay.toISOString(),
+          endISO: lastDay.toISOString(),
+          startYMD: toYMD(firstDay),
+          endYMD: toYMD(lastDay),
+          reason: r.reason ?? "",
+          status: r.status,
+        };
+      });
+
+      setRequests(vms);
+    },
+    [supabase],
   );
 
   /* ----- boot ----- */
@@ -111,49 +154,7 @@ export default function TimeOffRequestsPage() {
     return () => {
       cancelled = true;
     };
-  }, [supabase, t]);
-
-  /* ----- reload requests for this user ----- */
-  async function reloadRequests(uid: UUID, name: string) {
-    const { data: rows, error } = await supabase
-      .from("time_off_request")
-      .select("id,user_id,start_ts,end_ts,reason,status")
-      .eq("user_id", uid)
-      .order("start_ts", { ascending: false });
-
-    if (error) {
-      console.error("Time off load error", error);
-      setRequests([]);
-      return;
-    }
-
-    const reqs = (rows ?? []) as TORow[];
-
-    const vms: RequestVM[] = reqs.map((r) => {
-      const startRaw = new Date(r.start_ts);   // stored start (inclusive)
-      const endRaw = new Date(r.end_ts);       // stored exclusive end
-
-      // Last included local day is endRaw - 1 ms
-      const lastIncluded = new Date(endRaw.getTime() - 1);
-
-      const firstDay = normalizeToLocalDay(startRaw);
-      const lastDay = normalizeToLocalDay(lastIncluded);
-
-      return {
-        id: r.id,
-        employee_id: r.user_id,
-        employee_name: name,
-        startISO: firstDay.toISOString(),
-        endISO: lastDay.toISOString(),
-        startYMD: toYMD(firstDay),
-        endYMD: toYMD(lastDay),
-        reason: r.reason ?? "",
-        status: r.status,
-      };
-    });
-
-    setRequests(vms);
-  }
+  }, [supabase, t, reloadRequests]);
 
   /* ----- calendar helpers ----- */
   const getDaysInMonth = (d: Date) =>

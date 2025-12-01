@@ -2,9 +2,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-import { AlertTriangle, Check, X, Clock, LogOut } from "lucide-react";
+import { AlertTriangle, Check, X, Clock } from "lucide-react";
 
 type BusinessOpt = { id: string; name: string | null };
 type LocationOpt = { id: string; name: string | null };
@@ -100,7 +99,6 @@ function fmtDateTime(iso: string) {
 
 export default function ManageDroppedShiftsPage() {
   const supabase = useRef(createClientComponentClient()).current;
-  const router = useRouter();
 
   const [loading, setLoading] = useState(true);
   const [busyActionId, setBusyActionId] = useState<string | null>(null);
@@ -184,7 +182,7 @@ export default function ManageDroppedShiftsPage() {
 
       if (!cancelled) {
         setBusinesses(merged);
-        if (!selectedBiz && merged.length) setSelectedBiz(merged[0].id);
+        setSelectedBiz((prev) => prev ?? merged[0]?.id ?? null);
         setLoading(false);
       }
     })();
@@ -225,11 +223,13 @@ export default function ManageDroppedShiftsPage() {
       .eq("business_id", selectedBiz)
       .then(({ data }) => {
         setLocations((data ?? []) as LocationOpt[]);
-        if (selectedLoc !== "ALL" && !(data ?? []).find((l) => l.id === selectedLoc)) {
-          setSelectedLoc("ALL");
-        }
+        setSelectedLoc((prev) => {
+          if (prev === "ALL") return prev;
+          const exists = (data ?? []).some((l) => l.id === prev);
+          return exists ? prev : "ALL";
+        });
       });
-  }, [selectedBiz]);
+  }, [selectedBiz, supabase]);
 
   const scopeKey = useMemo(
     () => `${selectedBiz ?? ""}|${selectedLoc}`,

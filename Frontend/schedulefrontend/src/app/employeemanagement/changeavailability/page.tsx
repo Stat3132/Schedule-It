@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, Calendar as CalendarIcon } from "lucide-react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { createAnnouncement } from "../../../lib/announcements";
@@ -84,7 +83,6 @@ function extractReason(raw: unknown): string | undefined {
 
 export default function AvailabilityPage() {
   const supabase = createClientComponentClient();
-  const router = useRouter();
   const { t, locale } = useI18n();
 
   const [currentSchedule, setCurrentSchedule] =
@@ -93,6 +91,36 @@ export default function AvailabilityPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const loadAvailability = useCallback(
+    async (uid: string, cancelled = false) => {
+      const { data, error } = await supabase
+        .from("availability")
+        .select(
+          "id,user_id,weekly_pattern_json,effective_from,effective_to,status",
+        )
+        .eq("user_id", uid)
+        .order("effective_from", { ascending: false });
+
+      if (error) {
+        console.error("Error loading availability:", error);
+        return;
+      }
+
+      const rows = (data ?? []) as AvailabilityRow[];
+      if (cancelled) return;
+
+      setHistory(rows);
+
+      if (rows.length > 0) {
+        const latest = rows.find((r) => r.status === "approved") ?? rows[0];
+        setCurrentSchedule(normalizePattern(latest.weekly_pattern_json));
+      } else {
+        setCurrentSchedule(null);
+      }
+    },
+    [supabase],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -127,34 +155,7 @@ export default function AvailabilityPage() {
     return () => {
       cancelled = true;
     };
-  }, [supabase]);
-
-  const loadAvailability = async (uid: string, cancelled = false) => {
-    const { data, error } = await supabase
-      .from("availability")
-      .select(
-        "id,user_id,weekly_pattern_json,effective_from,effective_to,status",
-      )
-      .eq("user_id", uid)
-      .order("effective_from", { ascending: false });
-
-    if (error) {
-      console.error("Error loading availability:", error);
-      return;
-    }
-
-    const rows = (data ?? []) as AvailabilityRow[];
-    if (cancelled) return;
-
-    setHistory(rows);
-
-    if (rows.length > 0) {
-      const latest = rows.find((r) => r.status === "approved") ?? rows[0];
-      setCurrentSchedule(normalizePattern(latest.weekly_pattern_json));
-    } else {
-      setCurrentSchedule(null);
-    }
-  };
+  }, [supabase, loadAvailability]);
 
   const handleSubmitRequest = async (requestData: {
     startDate: Date;
@@ -284,7 +285,6 @@ export default function AvailabilityPage() {
             <div className="space-y-3">
               {history.map((row: AvailabilityRow, idx) => {
                 const reason = extractReason(row.weekly_pattern_json);
-                const start = new Date(row.effective_from);
                 const end = row.effective_to ? new Date(row.effective_to) : null;
                 const startLabel = formatDate(row.effective_from);
                 const rangeLabel = end
