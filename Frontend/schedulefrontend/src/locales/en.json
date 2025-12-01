@@ -265,6 +265,9 @@
   "employee.messages.header.directSubtitle": "Direct message · {email}",
   "employee.messages.header.emptySubtitle": "Select a coworker or group to get started.",
   "employee.messages.status.online": "Online",
+  "employee.messages.status.sending": "Sending…",
+  "employee.messages.status.delivered": "Delivered",
+  "employee.messages.status.read": "Read",
   "employee.messages.auth.title": "Sign in to view messages",
   "employee.messages.auth.subtitle": "You must be logged in to use Schedule-It messaging.",
   "employee.messages.selectPrompt": "Select a coworker on the left to start chatting.",
@@ -387,6 +390,10 @@
   "employee.messages.conversation.bioResolved": "{name} works as {role} at {location}.",
   "employee.messages.actions.requestTemplate": "Hi {name}, could you cover a shift for me this week?",
   "employee.messages.actions.offerTemplate": "Hi {name}, I can cover a shift if you need help this week.",
+
+  "employer.messages.status.sending": "Sending…",
+  "employer.messages.status.delivered": "Delivered",
+  "employer.messages.status.read": "Read",
 
   "employee.home.title": "Your Schedule",
   "employee.home.week.prefix": "Week of",

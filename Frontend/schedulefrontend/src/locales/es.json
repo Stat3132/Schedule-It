@@ -265,6 +265,9 @@
   "employee.messages.header.directSubtitle": "Mensaje directo · {email}",
   "employee.messages.header.emptySubtitle": "Selecciona un compañero o grupo para comenzar.",
   "employee.messages.status.online": "En línea",
+  "employee.messages.status.sending": "Enviando…",
+  "employee.messages.status.delivered": "Entregado",
+  "employee.messages.status.read": "Leído",
   "employee.messages.auth.title": "Inicia sesión para ver los mensajes",
   "employee.messages.auth.subtitle": "Debes iniciar sesión para usar la mensajería de Schedule-It.",
   "employee.messages.selectPrompt": "Selecciona un compañero a la izquierda para empezar a chatear.",
@@ -387,6 +390,10 @@
   "employee.messages.conversation.bioResolved": "{name} trabaja como {role} en {location}.",
   "employee.messages.actions.requestTemplate": "Hola {name}, ¿podrías cubrir un turno por mí esta semana?",
   "employee.messages.actions.offerTemplate": "Hola {name}, puedo cubrir un turno si necesitas ayuda esta semana.",
+
+  "employer.messages.status.sending": "Enviando…",
+  "employer.messages.status.delivered": "Entregado",
+  "employer.messages.status.read": "Leído",
 
   "employee.home.title": "Tu horario",
   "employee.home.week.prefix": "Semana del",

@@ -1155,6 +1155,10 @@ export default function CreateSchedulePage(): JSX.Element {
 
   const weekRangeLabel =
     DAYS.length === 7 ? `${DAYS[0].uiDate} – ${DAYS[6].uiDate}` : "";
+  const weekStartDayLabel =
+    DAY_LABELS.find((d) => d.value === weekStartDay)?.label ?? "Sunday";
+  const settingsWeekStartLabel =
+    DAY_LABELS.find((d) => d.value === settingsWeekStart)?.label ?? "Sunday";
 
   /* ---------- Render ---------- */
   return (
@@ -1174,37 +1178,67 @@ export default function CreateSchedulePage(): JSX.Element {
         </div>
 
         {/* Top row: location + store hours + status / week controls */}
-        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-medium">Location:</span>
-              <select
-                value={activeLocationId ?? ""}
-                onChange={(e) => handleLocationChange(e.target.value)}
-                className="px-2 py-1 rounded-md border border-border bg-background text-sm text-foreground"
-              >
-                {locations.length === 0 && (
-                  <option value="">No locations</option>
-                )}
-                {locations.length > 0 && !activeLocationId && (
-                  <option value="">Select location…</option>
-                )}
-                {locations.map((loc) => (
-                  <option key={loc.id} value={loc.id}>
-                    {loc.name}
-                  </option>
-                ))}
-              </select>
+        <div className="grid gap-4 lg:grid-cols-[1.35fr_1fr]">
+          <section className="border border-border rounded-2xl bg-background/80 p-4 space-y-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-foreground/60">
+                  Active location
+                </p>
+                <p className="text-base font-semibold text-foreground">
+                  {locationName ?? "Select a location"}
+                </p>
+              </div>
+              <span className="text-[11px] text-foreground/60">
+                Week starts on {weekStartDayLabel}
+              </span>
             </div>
-            <p className="text-sm text-foreground">
-              <span className="font-medium">Store hours: </span>
-              {formatTime12(openHH)}–{formatTime12(closeHH)}
-            </p>
-          </div>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <label className="flex flex-col gap-1 text-sm text-foreground/80">
+                <span className="text-[11px] uppercase tracking-wide text-foreground/60">
+                  Switch location
+                </span>
+                <select
+                  value={activeLocationId ?? ""}
+                  onChange={(e) => handleLocationChange(e.target.value)}
+                  className="px-3 py-2 rounded-lg border border-border bg-background text-sm text-foreground"
+                >
+                  {locations.length === 0 && <option value="">No locations</option>}
+                  {locations.length > 0 && !activeLocationId && (
+                    <option value="">Select location…</option>
+                  )}
+                  {locations.map((loc) => (
+                    <option key={loc.id} value={loc.id}>
+                      {loc.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="rounded-xl border border-dashed border-border px-3 py-2">
+                <p className="text-[11px] uppercase tracking-wide text-foreground/60">
+                  Store hours
+                </p>
+                <p className="text-lg font-semibold text-foreground">
+                  {formatTime12(openHH)} – {formatTime12(closeHH)}
+                </p>
+                <p className="text-xs text-foreground/60">Shifts must stay inside this range.</p>
+              </div>
+            </div>
+          </section>
 
-          <div className="flex flex-col items-start sm:items-end gap-3">
-            <div className="text-sm text-foreground/70">
-              <span className="font-medium mr-1">Current week status:</span>
+          <section className="border border-border rounded-2xl bg-background/80 p-4 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-foreground/60">
+                  Current week
+                </p>
+                <p className="text-base font-semibold text-foreground">
+                  {weekRangeLabel || "Select a week"}
+                </p>
+                <p className="text-xs text-foreground/60">
+                  Status applies to this range.
+                </p>
+              </div>
               <span
                 className={
                   scheduleStatus === "published"
@@ -1222,14 +1256,11 @@ export default function CreateSchedulePage(): JSX.Element {
               </span>
             </div>
 
-            <div className="flex flex-col items-start sm:items-end gap-2 text-xs text-foreground/70">
-                <div className="flex flex-wrap items-center gap-2">
-              <span>
-                  Week of{" "}
-                  <span className="font-semibold text-foreground">
-                    {weekRangeLabel}
-                  </span>
-                </span>
+            <div className="space-y-2 text-xs text-foreground/70">
+              <p className="text-[11px] uppercase tracking-wide text-foreground/60">
+                Move between weeks
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
                 <div className="inline-flex rounded-lg border border-border bg-background overflow-hidden">
                   <button
                     onClick={() => setWeekOffset((w) => w - 1)}
@@ -1260,29 +1291,33 @@ export default function CreateSchedulePage(): JSX.Element {
                   Schedule settings
                 </button>
               </div>
+            </div>
 
-              <div className="flex flex-wrap items-center gap-3 text-[11px] text-foreground/70">
-                <span>
-                  Shifts:{" "}
-                  <span className="font-semibold text-foreground">
-                    {totalShiftCount}
-                  </span>
-                </span>
-                <span>
-                  Employees scheduled:{" "}
-                  <span className="font-semibold text-foreground">
-                    {uniqueEmployeesScheduled}
-                  </span>
-                </span>
-                <span>
-                  Total hours:{" "}
-                  <span className="font-semibold text-foreground">
-                    {totalScheduledHours}
-                  </span>
-                </span>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="rounded-xl bg-background/60 border border-border/70 px-3 py-2 text-center">
+                <p className="text-[11px] uppercase tracking-wide text-foreground/60">
+                  Shifts
+                </p>
+                <p className="text-2xl font-semibold text-foreground">{totalShiftCount}</p>
+              </div>
+              <div className="rounded-xl bg-background/60 border border-border/70 px-3 py-2 text-center">
+                <p className="text-[11px] uppercase tracking-wide text-foreground/60">
+                  Employees
+                </p>
+                <p className="text-2xl font-semibold text-foreground">
+                  {uniqueEmployeesScheduled}
+                </p>
+              </div>
+              <div className="rounded-xl bg-background/60 border border-border/70 px-3 py-2 text-center">
+                <p className="text-[11px] uppercase tracking-wide text-foreground/60">
+                  Total hours
+                </p>
+                <p className="text-2xl font-semibold text-foreground">
+                  {totalScheduledHours}
+                </p>
               </div>
             </div>
-          </div>
+          </section>
         </div>
 
         {/* Weekly preview card */}
@@ -1658,10 +1693,15 @@ export default function CreateSchedulePage(): JSX.Element {
       {isSettingsOpen && (
         <div className="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-4">
           <div className="bg-background rounded-xl shadow-xl max-w-md w-full p-6 border border-border text-foreground">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-foreground">
-                Schedule settings
-              </h3>
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-foreground/60">
+                  Schedule controls
+                </p>
+                <h3 className="text-lg font-semibold text-foreground">
+                  Schedule settings
+                </h3>
+              </div>
               <button
                 onClick={() => setIsSettingsOpen(false)}
                 className="text-foreground/60 hover:text-foreground"
@@ -1669,33 +1709,39 @@ export default function CreateSchedulePage(): JSX.Element {
                 <X className="w-5 h-5" />
               </button>
             </div>
+            <p className="text-sm text-foreground/70 mb-4">
+              Adjust when the scheduling week starts so managers always work with the same view.
+            </p>
 
             <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-foreground/70 mb-1">
-                  First day of schedule week
-                </label>
-                <select
-                  value={settingsWeekStart}
-                  onChange={(e) =>
-                    setSettingsWeekStart(parseInt(e.target.value, 10))
-                  }
-                  className="w-full px-3 py-2 border border-border rounded-lg focus:ring-2 focus:ring-blue-500 text-sm bg-background text-foreground"
-                >
-                  {DAY_LABELS.map((d) => (
-                    <option key={d.value} value={d.value}>
-                      {d.label}
-                    </option>
-                  ))}
-                </select>
-                <p className="mt-1 text-xs text-foreground/70">
-                  This controls which day your schedule grid starts on for this
-                  business. For example, if you post schedules from Monday to
-                  Sunday, choose Monday.
-                </p>
+              <div className="rounded-xl border border-border/80 bg-background/60 p-4 space-y-3">
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-foreground/60">
+                    First day of the schedule week
+                  </p>
+                  <select
+                    value={settingsWeekStart}
+                    onChange={(e) => setSettingsWeekStart(parseInt(e.target.value, 10))}
+                    className="w-full mt-2 px-3 py-2 border border-border rounded-lg focus:ring-2 focus:ring-blue-500 text-sm bg-background text-foreground"
+                  >
+                    {DAY_LABELS.map((d) => (
+                      <option key={d.value} value={d.value}>
+                        {d.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="text-xs text-foreground/70 space-y-1">
+                  <p>
+                    Currently set to <span className="font-semibold text-foreground">{settingsWeekStartLabel}</span>.
+                  </p>
+                  <p>
+                    Your grid will reorder to start on this day for every manager working in this business.
+                  </p>
+                </div>
               </div>
 
-              <div className="flex gap-3 pt-4">
+              <div className="flex gap-3 pt-2">
                 <button
                   onClick={() => setIsSettingsOpen(false)}
                   className="flex-1 px-4 py-2 border border-border text-foreground font-medium rounded-lg hover:bg-background/50"
@@ -1719,11 +1765,11 @@ export default function CreateSchedulePage(): JSX.Element {
                 </button>
               </div>
 
-              <p className="text-xs text-foreground/70 pt-2">
-                You can also move between weeks using the Previous / This week /
-                Next controls above. Schedules are saved for whichever week is
-                currently active.
-              </p>
+              <div className="rounded-xl border border-dashed border-border/80 bg-background/40 p-3 text-xs text-foreground/70">
+                <p>
+                  Tip: you can still jump between weeks with the Previous / This week / Next controls on the main page. Settings here simply lock the starting day so everyone sees the same layout.
+                </p>
+              </div>
             </div>
           </div>
         </div>

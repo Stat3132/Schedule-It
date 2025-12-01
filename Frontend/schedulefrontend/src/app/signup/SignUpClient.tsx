@@ -5,6 +5,7 @@ import React, { useState } from "react";
 import { User } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { Button } from "@/components/ui/button";
 
 export default function SignUpClient() {
   const router = useRouter();
@@ -73,7 +74,7 @@ export default function SignUpClient() {
       if (checkJson?.exists) {
         setMessage({
           type: "error",
-          text: "An account with this email already exists. Please sign in instead.",
+          text: "Email is already in use.",
         });
         setLoading(false);
         return;
@@ -103,10 +104,20 @@ export default function SignUpClient() {
       if (error) {
         console.error("SignUp error:", error);
         const rawMsg = (error as { message?: string })?.message ?? "";
+        const normalized = rawMsg.toLowerCase();
+        const duplicate = normalized.includes("registered") || normalized.includes("already");
         setMessage({
           type: "error",
-          text: rawMsg || "Unexpected error during sign up.",
+          text: duplicate ? "Email is already in use." : rawMsg || "Unexpected error during sign up.",
         });
+        setLoading(false);
+        return;
+      }
+
+      const identityCount = data.user?.identities?.length ?? 0;
+      if (identityCount === 0) {
+        // Supabase returns 200 with empty identities when the email already exists but isn't confirmed yet.
+        setMessage({ type: "error", text: "Email is already in use." });
         setLoading(false);
         return;
       }
@@ -145,7 +156,17 @@ export default function SignUpClient() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6">
+    <div className="relative min-h-screen flex items-center justify-center p-6">
+      <div className="fixed bottom-4 left-4 z-20">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => router.back()}
+        >
+          Back
+        </Button>
+      </div>
       <div className="w-full max-w-2xl">
         <div className="bg-card rounded-2xl shadow-xl border border-border overflow-hidden">
           <div className="bg-primary px-8 py-10">

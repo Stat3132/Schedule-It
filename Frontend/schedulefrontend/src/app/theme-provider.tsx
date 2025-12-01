@@ -3,6 +3,8 @@ import { useEffect } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { usePathname } from 'next/navigation';
 
+const AUTH_THEME_EXCLUSION = /^\/(?:auth|signin|login)(?:$|\/)/;
+
 export default function ThemeProvider(): null {
   const supabase = createClientComponentClient();
   const pathname = usePathname();
@@ -10,8 +12,8 @@ export default function ThemeProvider(): null {
   // Apply persisted theme to document root so Tailwind `dark:` styles work.
   // If a logged-in user has a saved preference in their user_metadata, prefer that.
   useEffect(() => {
-    // Don't run on auth pages (signup/signin/login) — those should not be themed by user preference.
-    if (typeof pathname === 'string' && (pathname.startsWith('/signup') || pathname.startsWith('/signin') || pathname.startsWith('/auth') || pathname.startsWith('/login'))) {
+    // Skip only the true auth utility routes so login screens stay neutral.
+    if (typeof pathname === 'string' && AUTH_THEME_EXCLUSION.test(pathname)) {
       return;
     }
 

@@ -116,6 +116,8 @@ type MessageRow = {
   recipient_id: UUID;
   content: string;
   created_at: string;
+  delivered_at: string | null;
+  read_at: string | null;
 };
 
 type DMConversation = {
@@ -189,6 +191,27 @@ function groupChannelName(groupId: UUID) {
   return `group:${groupId}`;
 }
 
+function isMissingReadRpc(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const code = (error as PostgrestError).code;
+  return code === "42883";
+}
+
+function isMissingReceiptColumn(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const typed = error as PostgrestError;
+  if (typed.code === "42703") return true;
+  const message = (typed.message ?? "").toLowerCase();
+  const details =
+    typeof typed.details === "string" ? typed.details.toLowerCase() : "";
+  return (
+    message.includes("delivered_at") ||
+    message.includes("read_at") ||
+    details.includes("delivered_at") ||
+    details.includes("read_at")
+  );
+}
+
 function profileDisplayName(profile?: Profile | null, fallback?: string) {
   const display = profile?.display_name?.trim();
   if (display) return display;
@@ -209,6 +232,30 @@ function profileInitials(profile?: Profile | null) {
     .map((part) => (part[0] ?? "").toUpperCase())
     .join("");
   return chars || "?";
+}
+
+function profileSortValue(profile: Profile) {
+  const resolved = profileDisplayName(profile, profile.email ?? "") || profile.email || "";
+  return resolved.trim().toLowerCase();
+}
+
+function compareProfilesByName(a: Profile, b: Profile) {
+  const nameA = profileSortValue(a);
+  const nameB = profileSortValue(b);
+  if (nameA && nameB && nameA !== nameB) {
+    return nameA.localeCompare(nameB);
+  }
+  if (nameA && !nameB) return -1;
+  if (!nameA && nameB) return 1;
+  return (a.email ?? "").localeCompare(b.email ?? "");
+}
+
+function sortProfilesByName(profiles: Profile[]) {
+  return [...profiles].sort(compareProfilesByName);
+}
+
+function sortConversationsByName(conversations: DMConversation[]) {
+  return [...conversations].sort((a, b) => compareProfilesByName(a.peer, b.peer));
 }
 
 function AvatarCircle({
@@ -430,9 +477,13 @@ export default function EmployerMessagingPage() {
   }, [supabase, activePeer?.id, roleLookup, locationLookup]);
 
   const messageEndRef = useRef<HTMLDivElement | null>(null);
+  const messageContainerRef = useRef<HTMLDivElement | null>(null);
   const channelRef = useRef<ReturnType<SupabaseClient['channel']> | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activePeerRef = useRef<Profile | null>(null);
   const activeGroupRef = useRef<GroupChat | null>(null);
+  const peerReceiptSyncRef = useRef<Record<string, boolean>>({});
+  const receiptColumnsAvailableRef = useRef(true);
   const actionMenuAnchorRef = useRef<HTMLDivElement | null>(null);
   const actionMenuPanelRef = useRef<HTMLDivElement | null>(null);
   const addContactAnchorRef = useRef<HTMLButtonElement | null>(null);
@@ -448,6 +499,44 @@ export default function EmployerMessagingPage() {
     saveReadCounts(EMPLOYER_SCOPE, "group", next);
   }, []);
 
+  const syncPeerReceipts = useCallback(
+    async (peerId: UUID) => {
+      if (!currentUserId) return;
+      if (peerReceiptSyncRef.current[peerId]) return;
+      peerReceiptSyncRef.current[peerId] = true;
+      try {
+        const { error: rpcError } = await supabase.rpc(
+          "mark_direct_messages_read",
+          {
+            peer_id: peerId,
+          },
+        );
+
+        if (rpcError) {
+          console.warn(
+            "mark_direct_messages_read RPC failed in employer view; using fallback update.",
+            rpcError,
+          );
+          const { error: legacyError } = await supabase
+            .from("message")
+            .update({ read_at: new Date().toISOString() })
+            .eq("recipient_id", currentUserId)
+            .eq("sender_id", peerId)
+            .is("read_at", null);
+
+          if (legacyError) {
+            throw legacyError;
+          }
+        }
+      } catch (err) {
+        console.error("Error syncing employer read receipts:", err);
+      } finally {
+        delete peerReceiptSyncRef.current[peerId];
+      }
+    },
+    [currentUserId, supabase],
+  );
+
   const markPeerAsRead = useCallback(
     (peerId: UUID | null) => {
       if (!peerId || !readCountsReady) return;
@@ -462,8 +551,11 @@ export default function EmployerMessagingPage() {
         delete clone[peerId];
         return clone;
       });
+      if (latestTotal > current) {
+        void syncPeerReceipts(peerId);
+      }
     },
-    [readCountsReady, persistDmReads],
+    [readCountsReady, persistDmReads, syncPeerReceipts],
   );
 
   const markGroupAsRead = useCallback(
@@ -484,24 +576,61 @@ export default function EmployerMessagingPage() {
     [readCountsReady, persistGroupReads],
   );
 
+  const handleMessageScroll = useCallback(() => {
+    const container = messageContainerRef.current;
+    if (!container) return;
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distanceFromBottom > 16) return;
+    if (activePeer?.id) {
+      markPeerAsRead(activePeer.id);
+    }
+    if (activeGroup?.id) {
+      markGroupAsRead(activeGroup.id);
+    }
+  }, [activePeer?.id, activeGroup?.id, markPeerAsRead, markGroupAsRead]);
+
   // Scroll chat to bottom whenever messages change
   useEffect(() => {
     if (messageEndRef.current) {
       messageEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages.length]);
+    handleMessageScroll();
+  }, [messages.length, handleMessageScroll]);
+
+  useEffect(() => {
+    activePeerRef.current = activePeer;
+  }, [activePeer]);
 
   useEffect(() => {
     activeGroupRef.current = activeGroup;
   }, [activeGroup]);
 
   useEffect(() => {
+    handleMessageScroll();
+  }, [handleMessageScroll]);
+
+  useEffect(() => {
     markPeerAsRead(activePeer?.id ?? null);
   }, [activePeer?.id, markPeerAsRead]);
 
   useEffect(() => {
+    if (!readCountsReady) return;
+    if (activePeer?.id) {
+      markPeerAsRead(activePeer.id);
+    }
+  }, [readCountsReady, activePeer?.id, markPeerAsRead]);
+
+  useEffect(() => {
     markGroupAsRead(activeGroup?.id ?? null);
   }, [activeGroup?.id, markGroupAsRead]);
+
+  useEffect(() => {
+    if (!readCountsReady) return;
+    if (activeGroup?.id) {
+      markGroupAsRead(activeGroup.id);
+    }
+  }, [readCountsReady, activeGroup?.id, markGroupAsRead]);
 
   useEffect(() => {
     if (!readCountsReady) return;
@@ -571,6 +700,10 @@ export default function EmployerMessagingPage() {
       dmTotalsRef.current = totals;
       if (!cancelled) {
         setIncomingCounts(unread);
+        const currentActivePeerId = activePeerRef.current?.id ?? null;
+        if (currentActivePeerId) {
+          markPeerAsRead(currentActivePeerId);
+        }
       }
     }
 
@@ -578,7 +711,7 @@ export default function EmployerMessagingPage() {
     return () => {
       cancelled = true;
     };
-  }, [supabase, currentUserId, conversations, readCountsReady]);
+  }, [supabase, currentUserId, conversations, readCountsReady, markPeerAsRead]);
 
   useEffect(() => {
     if (!readCountsReady) return;
@@ -670,6 +803,10 @@ export default function EmployerMessagingPage() {
           dmTotalsRef.current[senderId] = nextTotal;
           const readCount = dmReadCountsRef.current[senderId] ?? 0;
           const unreadCount = Math.max(nextTotal - readCount, 0);
+          if (activePeer?.id === senderId) {
+            markPeerAsRead(senderId);
+            return;
+          }
           setIncomingCounts((prev) => {
             if (unreadCount === 0) {
               if (!prev[senderId]) return prev;
@@ -686,7 +823,7 @@ export default function EmployerMessagingPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [supabase, currentUserId]);
+  }, [supabase, currentUserId, activePeer?.id, markPeerAsRead]);
 
   useEffect(() => {
     if (!currentUserId || groups.length === 0) return;
@@ -716,6 +853,10 @@ export default function EmployerMessagingPage() {
           groupTotalsRef.current[groupId] = nextTotal;
           const readCount = groupReadCountsRef.current[groupId] ?? 0;
           const unreadCount = Math.max(nextTotal - readCount, 0);
+          if (activeGroup?.id === groupId) {
+            markGroupAsRead(groupId);
+            return;
+          }
           setGroupIncomingCounts((prev) => {
             if (unreadCount === 0) {
               if (!prev[groupId]) return prev;
@@ -732,7 +873,7 @@ export default function EmployerMessagingPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [supabase, currentUserId, groups]);
+  }, [supabase, currentUserId, groups, activeGroup?.id, markGroupAsRead]);
 
   // Load current user
   useEffect(() => {
@@ -1066,17 +1207,17 @@ export default function EmployerMessagingPage() {
         });
 
         if (!cancelled) {
-          const roster = profileRows;
-          setContacts(roster);
+          const sortedRoster = sortProfilesByName(profileRows);
+          setContacts(sortedRoster);
           setEmploymentMetaByUserId(employmentMeta);
           setConversations((prev) => {
             if (prev.length === 0) {
-              return roster.map((peer) => ({ peer, lastMessage: null }));
+              return sortConversationsByName(sortedRoster.map((peer) => ({ peer, lastMessage: null })));
             }
 
             const refreshed = prev
               .map((conv) => {
-                const updatedPeer = roster.find((profile) => profile.id === conv.peer.id);
+                const updatedPeer = sortedRoster.find((profile) => profile.id === conv.peer.id);
                 if (updatedPeer) {
                   return { ...conv, peer: updatedPeer };
                 }
@@ -1085,17 +1226,17 @@ export default function EmployerMessagingPage() {
               .filter(Boolean);
 
             return refreshed.length
-              ? refreshed
-              : roster.map((peer) => ({ peer, lastMessage: null }));
+              ? sortConversationsByName(refreshed as DMConversation[])
+              : sortConversationsByName(sortedRoster.map((peer) => ({ peer, lastMessage: null })));
           });
           setActivePeer((prev) => {
-            if (prev && roster.some((profile) => profile.id === prev.id)) {
+            if (prev && sortedRoster.some((profile) => profile.id === prev.id)) {
               return prev;
             }
             if (activeGroupRef.current) {
               return null;
             }
-            return roster[0] ?? null;
+            return sortedRoster[0] ?? null;
           });
           setIsLoadingContacts(false);
         }
@@ -1360,6 +1501,22 @@ export default function EmployerMessagingPage() {
         });
       };
 
+      const mergeIncomingDmUpdate = (incoming: MessageRow) => {
+        const participants = [incoming.sender_id, incoming.recipient_id];
+        if (!participants.includes(currentUserId) || !participants.includes(activePeer.id)) {
+          return;
+        }
+        setMessages((prev) => {
+          let changed = false;
+          const next = prev.map((message) => {
+            if (message.id !== incoming.id) return message;
+            changed = true;
+            return { ...message, ...incoming, kind: "dm" as const };
+          });
+          return changed ? next : prev;
+        });
+      };
+
       const channel = supabase
         .channel(channelName)
         .on(
@@ -1372,6 +1529,18 @@ export default function EmployerMessagingPage() {
           (payload) => {
             const newRow = payload.new as MessageRow;
             appendIncomingDm(newRow);
+          },
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "UPDATE",
+            schema: "public",
+            table: "message",
+          },
+          (payload) => {
+            const updatedRow = payload.new as MessageRow;
+            mergeIncomingDmUpdate(updatedRow);
           },
         )
         .on("broadcast", { event: "message" }, ({ payload }) => {
@@ -1880,6 +2049,8 @@ export default function EmployerMessagingPage() {
       recipient_id: activePeer.id,
       content,
       created_at: new Date().toISOString(),
+      delivered_at: null,
+      read_at: null,
       kind: "dm",
     };
 
@@ -1899,15 +2070,34 @@ export default function EmployerMessagingPage() {
       console.warn("Failed to read session before DM send", err);
     }
 
-    const { data, error } = await supabase
-      .from("message")
-      .insert({
-        sender_id: currentUserId,
-        recipient_id: activePeer.id,
-        content,
-      })
-      .select("*")
-      .single();
+    const baseSelect = "id,sender_id,recipient_id,content,created_at";
+    const receiptSelect = `${baseSelect},delivered_at,read_at`;
+
+    const performInsert = async (selectColumns: string) =>
+      supabase
+        .from("message")
+        .insert({
+          sender_id: currentUserId,
+          recipient_id: activePeer.id,
+          content,
+        })
+        .select(selectColumns)
+        .single();
+
+    const initialSelect = receiptColumnsAvailableRef.current
+      ? receiptSelect
+      : baseSelect;
+
+    let { data, error } = await performInsert(initialSelect);
+
+    if (error && receiptColumnsAvailableRef.current && isMissingReceiptColumn(error)) {
+      console.warn(
+        "Message receipt columns missing; retrying without them.",
+        error,
+      );
+      receiptColumnsAvailableRef.current = false;
+      ({ data, error } = await performInsert(baseSelect));
+    }
 
     if (error) {
       console.error("Error sending direct message:", error);
@@ -1916,8 +2106,10 @@ export default function EmployerMessagingPage() {
     }
 
     if (data) {
+      const persisted = data as unknown as MessageRow;
       const savedMessage: ConversationMessage = {
-        ...(data as MessageRow),
+        ...persisted,
+        delivered_at: persisted.delivered_at ?? new Date().toISOString(),
         kind: "dm",
       };
       setMessages((prev) =>
@@ -2097,14 +2289,18 @@ export default function EmployerMessagingPage() {
     setAddContactSearch("");
     setActiveGroup(null);
     setConversations((prev) => {
-      const existingIndex = prev.findIndex((conv) => conv.peer.id === peer.id);
-      if (existingIndex >= 0) {
-        const reordered = [...prev];
-        const [existing] = reordered.splice(existingIndex, 1);
-        return [existing, ...reordered];
+      const exists = prev.some((conv) => conv.peer.id === peer.id);
+      if (exists) {
+        return prev;
       }
-      return [{ peer, lastMessage: null }, ...prev];
+      return sortConversationsByName([...prev, { peer, lastMessage: null }]);
     });
+    setActivePeer(peer);
+  }
+
+  function handleSelectConversation(peer: Profile) {
+    setIsActionMenuOpen(false);
+    setActiveGroup(null);
     setActivePeer(peer);
   }
 
@@ -2622,7 +2818,7 @@ export default function EmployerMessagingPage() {
                   <li key={conv.peer.id}>
                     <button
                       type="button"
-                      onClick={() => handleSelectContact(conv.peer)}
+                      onClick={() => handleSelectConversation(conv.peer)}
                       className={[
                         "flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm transition-colors",
                         isActive
@@ -2802,7 +2998,11 @@ export default function EmployerMessagingPage() {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto bg-muted/40 px-4 py-3">
+        <div
+          ref={messageContainerRef}
+          className="flex-1 overflow-y-auto bg-muted/40 px-4 py-3"
+          onScroll={handleMessageScroll}
+        >
           {!activePeer && !activeGroup && (
             <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted-foreground">
               <MessageCircle className="mb-2 h-8 w-8 text-muted-foreground" />
@@ -2845,6 +3045,22 @@ export default function EmployerMessagingPage() {
                   : isMine
                     ? "bg-primary text-primary-foreground"
                     : "bg-card";
+                const timeLabel = new Date(msg.created_at).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                });
+                const statusLabel =
+                  isMine && msg.kind === "dm"
+                    ? msg.read_at
+                      ? t("employer.messages.status.read")
+                      : msg.delivered_at
+                        ? t("employer.messages.status.delivered")
+                        : t("employer.messages.status.sending")
+                    : null;
+                const metaRowClass = [
+                  "mt-1 flex items-center gap-2 text-[10px] text-muted-foreground/80",
+                  isMine ? "justify-end" : "justify-start",
+                ].join(" ");
                 return (
                   <div
                     key={`${msg.kind}-${msg.id}`}
@@ -2885,11 +3101,11 @@ export default function EmployerMessagingPage() {
                           {msg.content}
                         </p>
                       )}
-                      <div className="mt-1 text-[10px] text-muted-foreground/80">
-                        {new Date(msg.created_at).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
+                      <div className={metaRowClass}>
+                        {statusLabel ? (
+                          <span className="font-semibold">{statusLabel}</span>
+                        ) : null}
+                        <span>{timeLabel}</span>
                       </div>
                     </div>
                     {isMine && (

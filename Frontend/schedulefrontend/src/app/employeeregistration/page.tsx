@@ -1,7 +1,7 @@
 // app/employee/page.tsx
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Lock, Mail } from "lucide-react";
 
@@ -19,6 +19,11 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { useRouter } from "next/navigation";
+import {
+  clearRememberedEmail,
+  loadRememberedEmail,
+  saveRememberedEmail,
+} from "@/lib/rememberMe";
 
 export default function EmployeePage() {
   const router = useRouter();
@@ -30,14 +35,67 @@ export default function EmployeePage() {
     password: ''
   });
   const [loading, setLoading] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [showResetForm, setShowResetForm] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+
+  useEffect(() => {
+    const remembered = loadRememberedEmail("employee");
+    if (remembered?.email) {
+      setFormData((prev) => ({ ...prev, email: remembered.email }));
+      setRemember(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!remember) {
+      clearRememberedEmail("employee");
+      return;
+    }
+    if (formData.email.trim()) {
+      saveRememberedEmail("employee", formData.email);
+    }
+  }, [remember, formData.email]);
+
+  useEffect(() => {
+    if (showResetForm) {
+      setResetEmail((prev) => (prev ? prev : formData.email));
+    }
+  }, [showResetForm, formData.email]);
+
+  async function handlePasswordReset() {
+    if (!resetEmail.trim()) {
+      setMessage({ type: 'info', text: 'Provide the email you use to sign in and try again.' });
+      return;
+    }
+
+    setResetting(true);
+    setMessage(null);
+    try {
+      const origin = window.location.origin;
+      const redirectTo = `${origin}/auth/reset-password`;
+      const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, { redirectTo });
+      if (error) {
+        throw error;
+      }
+      setMessage({ type: 'success', text: 'Check your inbox for a password reset link.' });
+      setShowResetForm(false);
+      setResetEmail('');
+    } catch (error) {
+      console.error('Employee reset error:', error);
+      setMessage({ type: 'error', text: 'Unable to send reset email. Please try again.' });
+    } finally {
+      setResetting(false);
+    }
+  }
 
     async function signIn(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setMessage(null);
 
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email: formData.email,
       password: formData.password,
     });
@@ -53,12 +111,50 @@ export default function EmployeePage() {
       return;
     }
 
+    const userId = data.user?.id;
+    if (!userId) {
+      setMessage({ type: 'error', text: 'Unable to verify your account. Please try again.' });
+      setLoading(false);
+      return;
+    }
+
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', userId)
+      .single();
+
+    if (profileError) {
+      console.error('Profile lookup failed:', profileError);
+      setMessage({ type: 'error', text: 'Unable to verify your account role. Please try again.' });
+      setLoading(false);
+      await supabase.auth.signOut();
+      return;
+    }
+
+      if (profile?.role !== 'employee') {
+        await supabase.auth.signOut();
+        setMessage({ type: 'error', text: 'Wrong login. Employer role has been detected.' });
+        setLoading(false);
+        return;
+      }
+
     setLoading(false);
     router.push('/employeemanagement/employeehomepage');
   }
 
   return (
-    <div className="min-h-screen w-full bg-muted/30 flex items-center justify-center p-6">
+    <div className="relative min-h-screen w-full bg-muted/30 flex items-center justify-center p-6">
+      <div className="absolute bottom-4 left-4">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => router.back()}
+        >
+          Back
+        </Button>
+      </div>
       <Card className="w-full max-w-md shadow-lg">
         <CardHeader className="text-center">
           <div className="mx-auto mb-4 h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center">
@@ -98,10 +194,31 @@ export default function EmployeePage() {
                   Remember me
                 </Label>
               </div>
-              <Link href="/forgot" className="text-sm text-primary hover:underline">
-                Forgot password?
-              </Link>
+              <button
+                type="button"
+                onClick={() => setShowResetForm((prev) => !prev)}
+                className="text-sm text-primary hover:underline"
+              >
+                {showResetForm ? 'Hide reset' : 'Forgot password?'}
+              </button>
             </div>
+
+            {showResetForm && (
+              <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm space-y-2">
+                <Label htmlFor="employee-reset-email">Send reset link to</Label>
+                <Input
+                  id="employee-reset-email"
+                  type="email"
+                  placeholder="you@example.com"
+                  value={resetEmail}
+                  onChange={(e) => setResetEmail(e.target.value)}
+                  required
+                />
+                <Button type="button" size="sm" disabled={resetting} className="w-full" onClick={handlePasswordReset}>
+                  {resetting ? 'Sending…' : 'Email reset link'}
+                </Button>
+              </div>
+            )}
 
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? 'Signing in...' : 'Sign In'}

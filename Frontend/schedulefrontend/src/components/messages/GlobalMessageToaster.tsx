@@ -171,7 +171,11 @@ export function GlobalMessageToaster() {
       } = await supabase.auth.getUser();
       if (!active) return;
       if (error) {
-        console.error("Global toast: failed to fetch user", error);
+        if (error.message && error.message !== "Auth session missing!") {
+          console.error("Global toast: failed to fetch user", error);
+        }
+        setCurrentUserId(null);
+        return;
       }
       setCurrentUserId(user?.id ?? null);
     }
@@ -182,8 +186,12 @@ export function GlobalMessageToaster() {
   }, [supabase]);
 
   useEffect(() => {
-    const { data } = supabase.auth.onAuthStateChange((_, session) => {
-      setCurrentUserId(session?.user?.id ?? null);
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session?.user?.id) {
+        setCurrentUserId(session.user.id as UUID);
+      } else if (event === "SIGNED_OUT") {
+        setCurrentUserId(null);
+      }
     });
     return () => {
       data.subscription.unsubscribe();
@@ -201,7 +209,9 @@ export function GlobalMessageToaster() {
       .eq("user_id", currentUserId);
 
     if (error) {
-      console.error("Global toast: failed to load group memberships", error);
+      if (!error.message || error.message !== "Auth session missing!") {
+        console.error("Global toast: failed to load group memberships", error);
+      }
       setGroupMeta([]);
       return;
     }
@@ -322,7 +332,7 @@ export function GlobalMessageToaster() {
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className="pointer-events-auto rounded-xl border border-border/60 bg-background/95 p-4 shadow-lg backdrop-blur"
+          className="pointer-events-auto rounded-xl border border-border/60 bg-background/95 p-4 shadow-lg backdrop-blur toast-slide-in-right"
         >
           <div className="flex items-start gap-4">
             <div className="flex flex-1 flex-col gap-1">

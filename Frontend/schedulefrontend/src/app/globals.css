@@ -145,3 +145,18 @@
 html, body, #__next {
   background: var(--background);
 }
+
+@keyframes toast-slide-in-right {
+  from {
+    transform: translateX(120%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.toast-slide-in-right {
+  animation: toast-slide-in-right 200ms ease-out both;
+}

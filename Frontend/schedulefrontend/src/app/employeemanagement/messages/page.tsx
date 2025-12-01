@@ -52,6 +52,8 @@ type MessageRow = {
   recipient_id: UUID;
   content: string;
   created_at: string;
+  delivered_at: string | null;
+  read_at: string | null;
 };
 
 type DMConversation = {
@@ -98,6 +100,27 @@ function isMissingProfileColumn(error: unknown) {
   if (!error || typeof error !== "object") return false;
   const code = (error as PostgrestError).code;
   return code === "42703";
+}
+
+function isMissingReceiptColumn(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const typed = error as PostgrestError;
+  if (typed.code === "42703") return true;
+  const message = (typed.message ?? "").toLowerCase();
+  const details =
+    typeof typed.details === "string" ? typed.details.toLowerCase() : "";
+  return (
+    message.includes("delivered_at") ||
+    message.includes("read_at") ||
+    details.includes("delivered_at") ||
+    details.includes("read_at")
+  );
+}
+
+function isMissingReadRpc(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const code = (error as PostgrestError).code;
+  return code === "42883"; // undefined function
 }
 
 type TimeOffRequestSummary = {
@@ -253,6 +276,30 @@ function profileInitials(profile?: Profile | null) {
   return chars || "?";
 }
 
+function profileSortValue(profile: Profile) {
+  const resolved = profileDisplayName(profile, profile.email ?? "") || profile.email || "";
+  return resolved.trim().toLowerCase();
+}
+
+function compareProfilesByName(a: Profile, b: Profile) {
+  const nameA = profileSortValue(a);
+  const nameB = profileSortValue(b);
+  if (nameA && nameB && nameA !== nameB) {
+    return nameA.localeCompare(nameB);
+  }
+  if (nameA && !nameB) return -1;
+  if (!nameA && nameB) return 1;
+  return (a.email ?? "").localeCompare(b.email ?? "");
+}
+
+function sortProfilesByName(profiles: Profile[]) {
+  return [...profiles].sort(compareProfilesByName);
+}
+
+function sortConversationsByName(conversations: DMConversation[]) {
+  return [...conversations].sort((a, b) => compareProfilesByName(a.peer, b.peer));
+}
+
 function AvatarCircle({
   profile,
   sizeClass = "h-8 w-8",
@@ -385,6 +432,7 @@ export default function EmployeeMessagingPage() {
   }, []);
 
   const messageEndRef = useRef<HTMLDivElement | null>(null);
+  const messageContainerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const actionMenuAnchorRef = useRef<HTMLDivElement | null>(null);
   const actionMenuPanelRef = useRef<HTMLDivElement | null>(null);
@@ -394,7 +442,10 @@ export default function EmployeeMessagingPage() {
     null,
   );
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activePeerRef = useRef<Profile | null>(null);
   const activeGroupRef = useRef<GroupChat | null>(null);
+  const peerReceiptSyncRef = useRef<Record<string, boolean>>({});
+  const receiptColumnsAvailableRef = useRef(true);
 
   const persistDmReads = useCallback((next: Record<string, number>) => {
     dmReadCountsRef.current = next;
@@ -405,6 +456,44 @@ export default function EmployeeMessagingPage() {
     groupReadCountsRef.current = next;
     saveReadCounts(EMPLOYEE_SCOPE, "group", next);
   }, []);
+
+  const syncPeerReceipts = useCallback(
+    async (peerId: UUID) => {
+      if (!currentUserId) return;
+      if (peerReceiptSyncRef.current[peerId]) return;
+      peerReceiptSyncRef.current[peerId] = true;
+      try {
+        const { error: rpcError } = await supabase.rpc(
+          "mark_direct_messages_read",
+          {
+            peer_id: peerId,
+          },
+        );
+
+        if (rpcError) {
+          console.warn(
+            "mark_direct_messages_read RPC failed; falling back to legacy update.",
+            rpcError,
+          );
+          const { error: legacyError } = await supabase
+            .from("message")
+            .update({ read_at: new Date().toISOString() })
+            .eq("recipient_id", currentUserId)
+            .eq("sender_id", peerId)
+            .is("read_at", null);
+
+          if (legacyError) {
+            throw legacyError;
+          }
+        }
+      } catch (err) {
+        console.error("Error syncing read receipts:", err);
+      } finally {
+        delete peerReceiptSyncRef.current[peerId];
+      }
+    },
+    [currentUserId, supabase],
+  );
 
   const markPeerAsRead = useCallback(
     (peerId: UUID | null) => {
@@ -420,8 +509,11 @@ export default function EmployeeMessagingPage() {
         delete clone[peerId];
         return clone;
       });
+      if (latestTotal > current) {
+        void syncPeerReceipts(peerId);
+      }
     },
-    [readCountsReady, persistDmReads],
+    [readCountsReady, persistDmReads, syncPeerReceipts],
   );
 
   const markGroupAsRead = useCallback(
@@ -441,6 +533,20 @@ export default function EmployeeMessagingPage() {
     },
     [readCountsReady, persistGroupReads],
   );
+
+  const handleMessageScroll = useCallback(() => {
+    const container = messageContainerRef.current;
+    if (!container) return;
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distanceFromBottom > 16) return;
+    if (activePeer?.id) {
+      markPeerAsRead(activePeer.id);
+    }
+    if (activeGroup?.id) {
+      markGroupAsRead(activeGroup.id);
+    }
+  }, [activePeer?.id, activeGroup?.id, markPeerAsRead, markGroupAsRead]);
 
   // Load current user so we can scope data queries
   useEffect(() => {
@@ -705,7 +811,8 @@ export default function EmployeeMessagingPage() {
       if (cancelled) return;
 
       const profileById = new Map(profiles.map((p) => [p.id, p]));
-      setContacts(profiles);
+      const sortedProfiles = sortProfilesByName(profiles);
+      setContacts(sortedProfiles);
       const employmentMap: Record<
         string,
         {
@@ -725,13 +832,9 @@ export default function EmployeeMessagingPage() {
       });
       setEmploymentMetaByUserId(employmentMap);
 
-      const nextConversations = coworkers
-        .map((row) => {
-          const peer = profileById.get(row.user_id);
-          if (!peer) return null;
-          return { peer, lastMessage: null } as DMConversation;
-        })
-        .filter(Boolean) as DMConversation[];
+      const nextConversations = sortConversationsByName(
+        sortedProfiles.map((peer) => ({ peer, lastMessage: null } as DMConversation)),
+      );
 
       setConversations(nextConversations);
       setActivePeer((prev) => {
@@ -896,7 +999,7 @@ export default function EmployeeMessagingPage() {
         return { ...conv, roleName, locationName };
       });
 
-      return changed ? next : prev;
+      return changed ? sortConversationsByName(next) : prev;
     });
   }, [employmentMetaByUserId, roleLookup, locationLookup]);
 
@@ -951,8 +1054,19 @@ export default function EmployeeMessagingPage() {
   }, [activePeer?.id]);
 
   useEffect(() => {
+    activePeerRef.current = activePeer;
+  }, [activePeer]);
+
+  useEffect(() => {
     activeGroupRef.current = activeGroup;
   }, [activeGroup]);
+
+  useEffect(() => {
+    if (messageEndRef.current) {
+      messageEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+    handleMessageScroll();
+  }, [messages.length, handleMessageScroll]);
 
   useEffect(() => {
     if (!readCountsReady) return;
@@ -991,6 +1105,7 @@ export default function EmployeeMessagingPage() {
       const totals: Record<string, number> = {};
       const unread: Record<string, number> = {};
       const occurrences: Record<string, number> = {};
+
       for (const row of (data ?? []) as { sender_id: string | null }[]) {
         if (!row.sender_id) continue;
         occurrences[row.sender_id] = (occurrences[row.sender_id] ?? 0) + 1;
@@ -1004,7 +1119,6 @@ export default function EmployeeMessagingPage() {
           unread[senderId] = diff;
         }
       });
-
       peerIds.forEach((peerId) => {
         if (totals[peerId] === undefined) {
           totals[peerId] = 0;
@@ -1014,6 +1128,10 @@ export default function EmployeeMessagingPage() {
       dmTotalsRef.current = totals;
       if (!cancelled) {
         setIncomingCounts(unread);
+        const currentActivePeerId = activePeerRef.current?.id ?? null;
+        if (currentActivePeerId) {
+          markPeerAsRead(currentActivePeerId);
+        }
       }
     }
 
@@ -1021,73 +1139,7 @@ export default function EmployeeMessagingPage() {
     return () => {
       cancelled = true;
     };
-  }, [supabase, currentUserId, conversations, readCountsReady]);
-
-  useEffect(() => {
-    if (!readCountsReady) return;
-    if (!currentUserId || groups.length === 0) {
-      groupTotalsRef.current = {};
-      setGroupIncomingCounts({});
-      return;
-    }
-
-    let cancelled = false;
-
-    async function loadGroupCounts() {
-      const groupIds = groups.map((group) => group.id);
-      if (groupIds.length === 0) {
-        groupTotalsRef.current = {};
-        if (!cancelled) setGroupIncomingCounts({});
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from("group_message")
-        .select("group_id")
-        .in("group_id", groupIds)
-        .neq("sender_id", currentUserId);
-
-      if (cancelled) return;
-
-      if (error) {
-        console.error("Error loading group message counts:", error);
-        return;
-      }
-
-      const totals: Record<string, number> = {};
-      const unread: Record<string, number> = {};
-      const occurrences: Record<string, number> = {};
-      for (const row of (data ?? []) as { group_id: string | null }[]) {
-        if (!row.group_id) continue;
-        occurrences[row.group_id] = (occurrences[row.group_id] ?? 0) + 1;
-      }
-
-      Object.entries(occurrences).forEach(([groupId, total]) => {
-        totals[groupId] = total;
-        const readCount = groupReadCountsRef.current[groupId] ?? 0;
-        const diff = total - readCount;
-        if (diff > 0) {
-          unread[groupId] = diff;
-        }
-      });
-
-      groupIds.forEach((groupId) => {
-        if (totals[groupId] === undefined) {
-          totals[groupId] = 0;
-        }
-      });
-
-      groupTotalsRef.current = totals;
-      if (!cancelled) {
-        setGroupIncomingCounts(unread);
-      }
-    }
-
-    loadGroupCounts();
-    return () => {
-      cancelled = true;
-    };
-  }, [supabase, currentUserId, groups, readCountsReady]);
+  }, [supabase, currentUserId, conversations, readCountsReady, markPeerAsRead]);
 
   useEffect(() => {
     if (!currentUserId) return;
@@ -1113,6 +1165,10 @@ export default function EmployeeMessagingPage() {
           dmTotalsRef.current[senderId] = nextTotal;
           const readCount = dmReadCountsRef.current[senderId] ?? 0;
           const unreadCount = Math.max(nextTotal - readCount, 0);
+          if (activePeer?.id === senderId) {
+            markPeerAsRead(senderId);
+            return;
+          }
           setIncomingCounts((prev) => {
             if (unreadCount === 0) {
               if (!prev[senderId]) return prev;
@@ -1129,7 +1185,77 @@ export default function EmployeeMessagingPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [supabase, currentUserId]);
+  }, [supabase, currentUserId, activePeer?.id, markPeerAsRead]);
+
+  useEffect(() => {
+    if (!readCountsReady) return;
+    if (!currentUserId || groups.length === 0) {
+      groupTotalsRef.current = {};
+      setGroupIncomingCounts({});
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadGroupCounts() {
+      const groupIds = groups.map((group) => group.id);
+      if (groupIds.length === 0) {
+        groupTotalsRef.current = {};
+        if (!cancelled) setGroupIncomingCounts({});
+        return;
+      }
+      const { data, error } = await supabase
+        .from("group_message")
+        .select("group_id")
+        .in("group_id", groupIds)
+        .neq("sender_id", currentUserId);
+
+      if (cancelled) return;
+
+      if (error) {
+        console.error("Error loading group message counts:", error);
+        return;
+      }
+
+      const totals: Record<string, number> = {};
+      const unread: Record<string, number> = {};
+      const occurrences: Record<string, number> = {};
+
+      for (const row of (data ?? []) as { group_id: string | null }[]) {
+        if (!row.group_id) continue;
+        occurrences[row.group_id] = (occurrences[row.group_id] ?? 0) + 1;
+      }
+
+      Object.entries(occurrences).forEach(([groupId, total]) => {
+        totals[groupId] = total;
+        const readCount = groupReadCountsRef.current[groupId] ?? 0;
+        const diff = total - readCount;
+        if (diff > 0) {
+          unread[groupId] = diff;
+        }
+      });
+
+      groupIds.forEach((groupId) => {
+        if (totals[groupId] === undefined) {
+          totals[groupId] = 0;
+        }
+      });
+
+      groupTotalsRef.current = totals;
+      if (!cancelled) {
+        setGroupIncomingCounts(unread);
+        const currentActiveGroupId = activeGroupRef.current?.id ?? null;
+        if (currentActiveGroupId) {
+          markGroupAsRead(currentActiveGroupId);
+        }
+      }
+    }
+
+    loadGroupCounts();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, currentUserId, groups, readCountsReady, markGroupAsRead]);
 
   useEffect(() => {
     if (!currentUserId || groups.length === 0) return;
@@ -1159,6 +1285,10 @@ export default function EmployeeMessagingPage() {
           groupTotalsRef.current[groupId] = nextTotal;
           const readCount = groupReadCountsRef.current[groupId] ?? 0;
           const unreadCount = Math.max(nextTotal - readCount, 0);
+          if (activeGroup?.id === groupId) {
+            markGroupAsRead(groupId);
+            return;
+          }
           setGroupIncomingCounts((prev) => {
             if (unreadCount === 0) {
               if (!prev[groupId]) return prev;
@@ -1175,15 +1305,29 @@ export default function EmployeeMessagingPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [supabase, currentUserId, groups]);
+  }, [supabase, currentUserId, groups, activeGroup?.id, markGroupAsRead]);
 
   useEffect(() => {
     markPeerAsRead(activePeer?.id ?? null);
   }, [activePeer?.id, markPeerAsRead]);
 
   useEffect(() => {
+    if (!readCountsReady) return;
+    if (activePeer?.id) {
+      markPeerAsRead(activePeer.id);
+    }
+  }, [readCountsReady, activePeer?.id, markPeerAsRead]);
+
+  useEffect(() => {
     markGroupAsRead(activeGroup?.id ?? null);
   }, [activeGroup?.id, markGroupAsRead]);
+
+  useEffect(() => {
+    if (!readCountsReady) return;
+    if (activeGroup?.id) {
+      markGroupAsRead(activeGroup.id);
+    }
+  }, [readCountsReady, activeGroup?.id, markGroupAsRead]);
 
   useEffect(() => {
     if (!readCountsReady) return;
@@ -1561,6 +1705,22 @@ export default function EmployeeMessagingPage() {
         });
       };
 
+      const mergeIncomingDmUpdate = (incoming: MessageRow) => {
+        const participants = [incoming.sender_id, incoming.recipient_id];
+        if (!participants.includes(currentUserId) || !participants.includes(activePeer.id)) {
+          return;
+        }
+        setMessages((prev) => {
+          let changed = false;
+          const next = prev.map((message) => {
+            if (message.id !== incoming.id) return message;
+            changed = true;
+            return { ...message, ...incoming, kind: "dm" as const };
+          });
+          return changed ? next : prev;
+        });
+      };
+
       const channel = supabase
         .channel(channelName)
         .on(
@@ -1573,6 +1733,18 @@ export default function EmployeeMessagingPage() {
           (payload) => {
             const newRow = payload.new as MessageRow;
             appendIncomingDm(newRow);
+          },
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "UPDATE",
+            schema: "public",
+            table: "message",
+          },
+          (payload) => {
+            const updatedRow = payload.new as MessageRow;
+            mergeIncomingDmUpdate(updatedRow);
           },
         )
         .on("broadcast", { event: "message" }, ({ payload }) => {
@@ -2064,6 +2236,8 @@ export default function EmployeeMessagingPage() {
       recipient_id: activePeer.id,
       content,
       created_at: new Date().toISOString(),
+      delivered_at: null,
+      read_at: null,
       kind: "dm",
     };
 
@@ -2081,15 +2255,34 @@ export default function EmployeeMessagingPage() {
       console.warn("Failed to read session before send", err);
     }
 
-    const { data, error } = await supabase
-      .from("message")
-      .insert({
-        sender_id: currentUserId,
-        recipient_id: activePeer.id,
-        content,
-      })
-      .select("*")
-      .single();
+    const baseSelect = "id,sender_id,recipient_id,content,created_at";
+    const receiptSelect = `${baseSelect},delivered_at,read_at`;
+
+    const performInsert = async (selectColumns: string) =>
+      supabase
+        .from("message")
+        .insert({
+          sender_id: currentUserId,
+          recipient_id: activePeer.id,
+          content,
+        })
+        .select(selectColumns)
+        .single();
+
+    const initialSelect = receiptColumnsAvailableRef.current
+      ? receiptSelect
+      : baseSelect;
+
+    let { data, error } = await performInsert(initialSelect);
+
+    if (error && receiptColumnsAvailableRef.current && isMissingReceiptColumn(error)) {
+      console.warn(
+        "Message receipt columns missing; falling back to legacy insert.",
+        error,
+      );
+      receiptColumnsAvailableRef.current = false;
+      ({ data, error } = await performInsert(baseSelect));
+    }
 
     if (error) {
       console.error("Error sending message:", error);
@@ -2098,8 +2291,10 @@ export default function EmployeeMessagingPage() {
     }
 
     if (data) {
+      const persisted = data as unknown as MessageRow;
       const savedMessage: ConversationMessage = {
-        ...(data as MessageRow),
+        ...persisted,
+        delivered_at: persisted.delivered_at ?? new Date().toISOString(),
         kind: "dm",
       };
       setMessages((prev) =>
@@ -2223,14 +2418,18 @@ export default function EmployeeMessagingPage() {
     setIsActionMenuOpen(false);
     setActiveGroup(null);
     setConversations((prev) => {
-      const existingIndex = prev.findIndex((conv) => conv.peer.id === peer.id);
-      if (existingIndex >= 0) {
-        const reordered = [...prev];
-        const [existing] = reordered.splice(existingIndex, 1);
-        return [existing, ...reordered];
+      const exists = prev.some((conv) => conv.peer.id === peer.id);
+      if (exists) {
+        return prev;
       }
-      return [{ peer, lastMessage: null }, ...prev];
+      return sortConversationsByName([...prev, { peer, lastMessage: null }]);
     });
+    setActivePeer(peer);
+  }
+
+  function handleSelectConversation(peer: Profile) {
+    setIsActionMenuOpen(false);
+    setActiveGroup(null);
     setActivePeer(peer);
   }
 
@@ -2821,7 +3020,7 @@ export default function EmployeeMessagingPage() {
                   <li key={conv.peer.id}>
                     <button
                       type="button"
-                      onClick={() => setActivePeer(conv.peer)}
+                      onClick={() => handleSelectConversation(conv.peer)}
                       className={[
                         "flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm transition-colors",
                         isActive
@@ -3028,7 +3227,11 @@ export default function EmployeeMessagingPage() {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto bg-muted/40 px-4 py-3">
+        <div
+          ref={messageContainerRef}
+          className="flex-1 overflow-y-auto bg-muted/40 px-4 py-3"
+          onScroll={handleMessageScroll}
+        >
           {!activePeer && !activeGroup ? (
             <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted-foreground">
               <MessageCircle className="mb-2 h-8 w-8 text-muted-foreground" />
@@ -3073,6 +3276,22 @@ export default function EmployeeMessagingPage() {
                 const statusOverride = forwardCard
                   ? forwardStatusMap[forwardCard.requestId]
                   : undefined;
+                const timeLabel = new Date(msg.created_at).toLocaleTimeString(locale, {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                });
+                const statusLabel =
+                  isMine && msg.kind === "dm"
+                    ? msg.read_at
+                      ? t("employee.messages.status.read")
+                      : msg.delivered_at
+                        ? t("employee.messages.status.delivered")
+                        : t("employee.messages.status.sending")
+                    : null;
+                const metaRowClass = [
+                  "mt-1 flex items-center gap-2 text-[10px] text-muted-foreground/80",
+                  isMine ? "justify-end" : "justify-start",
+                ].join(" ");
                 return (
                   <div
                     key={`${msg.kind}-${msg.id}`}
@@ -3116,11 +3335,13 @@ export default function EmployeeMessagingPage() {
                           {msg.content}
                         </p>
                       )}
-                      <div className="mt-1 text-[10px] text-muted-foreground/80">
-                        {new Date(msg.created_at).toLocaleTimeString(locale, {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
+                      <div className={metaRowClass}>
+                        {statusLabel ? (
+                          <span className="font-semibold">
+                            {statusLabel}
+                          </span>
+                        ) : null}
+                        <span>{timeLabel}</span>
                       </div>
                     </div>
                     {isMine && (
