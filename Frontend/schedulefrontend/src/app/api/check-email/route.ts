@@ -1,6 +1,5 @@
 // app/api/check-email/route.ts
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 
 export const revalidate = 0;
 export const dynamic = "force-dynamic";
@@ -11,19 +10,11 @@ export const runtime = "nodejs";
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
-  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    })
-  : null;
-
-if (!supabaseAdmin) {
-  console.error("Missing Supabase env vars: NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  console.error(
+    "Missing Supabase env vars: NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY"
+  );
 }
-
-// Note: We use the Supabase Admin REST endpoint directly below. The
-// SDK-based `supabaseAdmin` client was removed because the REST call is
-// more explicit and avoids SDK compatibility issues in different versions.
 
 export async function POST(req: Request) {
   try {
@@ -41,20 +32,49 @@ export async function POST(req: Request) {
 
     console.log("[check-email] checking:", email);
 
-    // Fallback to the Supabase Admin REST endpoint to check users by email.
-    // This uses the service role key and does not rely on SDK admin method names,
-    // which can vary between versions.
-    if (!supabaseAdmin) {
+    // Call Supabase Admin REST endpoint directly to avoid SDK differences.
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
       return NextResponse.json({ error: "Server misconfigured", exists: false }, { status: 500 });
     }
 
-    const { data, error } = await supabaseAdmin.auth.admin.getUserByEmail(email);
-    if (error && error.message && !/user not found/i.test(error.message)) {
-      console.error("[check-email] admin sdk error:", error);
+    const adminUrl = `${SUPABASE_URL}/auth/v1/admin/users?email=${encodeURIComponent(email)}`;
+    const response = await fetch(adminUrl, {
+      method: "GET",
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+      cache: "no-store",
+    });
+
+    if (!response.ok && response.status !== 404) {
+      const details = await response.text();
+      console.error("[check-email] admin fetch error:", response.status, details);
       return NextResponse.json({ error: "Failed to check email", exists: false }, { status: 500 });
     }
 
-    const exists = Boolean(data?.user);
+    let payload: unknown = null;
+    try {
+      payload = await response.json();
+    } catch (jsonErr) {
+      if (response.status !== 404) {
+        console.error("[check-email] failed to parse admin response", jsonErr);
+      }
+    }
+
+    let user: unknown = null;
+    if (Array.isArray(payload)) {
+      user = payload[0];
+    } else if (payload && typeof payload === "object") {
+      const maybeUsers = (payload as { users?: unknown }).users;
+      if (Array.isArray(maybeUsers)) {
+        user = maybeUsers[0];
+      } else {
+        user = payload;
+      }
+    }
+
+    const exists = Boolean(user && typeof user === "object" && (user as { id?: string }).id);
     console.log("[check-email] exists=", exists);
     return NextResponse.json({ exists });
   } catch (err) {
