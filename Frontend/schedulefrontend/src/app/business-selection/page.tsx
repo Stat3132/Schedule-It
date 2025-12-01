@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import {
@@ -9,7 +9,6 @@ import {
   CheckCircle,
   XCircle,
   ShieldCheck,
-  Send,
 } from "lucide-react";
 
 type UUID = string;
@@ -67,8 +66,6 @@ function BusinessSelectionInner() {
   );
   const [bannerErr, setBannerErr] = useState("");
   const [bannerOk, setBannerOk] = useState("");
-  const [lastRpcResult, setLastRpcResult] = useState<unknown>(null);
-  const [lastAction, setLastAction] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const EMPLOYEE_HOME = "/employeemanagement/employeehomepage";
@@ -257,6 +254,11 @@ function BusinessSelectionInner() {
 
   async function requestJoin(): Promise<string | null> {
     if (!selectedBusiness) return null;
+    if (token) {
+      setBannerErr("Invited users must accept their invite to join this business.");
+      setBannerOk("");
+      return null;
+    }
     setSubmitting(true);
     setBannerErr("");
     setBannerOk("");
@@ -275,7 +277,6 @@ function BusinessSelectionInner() {
       };
 
       console.log("calling create_join_request", params);
-      setLastAction("calling create_join_request");
 
       const { data, error } = await supabase.rpc(
         "create_join_request",
@@ -283,8 +284,6 @@ function BusinessSelectionInner() {
       );
 
       console.log("create_join_request result", { data, error });
-      setLastAction("create_join_request result");
-      setLastRpcResult({ data, error });
 
       if (error) {
         const msg = error.message ?? JSON.stringify(error);
@@ -332,13 +331,11 @@ function BusinessSelectionInner() {
       }
 
       setBannerOk("Request sent to the business managers.");
-      setLastAction(`request succeeded, id=${requestId}`);
       return requestId;
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setBannerErr(msg ?? "Failed to send request");
       console.error("create_join_request error:", e);
-      setLastAction("create_join_request error");
       return null;
     } finally {
       setSubmitting(false);
@@ -364,7 +361,6 @@ function BusinessSelectionInner() {
           "activeLocationIds",
           JSON.stringify([selectedLocId])
         );
-        setLastAction("navigating to employeehomepage (isEmp)");
         router.replace(EMPLOYEE_HOME);
         return;
       }
@@ -377,16 +373,12 @@ function BusinessSelectionInner() {
           "activeLocationIds",
           JSON.stringify([selectedLocId])
         );
-        setLastAction(
-          "upsertEmploymentForSelf -> navigating to employerhomepage"
-        );
         router.replace(EMPLOYER_HOME);
         return;
       }
 
       const reqId = await requestJoin();
       if (reqId) {
-        setLastAction(`join request created, id=${reqId} -> employeehomepage`);
         router.replace(EMPLOYEE_HOME);
       } else {
         setSubmitting(false);
@@ -401,10 +393,6 @@ function BusinessSelectionInner() {
 
   // ---------- Derived ----------
   const canContinue = Boolean(selectedBusiness && selectedLocId && !submitting);
-  const showRequestBtn = useMemo(
-    () => !isMgr && !isEmp && !token,
-    [isMgr, isEmp, token]
-  );
   const willCreateRequest = !token && !isEmp && !(isMgr && isBizVerified);
   const primaryLabel = submitting
     ? "Saving…"
@@ -502,8 +490,10 @@ function BusinessSelectionInner() {
                     >
                       <Building2 className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <p className="font-semibold truncate">{b.name}</p>
-                        <p className="text-sm text-muted-foreground truncate">
+                        <p className="font-semibold break-words leading-snug">
+                          {b.name}
+                        </p>
+                        <p className="text-sm text-muted-foreground break-words">
                           {b.timezone}
                         </p>
                       </div>
@@ -629,23 +619,6 @@ function BusinessSelectionInner() {
                         Confirm your selection or request access from the business managers.
                       </p>
                       <div className="flex flex-col gap-3">
-                        {showRequestBtn && (
-                          <button
-                            className="w-full px-4 py-2 rounded-xl border inline-flex items-center justify-center gap-2"
-                            onClick={async () => {
-                              const reqId = await requestJoin();
-                              if (reqId) {
-                                setLastAction(
-                                  `join request (secondary button), id=${reqId} -> employeehomepage`
-                                );
-                                router.replace(EMPLOYEE_HOME);
-                              }
-                            }}
-                            disabled={submitting}
-                          >
-                            <Send className="w-4 h-4" /> Request to join
-                          </button>
-                        )}
                         <button
                           className="w-full px-4 py-2 rounded-xl border"
                           onClick={() => {
@@ -675,21 +648,6 @@ function BusinessSelectionInner() {
                       )}
                       {bannerErr && (
                         <div className="text-red-600 text-sm">{bannerErr}</div>
-                      )}
-                      {lastRpcResult != null && (
-                        <div className="mt-2 rounded-xl border border-border bg-muted/30 p-3 text-xs">
-                          {lastAction && (
-                            <div className="text-muted-foreground mb-1">
-                              Last action: {lastAction}
-                            </div>
-                          )}
-                          <div className="font-semibold mb-1">
-                            Debug: last RPC result
-                          </div>
-                          <pre className="whitespace-pre-wrap break-words">
-                            {JSON.stringify(lastRpcResult, null, 2)}
-                          </pre>
-                        </div>
                       )}
                     </div>
                   </div>

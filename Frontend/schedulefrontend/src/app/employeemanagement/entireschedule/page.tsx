@@ -125,6 +125,7 @@ export default function EmployeeSchedulePage() {
   const [user, setUser] = useState<User | null>(null);
   const [, setBusinessId] = useState<UUID | null>(null);
 
+  const [hasEmployment, setHasEmployment] = useState<boolean | null>(null);
   const [availableDrops, setAvailableDrops] = useState<DropAssignment[]>([]);
   const [myDropped, setMyDropped] = useState<MyDroppedAssignment[]>([]);
   const [myPickupRequests, setMyPickupRequests] = useState<MyPickupRequest[]>([]);
@@ -166,6 +167,7 @@ export default function EmployeeSchedulePage() {
     try {
       setLoading(true);
       setErrorMsg(null);
+      setHasEmployment(null);
 
       // 1) Auth user
       const { data: authData, error: authError } = await supabase.auth.getUser();
@@ -187,7 +189,8 @@ export default function EmployeeSchedulePage() {
 
       if (empError) throw empError;
       if (!employment) {
-        setErrorMsg(t("employee.schedule.errors.noEmployment"));
+        setHasEmployment(false);
+        setErrorMsg(null);
         setAvailableDrops([]);
         setMyDropped([]);
         setMyPickupRequests([]);
@@ -196,6 +199,7 @@ export default function EmployeeSchedulePage() {
       }
 
       const bizId: UUID = employment.business_id;
+      setHasEmployment(true);
       setBusinessId(bizId);
 
       const now = new Date();
@@ -493,6 +497,28 @@ export default function EmployeeSchedulePage() {
     }
     return undefined;
   })();
+
+  if (!loading && hasEmployment === false) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center px-4">
+        <div className="w-full max-w-lg space-y-4 rounded-3xl border border-border bg-card p-8 text-center shadow-2xl">
+          <h1 className="text-2xl font-semibold text-foreground">
+            {t("employee.schedule.gate.heading")}
+          </h1>
+          <p className="text-sm text-foreground/70">
+            {t("employee.schedule.gate.body")}
+          </p>
+          <button
+            type="button"
+            className="w-full rounded-xl bg-primary px-4 py-2 text-base font-semibold text-primary-foreground shadow-md hover:bg-primary/90"
+            onClick={() => router.push("/business-selection")}
+          >
+            {t("employee.schedule.gate.cta")}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   /* ---------- JSX ---------- */
 
