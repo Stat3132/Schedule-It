@@ -415,7 +415,7 @@ function BusinessSelectionInner() {
   // ---------- Render ----------
   return (
     <div className="min-h-screen flex items-center justify-center p-6">
-      <div className="w-full max-w-2xl">
+      <div className="w-full max-w-4xl">
         {inviteBiz && (
           <div className="mb-4 p-4 border rounded-lg bg-blue-50 border-blue-200">
             <div className="flex items-start gap-3">
@@ -443,16 +443,16 @@ function BusinessSelectionInner() {
           </div>
         )}
 
-        <div className="bg-card rounded-2xl shadow-xl border border-border overflow-hidden">
+        <div className="bg-card rounded-3xl shadow-2xl border border-border overflow-hidden">
           {/* Header */}
           <div className="bg-primary px-8 py-10 text-center text-primary-foreground">
-            <div className="flex justify-center mb-4">
-              <div className="bg-white/10 p-3 rounded-xl backdrop-blur-sm">
-                <Building2 className="w-10 h-10" />
+            <div className="flex justify-center mb-6">
+              <div className="bg-white/15 p-4 rounded-2xl backdrop-blur-sm shadow-lg">
+                <Building2 className="w-12 h-12" />
               </div>
             </div>
-          <h1 className="text-3xl font-bold">Find Your Business</h1>
-            <p className="text-primary-foreground/80 mt-2">
+          <h1 className="text-4xl font-bold tracking-tight">Find Your Business</h1>
+            <p className="text-primary-foreground/80 mt-3 text-lg">
               Search for your registered corporation
             </p>
           </div>
@@ -532,29 +532,32 @@ function BusinessSelectionInner() {
 
               {/* Selected Business */}
               {selectedBusiness && (
-                <div className="mt-6 p-6 bg-green-50 border border-green-200 rounded-lg">
-                  <div className="flex items-start gap-3">
-                    <CheckCircle className="w-6 h-6 text-green-600 mt-0.5" />
-                    <div className="flex-1">
-                      <p className="font-semibold text-green-900 text-lg">
-                        Business Found
-                      </p>
-                      <p className="text-green-700 mt-1">
-                        {selectedBusiness.name}
-                      </p>
-                      <p className="text-sm text-green-600 mt-1">
-                        {selectedBusiness.timezone}
-                      </p>
-                      <p className="text-xs text-green-600 mt-2">
-                        Registered:{" "}
-                        {new Date(
-                          selectedBusiness.created_at
-                        ).toLocaleDateString()}
-                      </p>
+                <div className="mt-6 rounded-2xl border border-green-200 bg-gradient-to-br from-green-50 via-white to-green-100/60 p-8 shadow-lg">
+                  <div className="flex flex-col gap-6 lg:flex-row">
+                    <div className="flex-1 space-y-4">
+                      <div className="flex items-start gap-4">
+                        <div className="shrink-0 rounded-2xl bg-green-100 p-4">
+                          <CheckCircle className="w-8 h-8 text-green-600" />
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-2xl font-semibold text-green-900">
+                            {selectedBusiness.name}
+                          </p>
+                          <p className="text-base text-green-700">
+                            {selectedBusiness.timezone}
+                          </p>
+                          <p className="text-sm text-green-600">
+                            Registered on {" "}
+                            {new Date(
+                              selectedBusiness.created_at
+                            ).toLocaleDateString()}
+                          </p>
+                        </div>
+                      </div>
 
-                      <div className="flex items-center gap-2 mt-2 text-sm">
+                      <div className="flex items-center gap-3 text-base">
                         <ShieldCheck
-                          className={`w-4 h-4 ${
+                          className={`w-5 h-5 ${
                             isBizVerified ? "text-green-600" : "text-gray-400"
                           }`}
                         />
@@ -566,123 +569,130 @@ function BusinessSelectionInner() {
                       </div>
 
                       {(isMgr || isEmp) && (
-                        <p className="text-xs text-green-700 mt-1">
+                        <p className="text-sm text-green-700">
                           {isMgr
                             ? "You are a manager of this business."
                             : "You are an employee of this business."}
                         </p>
                       )}
-                    </div>
-                  </div>
 
-                  {/* Locations */}
-                  <div className="mt-4">
-                    <h3 className="font-semibold mb-2">Select one location</h3>
-                    <div className="border rounded-lg divide-y">
-                      {locLoading ? (
-                        <div className="p-3 text-sm text-muted-foreground">
-                          Loading locations…
-                        </div>
-                      ) : locations.length === 0 ? (
-                        <div className="p-3 text-sm text-muted-foreground">
-                          No locations for this business.
-                        </div>
-                      ) : (
-                        locations.map((loc) => (
-                          <label
-                            key={loc.id}
-                            className="flex items-center gap-3 p-3 cursor-pointer"
-                          >
-                            <input
-                              type="radio"
-                              name="primary-location"
-                              className="h-4 w-4"
-                              checked={selectedLocId === loc.id}
-                              onChange={() => setSelectedLocId(loc.id)}
-                            />
-                            <div className="flex-1">
-                              <div className="font-medium">{loc.name}</div>
-                              {loc.address && (
-                                <div className="text-xs text-muted-foreground">
-                                  {loc.address}
-                                </div>
-                              )}
+                      <div className="rounded-2xl border border-green-200 bg-white/60 p-5">
+                        <h3 className="text-lg font-semibold mb-3">
+                          Select one location
+                        </h3>
+                        <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                          {locLoading ? (
+                            <div className="text-sm text-muted-foreground">
+                              Loading locations…
                             </div>
-                          </label>
-                        ))
+                          ) : locations.length === 0 ? (
+                            <div className="text-sm text-muted-foreground">
+                              No locations for this business.
+                            </div>
+                          ) : (
+                            locations.map((loc) => (
+                              <label
+                                key={loc.id}
+                                className={`flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition shadow-sm ${
+                                  selectedLocId === loc.id
+                                    ? "border-green-500 bg-green-50"
+                                    : "border-border bg-white"
+                                }`}
+                              >
+                                <input
+                                  type="radio"
+                                  name="primary-location"
+                                  className="mt-1 h-4 w-4"
+                                  checked={selectedLocId === loc.id}
+                                  onChange={() => setSelectedLocId(loc.id)}
+                                />
+                                <div className="flex-1">
+                                  <div className="text-base font-medium">
+                                    {loc.name}
+                                  </div>
+                                  {loc.address && (
+                                    <div className="text-sm text-muted-foreground">
+                                      {loc.address}
+                                    </div>
+                                  )}
+                                </div>
+                              </label>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="w-full lg:max-w-sm rounded-2xl border border-green-200 bg-white p-6 shadow-md space-y-4">
+                      <h3 className="text-lg font-semibold">Next steps</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Confirm your selection or request access from the business managers.
+                      </p>
+                      <div className="flex flex-col gap-3">
+                        {showRequestBtn && (
+                          <button
+                            className="w-full px-4 py-2 rounded-xl border inline-flex items-center justify-center gap-2"
+                            onClick={async () => {
+                              const reqId = await requestJoin();
+                              if (reqId) {
+                                setLastAction(
+                                  `join request (secondary button), id=${reqId} -> employeehomepage`
+                                );
+                                router.replace(EMPLOYEE_HOME);
+                              }
+                            }}
+                            disabled={submitting}
+                          >
+                            <Send className="w-4 h-4" /> Request to join
+                          </button>
+                        )}
+                        <button
+                          className="w-full px-4 py-2 rounded-xl border"
+                          onClick={() => {
+                            setSelectedBusiness(null);
+                            setSearchResults([]);
+                            setLocations([]);
+                            setSelectedLocId("");
+                          }}
+                          disabled={submitting}
+                        >
+                          Change business
+                        </button>
+                        <button
+                          className={`w-full px-4 py-2 rounded-xl border text-base font-semibold ${
+                            !canContinue
+                              ? "bg-gray-200 text-gray-500 cursor-not-allowed"
+                              : "bg-primary text-primary-foreground"
+                          }`}
+                          disabled={!canContinue}
+                          onClick={handleContinue}
+                        >
+                          {primaryLabel}
+                        </button>
+                      </div>
+                      {bannerOk && (
+                        <div className="text-green-700 text-sm">{bannerOk}</div>
                       )}
-                    </div>
-                  </div>
-
-                  {/* Buttons */}
-                  <div className="mt-6 flex flex-wrap justify-end gap-2">
-                    {showRequestBtn && (
-                      <button
-                        className="px-4 py-2 rounded-lg border inline-flex items-center gap-2"
-                        onClick={async () => {
-                          const reqId = await requestJoin();
-                          if (reqId) {
-                            setLastAction(
-                              `join request (secondary button), id=${reqId} -> employeehomepage`
-                            );
-                            router.replace(EMPLOYEE_HOME);
-                          }
-                        }}
-                        disabled={submitting}
-                      >
-                        <Send className="w-4 h-4" /> Request to join
-                      </button>
-                    )}
-                    <button
-                      className="px-4 py-2 rounded-lg border"
-                      onClick={() => {
-                        setSelectedBusiness(null);
-                        setSearchResults([]);
-                        setLocations([]);
-                        setSelectedLocId("");
-                      }}
-                      disabled={submitting}
-                    >
-                      Change business
-                    </button>
-                    <button
-                      className={`px-4 py-2 rounded-lg border ${
-                        !canContinue
-                          ? "bg-gray-200 text-gray-500 cursor-not-allowed"
-                          : "bg-primary text-primary-foreground"
-                      }`}
-                      disabled={!canContinue}
-                      onClick={handleContinue}
-                    >
-                      {primaryLabel}
-                    </button>
-                  </div>
-
-                  {bannerOk && (
-                    <div className="text-green-700 text-sm mt-3">
-                      {bannerOk}
-                    </div>
-                  )}
-                  {bannerErr && (
-                    <div className="text-red-600 text-sm mt-3">
-                      {bannerErr}
-                    </div>
-                  )}
-                  {lastRpcResult != null && (
-                    <div className="mt-3 p-3 bg-gray-50 border border-gray-200 rounded text-xs">
-                      {lastAction && (
-                        <div className="text-xs text-muted-foreground mb-1">
-                          Last action: {lastAction}
+                      {bannerErr && (
+                        <div className="text-red-600 text-sm">{bannerErr}</div>
+                      )}
+                      {lastRpcResult != null && (
+                        <div className="mt-2 rounded-xl border border-border bg-muted/30 p-3 text-xs">
+                          {lastAction && (
+                            <div className="text-muted-foreground mb-1">
+                              Last action: {lastAction}
+                            </div>
+                          )}
+                          <div className="font-semibold mb-1">
+                            Debug: last RPC result
+                          </div>
+                          <pre className="whitespace-pre-wrap break-words">
+                            {JSON.stringify(lastRpcResult, null, 2)}
+                          </pre>
                         </div>
                       )}
-                      <div className="font-semibold mb-1">
-                        Debug: last RPC result
-                      </div>
-                      <pre className="whitespace-pre-wrap break-words">
-                        {JSON.stringify(lastRpcResult, null, 2)}
-                      </pre>
                     </div>
-                  )}
+                  </div>
                 </div>
               )}
             </div>

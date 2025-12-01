@@ -117,12 +117,6 @@ function isMissingReceiptColumn(error: unknown) {
   );
 }
 
-function isMissingReadRpc(error: unknown) {
-  if (!error || typeof error !== "object") return false;
-  const code = (error as PostgrestError).code;
-  return code === "42883"; // undefined function
-}
-
 type TimeOffRequestSummary = {
   id: UUID;
   start_ts: string;
@@ -383,7 +377,6 @@ export default function EmployeeMessagingPage() {
   const [newMessage, setNewMessage] = useState("");
   const [initialMessagesLoaded, setInitialMessagesLoaded] = useState(false);
   const [isLoadingContacts, setIsLoadingContacts] = useState(true);
-  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [dateFilter, setDateFilter] = useState<"all" | "today" | "7days">(
     "all",
@@ -810,7 +803,6 @@ export default function EmployeeMessagingPage() {
 
       if (cancelled) return;
 
-      const profileById = new Map(profiles.map((p) => [p.id, p]));
       const sortedProfiles = sortProfilesByName(profiles);
       setContacts(sortedProfiles);
       const employmentMap: Record<
@@ -1603,12 +1595,7 @@ export default function EmployeeMessagingPage() {
     return () => {
       cancelled = true;
     };
-  }, [
-    supabase,
-    currentUserId,
-    activePeer?.id,
-    reminderTrackingEnabled,
-  ]);
+  }, [supabase, currentUserId, activePeer, reminderTrackingEnabled]);
 
   // Load messages for the active peer or group
   useEffect(() => {
@@ -1622,8 +1609,6 @@ export default function EmployeeMessagingPage() {
     let cancelled = false;
 
     async function loadMessages() {
-      setIsLoadingMessages(true);
-
       try {
         if (activePeer) {
           const participantA = currentUserId;
@@ -1675,7 +1660,6 @@ export default function EmployeeMessagingPage() {
       } finally {
         if (!cancelled) {
           setInitialMessagesLoaded(true);
-          setIsLoadingMessages(false);
         }
       }
     }
@@ -1685,7 +1669,7 @@ export default function EmployeeMessagingPage() {
     return () => {
       cancelled = true;
     };
-  }, [supabase, currentUserId, activePeer?.id, activeGroup?.id]);
+  }, [supabase, currentUserId, activePeer, activeGroup]);
 
   // Realtime messages + typing indicator
   useEffect(() => {
@@ -1985,7 +1969,7 @@ export default function EmployeeMessagingPage() {
     if (!activePeer) return false;
     const meta = employmentMetaByUserId[activePeer.id];
     return Boolean(meta?.is_manager || meta?.is_admin);
-  }, [activePeer?.id, employmentMetaByUserId]);
+  }, [activePeer, employmentMetaByUserId]);
 
   const currentUserIsEmployer = useMemo(
     () =>
@@ -1995,10 +1979,7 @@ export default function EmployeeMessagingPage() {
     [currentEmploymentFlags],
   );
 
-  const scheduleWeekKey = useMemo(
-    () => currentWeekIdentifier(),
-    [weekSchedule],
-  );
+  const scheduleWeekKey = currentWeekIdentifier();
 
   const scheduleWeekLabel = useMemo(() => {
     if (!scheduleWeekKey) return "";
@@ -2245,13 +2226,11 @@ export default function EmployeeMessagingPage() {
 
     try {
       const { data: sessionData } = await supabase.auth.getSession();
-      // eslint-disable-next-line no-console
       console.log(
         "Sending message:",
         { currentUserId, sessionUserId: sessionData?.session?.user?.id },
       );
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.warn("Failed to read session before send", err);
     }
 
@@ -2331,13 +2310,11 @@ export default function EmployeeMessagingPage() {
 
     try {
       const { data: sessionData } = await supabase.auth.getSession();
-      // eslint-disable-next-line no-console
       console.log(
         "Sending group message:",
         { currentUserId, sessionUserId: sessionData?.session?.user?.id },
       );
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.warn("Failed to read session before group send", err);
     }
 

@@ -338,7 +338,7 @@ export default function EmployeeSchedulePage() {
     } finally {
       setLoading(false);
     }
-  }, [router, supabase, t, locale]);
+  }, [router, supabase, t]);
 
   useEffect(() => {
     void refreshAll();

@@ -236,6 +236,11 @@ export default function ManageDroppedShiftsPage() {
     [selectedBiz, selectedLoc],
   );
 
+  const selectedLocName = useMemo(() => {
+    if (selectedLoc === "ALL") return null;
+    return locations.find((loc) => loc.id === selectedLoc)?.name ?? null;
+  }, [locations, selectedLoc]);
+
   // Load dropped shifts + pickup requests for the week
   useEffect(() => {
     let cancelled = false;
@@ -655,7 +660,9 @@ export default function ManageDroppedShiftsPage() {
             </h1>
             <p className="text-foreground/70 mt-1">
               {bizName} ·{" "}
-              {selectedLoc === "ALL" ? "All locations" : "One location"}
+              {selectedLoc === "ALL"
+                ? "All locations"
+                : selectedLocName ?? "One location"}
             </p>
             <p className="text-foreground/70">{weekLabel}</p>
             {errorMsg && (

@@ -11,7 +11,6 @@ import type { PostgrestError } from "@supabase/supabase-js";
 import {
   CalendarDays,
   Check,
-  EllipsisVertical,
   Loader2,
   MessageCircle,
   Plus,
@@ -33,7 +32,6 @@ import {
   UnreadScope,
 } from "../../../lib/unreadTracker";
 import { useI18n } from "../../../lib/i18n";
-import { ConversationSkeleton } from "@/components/messages/ConversationSkeleton";
 
 const DECISION_FEEDBACK_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_SHIFT_START = "09:00";
@@ -191,12 +189,6 @@ function groupChannelName(groupId: UUID) {
   return `group:${groupId}`;
 }
 
-function isMissingReadRpc(error: unknown) {
-  if (!error || typeof error !== "object") return false;
-  const code = (error as PostgrestError).code;
-  return code === "42883";
-}
-
 function isMissingReceiptColumn(error: unknown) {
   if (!error || typeof error !== "object") return false;
   const typed = error as PostgrestError;
@@ -318,7 +310,6 @@ export default function EmployerMessagingPage() {
   const [employmentMetaByUserId, setEmploymentMetaByUserId] = useState<Record<UUID, EmploymentSnapshot>>({});
   const [roleLookup, setRoleLookup] = useState<Record<UUID, string>>({});
   const [locationLookup, setLocationLookup] = useState<Record<UUID, string>>({});
-  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [dateFilter, setDateFilter] = useState<"all" | "today" | "7days">("all");
   const [activePeerSchedule, setActivePeerSchedule] = useState<ScheduleSummarySlot[]>([]);
@@ -1374,8 +1365,6 @@ export default function EmployerMessagingPage() {
     let cancelled = false;
 
     async function loadMessages() {
-      setIsLoadingMessages(true);
-
       try {
         if (activePeer) {
           const participantA = currentUserId;
@@ -1427,7 +1416,6 @@ export default function EmployerMessagingPage() {
       } finally {
         if (!cancelled) {
           setInitialMessagesLoaded(true);
-          setIsLoadingMessages(false);
         }
       }
     }
@@ -1437,7 +1425,7 @@ export default function EmployerMessagingPage() {
     return () => {
       cancelled = true;
     };
-  }, [supabase, currentUserId, activePeer?.id, activeGroup?.id]);
+  }, [supabase, currentUserId, activePeer, activeGroup]);
 
   useEffect(() => {
     function handleDocumentClick(event: MouseEvent) {
@@ -2058,7 +2046,6 @@ export default function EmployerMessagingPage() {
 
     try {
       const { data: sessionData } = await supabase.auth.getSession();
-      // eslint-disable-next-line no-console
       console.log(
         "Sending DM: currentUserId=",
         currentUserId,
@@ -2066,7 +2053,6 @@ export default function EmployerMessagingPage() {
         sessionData?.session?.user?.id,
       );
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.warn("Failed to read session before DM send", err);
     }
 
@@ -2143,7 +2129,6 @@ export default function EmployerMessagingPage() {
 
     try {
       const { data: sessionData } = await supabase.auth.getSession();
-      // eslint-disable-next-line no-console
       console.log(
         "Sending group message: currentUserId=",
         currentUserId,
@@ -2151,7 +2136,6 @@ export default function EmployerMessagingPage() {
         sessionData?.session?.user?.id,
       );
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.warn("Failed to read session before group send", err);
     }
 
@@ -2255,24 +2239,6 @@ export default function EmployerMessagingPage() {
     } finally {
       setIsForwardActionLoading(false);
     }
-  }
-
-  function insertTemplate(template: string) {
-    setNewMessage((prev) => (prev ? `${prev}\n\n${template}` : template));
-    setIsActionMenuOpen(false);
-  }
-
-  function handleSendButtonContextMenu(
-    event: React.MouseEvent<HTMLButtonElement>,
-  ) {
-    if (!activePeer) return;
-    event.preventDefault();
-    setIsActionMenuOpen(true);
-  }
-
-  function toggleActionMenu() {
-    if (!activePeer) return;
-    setIsActionMenuOpen((prev) => !prev);
   }
 
   function handleScheduleModifyClick(payload: ScheduleCardPayload) {
@@ -2567,16 +2533,6 @@ export default function EmployerMessagingPage() {
     }
     return "Select a coworker or group to get started.";
   }, [activeGroup, activePeer]);
-
-  const peerDisplayName = useMemo(() => {
-    if (!activePeer) return "there";
-    return activePeerResolvedName || activePeer.email || "there";
-  }, [activePeer, activePeerResolvedName]);
-
-  const peerFirstName = useMemo(() => {
-    if (!peerDisplayName) return "there";
-    return peerDisplayName.split(" ")[0] || peerDisplayName;
-  }, [peerDisplayName]);
 
   const ForwardRequestCard = ({
     payload,

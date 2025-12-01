@@ -306,10 +306,11 @@ export function GlobalMessageToaster() {
   }, [supabase, currentUserId, groupMeta, handleIncomingGroup]);
 
   useEffect(() => {
+    const timersSnapshot = timersRef.current;
     return () => {
-      Object.keys(timersRef.current).forEach((id) => {
-        clearTimeout(timersRef.current[id]);
-        delete timersRef.current[id];
+      Object.keys(timersSnapshot).forEach((id) => {
+        clearTimeout(timersSnapshot[id]);
+        delete timersSnapshot[id];
       });
     };
   }, []);
