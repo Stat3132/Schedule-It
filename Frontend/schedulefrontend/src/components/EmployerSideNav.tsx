@@ -1,7 +1,7 @@
 // app/employermanagement/EmployerSideNav.tsx
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import {
@@ -16,11 +16,16 @@ import {
   AlertTriangle,
   MessageCircle,
 } from "lucide-react";
+import { useUnreadFlag } from "../hooks/useUnreadFlag";
+import { useUnreadRealtimeBridge } from "../hooks/useUnreadRealtimeBridge";
 
 export default function EmployerSideNav() {
   const pathname = usePathname() ?? "/";
   const router = useRouter();
-  const supabase = createClientComponentClient();
+  const supabase = useMemo(() => createClientComponentClient(), []);
+  const hasUnreadMessages = useUnreadFlag("employer");
+
+  useUnreadRealtimeBridge("employer", supabase);
 
   const BUSINESS_PLACEHOLDER = /\[businessid\]/i;
 
@@ -50,48 +55,57 @@ export default function EmployerSideNav() {
   const inactive = "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-800";
   const active = "bg-blue-50 border border-blue-200 text-blue-700 dark:bg-blue-900 dark:border-blue-800 dark:text-blue-200";
 
-  const items: { label: string; href: string; icon: React.ReactNode }[] = [
+  const items: { id: string; label: string; href: string; icon: React.ReactNode }[] = [
     {
+      id: "home",
       label: "Home",
       href: "/employermanagement/employerhomepage",
       icon: <Home className="w-4 h-4" />,
     },
     {
+      id: "create-schedule",
       label: "Create Schedule",
       href: "/employermanagement/createschedule",
       icon: <Plus className="w-4 h-4" />,
     },
     {
+      id: "messages",
       label: "Messages",
       href: "/employermanagement/messages",
       icon: <MessageCircle className="w-4 h-4" />,
     },
     {
+      id: "time-off",
       label: "Time Off Requests",
       href: "/employermanagement/managetimerequests",
       icon: <Clock className="w-4 h-4" />,
     },
     {
+      id: "availability",
       label: "Availability Requests",
       href: "/employermanagement/availabilityrequest",
       icon: <CheckSquare className="w-4 h-4" />,
     },
     {
+      id: "announcements",
       label: "Announcements",
       href: "/employermanagement/makeannouncements",
       icon: <Bell className="w-4 h-4" />,
     },
     {
+      id: "dropped-shifts",
       label: "Manage dropped shifts",
       href: "/employermanagement/managedroppedshifts",
       icon: <AlertTriangle className="w-4 h-4" />,
     },
     {
+      id: "user-management",
       label: "User Management",
       href: "/employermanagement/usermanagement/[businessid]",
       icon: <Users className="w-4 h-4" />,
     },
     {
+      id: "settings",
       label: "Settings",
       href: "/employermanagement/settings",
       icon: <Settings className="w-4 h-4" />,
@@ -127,10 +141,23 @@ export default function EmployerSideNav() {
                   const target = resolveHref(it.href);
                   router.push(target);
                 }}
-                className={`${navBase} ${isActive ? active : inactive}`}
+                className={`${navBase} ${isActive ? active : inactive} relative`}
                 aria-current={isActive ? "page" : undefined}
               >
-                {it.icon}
+                <span className="relative flex items-center justify-center">
+                  {hasUnreadMessages && it.id === "messages" ? (
+                    <>
+                      <span className="sr-only" aria-live="polite">
+                        Unread messages
+                      </span>
+                      <span className="pointer-events-none absolute -left-3 flex h-3 w-3" aria-hidden="true">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400/80 opacity-75" />
+                        <span className="relative inline-flex h-3 w-3 rounded-full bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.6)]" />
+                      </span>
+                    </>
+                  ) : null}
+                  {it.icon}
+                </span>
                 <span>{it.label}</span>
               </button>
             );

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { Check, X, ChevronDown, Loader2, UserX } from "lucide-react";
@@ -12,6 +12,7 @@ type Business = {
   id: UUID;
   name: string;
   verification_status: "unverified" | "docs_submitted" | "verified" | "rejected";
+  owner_user_id: UUID | null;
 };
 
 type Role = { id: UUID; business_id: UUID; name: string; color: string | null };
@@ -83,6 +84,13 @@ type JoinRequest = {
   message: string | null;
   status: "pending" | "approved" | "denied" | "canceled";
   created_at: string;
+};
+
+type InviteResult = {
+  email: string;
+  joinUrl: string;
+  emailed: boolean;
+  error?: string;
 };
 
 type Props = { businessId: string };
@@ -212,6 +220,23 @@ function parsePayRateNumber(raw: string) {
   return Math.round(parsed * 100) / 100;
 }
 
+function parseEmails(raw: string): string[] {
+  const emails = raw
+    .split(/[\s,;]+/)
+    .map(part => part.trim().toLowerCase())
+    .filter(Boolean)
+    .filter(email => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const email of emails) {
+    if (!seen.has(email)) {
+      seen.add(email);
+      out.push(email);
+    }
+  }
+  return out;
+}
+
 export default function UserManagement({ businessId }: Props) {
   const supabase = createClientComponentClient();
 
@@ -234,6 +259,14 @@ export default function UserManagement({ businessId }: Props) {
   const [rosterQuery, setRosterQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [currentUserId, setCurrentUserId] = useState<UUID | null>(null);
+  const [rawInviteEmails, setRawInviteEmails] = useState("");
+  const [inviteRoleId, setInviteRoleId] = useState<UUID | "">("");
+  const [inviteLocationId, setInviteLocationId] = useState<UUID | "">("");
+  const [inviteIsManager, setInviteIsManager] = useState(false);
+  const [inviteIsAdmin, setInviteIsAdmin] = useState(false);
+  const [inviteSending, setInviteSending] = useState(false);
+  const [inviteError, setInviteError] = useState("");
+  const [inviteResults, setInviteResults] = useState<InviteResult[]>([]);
 
   type AcceptTarget =
     | { kind: "invite"; invite: Invite }
@@ -269,8 +302,10 @@ export default function UserManagement({ businessId }: Props) {
     });
   }
 
+  const inviteEmails = useMemo(() => parseEmails(rawInviteEmails), [rawInviteEmails]);
   const verified = biz?.verification_status === "verified";
   const disabledUI = !verified;
+  const isOwner = Boolean(biz?.owner_user_id && currentUserId && biz.owner_user_id === currentUserId);
 
   const roleNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -368,7 +403,7 @@ export default function UserManagement({ businessId }: Props) {
       // business
       const { data: bizRows, error: bizErr } = await supabase
         .from("business")
-        .select("id,name,verification_status")
+        .select("id,name,verification_status,owner_user_id")
         .eq("id", businessId)
         .limit(1);
       if (bizErr) throw bizErr;
@@ -842,11 +877,217 @@ export default function UserManagement({ businessId }: Props) {
     }
   }
 
+  async function sendOwnerInvites(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setInviteError("");
+    setInviteResults([]);
+    if (!isOwner) {
+      setInviteError("Only the business owner can send invites from this page.");
+      return;
+    }
+    if (!biz) {
+      setInviteError("Business details not available yet.");
+      return;
+    }
+    if (!verified) {
+      setInviteError("The business must be verified before sending invites.");
+      return;
+    }
+    if (inviteEmails.length === 0) {
+      setInviteError("Enter at least one valid email.");
+      return;
+    }
+
+    setInviteSending(true);
+    try {
+      const resp = await fetch("/api/invitation", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          businessId: biz.id,
+          invites: inviteEmails.map(email => ({
+            email,
+            roleId: inviteRoleId || undefined,
+            locationId: inviteLocationId || undefined,
+            isManager: inviteIsManager,
+            isAdmin: inviteIsAdmin,
+          })),
+        }),
+      });
+      const data = (await resp.json().catch(() => ({}))) as { invites?: InviteResult[]; error?: string };
+      if (!resp.ok) {
+        setInviteError(data.error ?? "Failed to send invites.");
+        return;
+      }
+      setInviteResults(data.invites ?? []);
+      setRawInviteEmails("");
+    } catch (err) {
+      setInviteError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setInviteSending(false);
+    }
+  }
+
 
   /* ---------- UI ---------- */
   return (
     <main className="relative min-h-screen bg-background">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 pb-12">
+        {isOwner && (
+          <section className="mb-8 rounded-2xl border border-border bg-card shadow-sm p-6">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-foreground/60">Owner tools</p>
+                <h2 className="text-xl font-semibold text-foreground">Send employee invites</h2>
+                <p className="text-sm text-foreground/70">
+                  Send batch invite emails through Resend. Invited teammates will get a unique link to join your business.
+                </p>
+              </div>
+              <div className="text-sm text-foreground/60">
+                {inviteEmails.length === 0
+                  ? "No emails queued"
+                  : `${inviteEmails.length} email${inviteEmails.length === 1 ? "" : "s"} ready`}
+              </div>
+            </div>
+
+            {!verified && (
+              <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+                Your business must be verified before invites can be delivered.
+              </div>
+            )}
+
+            <form onSubmit={sendOwnerInvites} className="mt-5 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">Email addresses</label>
+                <textarea
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  placeholder="one@company.com, two@company.com"
+                  rows={3}
+                  value={rawInviteEmails}
+                  onChange={e => setRawInviteEmails(e.target.value)}
+                  disabled={inviteSending}
+                />
+                {inviteEmails.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {inviteEmails.map(email => (
+                      <span key={email} className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs text-foreground">
+                        {email}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-1">Role (optional)</label>
+                  <select
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                    value={inviteRoleId}
+                    onChange={e => setInviteRoleId(e.target.value as UUID | "")}
+                    disabled={inviteSending}
+                  >
+                    <option value="">— None —</option>
+                    {roles.map(role => (
+                      <option key={role.id} value={role.id}>
+                        {role.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-1">Location (optional)</label>
+                  <select
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                    value={inviteLocationId}
+                    onChange={e => setInviteLocationId(e.target.value as UUID | "")}
+                    disabled={inviteSending}
+                  >
+                    <option value="">— None —</option>
+                    {locations.map(loc => (
+                      <option key={loc.id} value={loc.id}>
+                        {loc.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-6 text-sm text-foreground">
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="accent-primary"
+                    checked={inviteIsManager}
+                    onChange={e => setInviteIsManager(e.target.checked)}
+                    disabled={inviteSending}
+                  />
+                  Manager
+                </label>
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="accent-primary"
+                    checked={inviteIsAdmin}
+                    onChange={e => setInviteIsAdmin(e.target.checked)}
+                    disabled={inviteSending}
+                  />
+                  Admin
+                </label>
+              </div>
+
+              {inviteError && (
+                <div className="text-sm text-rose-600">{inviteError}</div>
+              )}
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="submit"
+                  className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-60"
+                  disabled={inviteSending || !verified}
+                >
+                  {inviteSending ? "Sending…" : "Send invites"}
+                </button>
+                {inviteEmails.length > 0 && (
+                  <div className="text-xs text-foreground/60">{inviteEmails.length} recipient{inviteEmails.length === 1 ? "" : "s"}</div>
+                )}
+              </div>
+            </form>
+
+            {inviteResults.length > 0 && (
+              <div className="mt-6">
+                <p className="text-sm font-medium text-foreground mb-2">Delivery status</p>
+                <div className="rounded-lg border border-border divide-y">
+                  {inviteResults.map(({ email, emailed, error, joinUrl }) => (
+                    <div key={email} className="flex flex-wrap items-center gap-3 p-3 text-sm">
+                      <div className="flex-1">
+                        <div className="font-mono text-foreground">{email}</div>
+                        <div className={cx("text-xs", emailed ? "text-green-700" : "text-rose-700")}
+                        >
+                          {emailed ? "Email sent" : `Email not sent: ${error ?? "unknown error"}`}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="rounded-md border border-border px-3 py-1 text-xs text-foreground hover:bg-background/70"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(joinUrl);
+                          } catch {
+                            // ignore clipboard errors
+                          }
+                        }}
+                      >
+                        Copy link
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+
         <header className="mb-6">
           <div className="flex items-center gap-4">
             <h1 className="text-2xl font-semibold tracking-tight">User management</h1>

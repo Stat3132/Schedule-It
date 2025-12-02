@@ -9,6 +9,7 @@ import type { PostgrestError } from "@supabase/supabase-js";
 import {
   BellRing,
   CalendarDays,
+  Cog,
   Loader2,
   MessageCircle,
   Plus,
@@ -18,6 +19,21 @@ import {
   X,
 } from "lucide-react";
 import { useI18n } from "../../../lib/i18n";
+import {
+  blockUser as blockUserPreference,
+  deleteGroupThread,
+  fetchBlockMap,
+  fetchMuteMap,
+  leaveGroup as leaveGroupRpc,
+  muteThread,
+  removeGroupMember,
+  unblockUser as unblockUserPreference,
+  unmuteThread,
+} from "../../../lib/messagingPreferences";
+import type {
+  BlockMap,
+  MuteMap,
+} from "../../../lib/messagingPreferences";
 import { ConversationSkeleton } from "@/components/messages/ConversationSkeleton";
 import {
   encodeForwardCard,
@@ -30,7 +46,9 @@ import {
 } from "../../../lib/messagingCards";
 import {
   loadReadCounts,
+  loadUnreadCounts,
   saveReadCounts,
+  saveUnreadCounts,
   saveUnreadFlag,
   UnreadScope,
 } from "../../../lib/unreadTracker";
@@ -79,8 +97,8 @@ type GroupMessageRow = {
 };
 
 type ConversationMessage =
-  | (MessageRow & { kind: "dm" })
-  | (GroupMessageRow & { kind: "group" });
+  | (MessageRow & { kind: "dm"; localOnly?: boolean; blockedNotice?: boolean })
+  | (GroupMessageRow & { kind: "group"; localOnly?: boolean });
 
 type EmploymentMeta = {
   user_id: UUID;
@@ -409,13 +427,143 @@ export default function EmployeeMessagingPage() {
   const [groupBuilderError, setGroupBuilderError] = useState<string | null>(null);
   const [isLoadingGroups, setIsLoadingGroups] = useState(false);
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
-  const [incomingCounts, setIncomingCounts] = useState<Record<string, number>>({});
-  const [groupIncomingCounts, setGroupIncomingCounts] = useState<Record<string, number>>({});
+  const [blockedByMe, setBlockedByMe] = useState<Record<string, boolean>>({});
+  const [blockedMe, setBlockedMe] = useState<Record<string, boolean>>({});
+  const [mutedPeers, setMutedPeers] = useState<Record<string, boolean>>({});
+  const [mutedGroups, setMutedGroups] = useState<Record<string, boolean>>({});
+  const [preferenceBusyKey, setPreferenceBusyKey] = useState<string | null>(null);
+  const [preferenceError, setPreferenceError] = useState<string | null>(null);
+  const [preferenceMenuOpen, setPreferenceMenuOpen] = useState<"peer" | "group" | null>(null);
+  const peerPreferenceMenuRef = useRef<HTMLDivElement | null>(null);
+  const groupPreferenceMenuRef = useRef<HTMLDivElement | null>(null);
+  const [incomingCounts, setIncomingCountsState] = useState<Record<string, number>>(() =>
+    loadUnreadCounts(EMPLOYEE_SCOPE, "dm"),
+  );
+  const [groupIncomingCounts, setGroupIncomingCountsState] = useState<Record<string, number>>(() =>
+    loadUnreadCounts(EMPLOYEE_SCOPE, "group"),
+  );
+
+  const setIncomingCounts = useCallback(
+    (value: React.SetStateAction<Record<string, number>>) => {
+      setIncomingCountsState((prev) => {
+        const next = typeof value === "function" ? value(prev) : value;
+        saveUnreadCounts(EMPLOYEE_SCOPE, "dm", next);
+        return next;
+      });
+    },
+    [setIncomingCountsState],
+  );
+
+  const setGroupIncomingCounts = useCallback(
+    (value: React.SetStateAction<Record<string, number>>) => {
+      setGroupIncomingCountsState((prev) => {
+        const next = typeof value === "function" ? value(prev) : value;
+        saveUnreadCounts(EMPLOYEE_SCOPE, "group", next);
+        return next;
+      });
+    },
+    [setGroupIncomingCountsState],
+  );
   const dmTotalsRef = useRef<Record<string, number>>({});
   const groupTotalsRef = useRef<Record<string, number>>({});
   const dmReadCountsRef = useRef<Record<string, number>>({});
   const groupReadCountsRef = useRef<Record<string, number>>({});
   const [readCountsReady, setReadCountsReady] = useState(false);
+  const applyMessagingPreferences = useCallback(
+    (blockMap: BlockMap, muteMap: MuteMap) => {
+      setBlockedByMe(blockMap.blockedByMe);
+      setBlockedMe(blockMap.blockedMe);
+      setMutedPeers(muteMap.dm);
+      setMutedGroups(muteMap.group);
+    },
+    [],
+  );
+
+  const fetchMessagingPreferences = useCallback(async () => {
+    if (!currentUserId) {
+      return {
+        blockMap: { blockedByMe: {}, blockedMe: {} },
+        muteMap: { dm: {}, group: {} },
+      } as { blockMap: BlockMap; muteMap: MuteMap };
+    }
+
+    const [blockMap, muteMap] = await Promise.all([
+      fetchBlockMap(supabase, currentUserId),
+      fetchMuteMap(supabase, currentUserId),
+    ]);
+
+    return { blockMap, muteMap };
+  }, [currentUserId, supabase]);
+
+  const refreshMessagingPreferences = useCallback(async () => {
+    const { blockMap, muteMap } = await fetchMessagingPreferences();
+    applyMessagingPreferences(blockMap, muteMap);
+  }, [applyMessagingPreferences, fetchMessagingPreferences]);
+
+  useEffect(() => {
+    setPreferenceMenuOpen(null);
+  }, [activePeer?.id, activeGroup?.id]);
+
+  useEffect(() => {
+    function handleOutsideClick(event: MouseEvent) {
+      const target = event.target as Node;
+      if (
+        (peerPreferenceMenuRef.current &&
+          peerPreferenceMenuRef.current.contains(target)) ||
+        (groupPreferenceMenuRef.current &&
+          groupPreferenceMenuRef.current.contains(target))
+      ) {
+        return;
+      }
+      setPreferenceMenuOpen(null);
+    }
+    if (typeof document !== "undefined") {
+      document.addEventListener("mousedown", handleOutsideClick);
+      return () => {
+        document.removeEventListener("mousedown", handleOutsideClick);
+      };
+    }
+    return undefined;
+  }, []);
+
+  const totalUnreadCount = useMemo(() => {
+    const directTotal = Object.entries(incomingCounts).reduce(
+      (sum, [peerId, count]) => {
+        if (mutedPeers[peerId]) return sum;
+        return sum + Math.max(0, count);
+      },
+      0,
+    );
+    const groupTotal = Object.entries(groupIncomingCounts).reduce(
+      (sum, [groupId, count]) => {
+        if (mutedGroups[groupId]) return sum;
+        return sum + Math.max(0, count);
+      },
+      0,
+    );
+    return directTotal + groupTotal;
+  }, [incomingCounts, groupIncomingCounts, mutedGroups, mutedPeers]);
+
+  const hasUnreadMessages = totalUnreadCount > 0;
+  const unreadBadgeLabel = totalUnreadCount > 99 ? "99+" : totalUnreadCount;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPreferences() {
+      const { blockMap, muteMap } = await fetchMessagingPreferences();
+      if (cancelled) return;
+      applyMessagingPreferences(blockMap, muteMap);
+    }
+
+    loadPreferences().catch((err) => {
+      console.error("Failed to load messaging preferences", err);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyMessagingPreferences, fetchMessagingPreferences]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -423,6 +571,10 @@ export default function EmployeeMessagingPage() {
     groupReadCountsRef.current = loadReadCounts(EMPLOYEE_SCOPE, "group");
     setReadCountsReady(true);
   }, []);
+
+  useEffect(() => {
+    setPreferenceError(null);
+  }, [activePeer?.id, activeGroup?.id]);
 
   const messageEndRef = useRef<HTMLDivElement | null>(null);
   const messageContainerRef = useRef<HTMLDivElement | null>(null);
@@ -1323,11 +1475,8 @@ export default function EmployeeMessagingPage() {
 
   useEffect(() => {
     if (!readCountsReady) return;
-    const hasUnread =
-      Object.values(incomingCounts).some((count) => count > 0) ||
-      Object.values(groupIncomingCounts).some((count) => count > 0);
-    saveUnreadFlag(EMPLOYEE_SCOPE, hasUnread);
-  }, [incomingCounts, groupIncomingCounts, readCountsReady]);
+    saveUnreadFlag(EMPLOYEE_SCOPE, hasUnreadMessages);
+  }, [hasUnreadMessages, readCountsReady]);
 
   const scheduleShiftFallback = useMemo(
     () => t("employee.messages.schedule.shiftFallback"),
@@ -1964,6 +2113,21 @@ export default function EmployeeMessagingPage() {
 
   const peerFallbackName = t("employee.messages.conversationFallback");
   const resolvedPeerName = activePeerDisplayName ?? peerFallbackName;
+  const activePeerMuted = activePeer ? Boolean(mutedPeers[activePeer.id]) : false;
+  const activeGroupMuted = activeGroup ? Boolean(mutedGroups[activeGroup.id]) : false;
+  const activePeerBlockedByMe = activePeer ? Boolean(blockedByMe[activePeer.id]) : false;
+  const activePeerBlockedMe = activePeer ? Boolean(blockedMe[activePeer.id]) : false;
+  const activePeerBlocked = activePeerBlockedByMe || activePeerBlockedMe;
+  const peerMenuOpen = preferenceMenuOpen === "peer";
+  const groupMenuOpen = preferenceMenuOpen === "group";
+  const peerMuteBusy = activePeer ? preferenceBusyKey === `mute:dm:${activePeer.id}` : false;
+  const peerBlockBusy = activePeer ? preferenceBusyKey === `block:${activePeer.id}` : false;
+  const groupMuteBusy = activeGroup ? preferenceBusyKey === `mute:group:${activeGroup.id}` : false;
+  const groupLeaveBusy = activeGroup ? preferenceBusyKey === `group:leave:${activeGroup.id}` : false;
+  const groupDeleteBusy = activeGroup ? preferenceBusyKey === `group:delete:${activeGroup.id}` : false;
+  const activeGroupCreatedByCurrentUser = activeGroup
+    ? activeGroup.createdBy === currentUserId
+    : false;
 
   const activePeerIsEmployer = useMemo(() => {
     if (!activePeer) return false;
@@ -2192,6 +2356,9 @@ export default function EmployeeMessagingPage() {
     if (!activePeer && !activeGroup) return null;
     const content = rawContent.trim();
     if (!content) return null;
+    if (activePeer && (blockedByMe[activePeer.id] || blockedMe[activePeer.id])) {
+      return null;
+    }
 
     setSending(true);
     try {
@@ -2365,6 +2532,7 @@ export default function EmployeeMessagingPage() {
     e.preventDefault();
     if (!currentUserId) return;
     if (!activePeer && !activeGroup) return;
+    if (activePeer && activePeerBlocked) return;
     const content = newMessage.trim();
     if (!content) return;
     setNewMessage("");
@@ -2519,6 +2687,226 @@ export default function EmployeeMessagingPage() {
       setIsCreatingGroup(false);
     }
   }
+
+  const handleTogglePeerMute = useCallback(async () => {
+    if (!activePeer) return;
+    const key = `mute:dm:${activePeer.id}`;
+    setPreferenceBusyKey(key);
+    setPreferenceError(null);
+    try {
+      if (mutedPeers[activePeer.id]) {
+        await unmuteThread(supabase, currentUserId, "dm", activePeer.id);
+      } else {
+        await muteThread(supabase, currentUserId, "dm", activePeer.id);
+      }
+      await refreshMessagingPreferences();
+    } catch (err) {
+      console.error("Failed to toggle peer mute", err);
+      setPreferenceError(t("employee.messages.preferences.genericError"));
+    } finally {
+      setPreferenceBusyKey((prev) => (prev === key ? null : prev));
+    }
+  }, [
+    activePeer,
+    currentUserId,
+    mutedPeers,
+    refreshMessagingPreferences,
+    supabase,
+    t,
+  ]);
+
+  const handleTogglePeerBlock = useCallback(async () => {
+    if (!activePeer) return;
+    const key = `block:${activePeer.id}`;
+    setPreferenceBusyKey(key);
+    setPreferenceError(null);
+    try {
+      if (blockedByMe[activePeer.id]) {
+        await unblockUserPreference(supabase, currentUserId, activePeer.id);
+      } else {
+        await blockUserPreference(supabase, currentUserId, activePeer.id);
+      }
+      await refreshMessagingPreferences();
+    } catch (err) {
+      console.error("Failed to toggle peer block", err);
+      setPreferenceError(t("employee.messages.preferences.genericError"));
+    } finally {
+      setPreferenceBusyKey((prev) => (prev === key ? null : prev));
+    }
+  }, [
+    activePeer,
+    blockedByMe,
+    currentUserId,
+    refreshMessagingPreferences,
+    supabase,
+    t,
+  ]);
+
+  const handleToggleGroupMute = useCallback(async () => {
+    if (!activeGroup) return;
+    const key = `mute:group:${activeGroup.id}`;
+    setPreferenceBusyKey(key);
+    setPreferenceError(null);
+    try {
+      if (mutedGroups[activeGroup.id]) {
+        await unmuteThread(supabase, currentUserId, "group", activeGroup.id);
+      } else {
+        await muteThread(supabase, currentUserId, "group", activeGroup.id);
+      }
+      await refreshMessagingPreferences();
+    } catch (err) {
+      console.error("Failed to toggle group mute", err);
+      setPreferenceError(t("employee.messages.preferences.genericError"));
+    } finally {
+      setPreferenceBusyKey((prev) => (prev === key ? null : prev));
+    }
+  }, [activeGroup, currentUserId, mutedGroups, refreshMessagingPreferences, supabase, t]);
+
+  const handleLeaveGroup = useCallback(async () => {
+    if (!activeGroup) return;
+    const groupLabel =
+      activeGroup.name || t("employee.messages.groupsHeading");
+    const confirmed =
+      typeof window === "undefined"
+        ? true
+        : window.confirm(
+            t("employee.messages.groups.actions.leaveConfirm", {
+              name: groupLabel,
+            }),
+          );
+    if (!confirmed) return;
+    const groupId = activeGroup.id;
+    const wasActiveGroup = activeGroup.id === groupId;
+    const key = `group:leave:${groupId}`;
+    setPreferenceBusyKey(key);
+    setPreferenceError(null);
+    try {
+      const { error } = await leaveGroupRpc(supabase, groupId);
+      if (error) throw error;
+      setGroups((prev) => prev.filter((group) => group.id !== groupId));
+      setActiveGroup((prev) => (prev && prev.id === groupId ? null : prev));
+      if (wasActiveGroup) {
+        setMessages([]);
+      }
+      setGroupIncomingCounts((prev) => {
+        if (!prev[groupId]) return prev;
+        const clone = { ...prev };
+        delete clone[groupId];
+        return clone;
+      });
+      setMutedGroups((prev) => {
+        if (!prev[groupId]) return prev;
+        const clone = { ...prev };
+        delete clone[groupId];
+        return clone;
+      });
+      delete groupTotalsRef.current[groupId];
+      delete groupReadCountsRef.current[groupId];
+      await refreshMessagingPreferences();
+    } catch (err) {
+      console.error("Failed to leave group", err);
+      setPreferenceError(t("employee.messages.groups.actions.error"));
+    } finally {
+      setPreferenceBusyKey((prev) => (prev === key ? null : prev));
+    }
+  }, [activeGroup, refreshMessagingPreferences, supabase, t]);
+
+  const handleDeleteGroup = useCallback(async () => {
+    if (!activeGroup) return;
+    const groupLabel =
+      activeGroup.name || t("employee.messages.groupsHeading");
+    const confirmed =
+      typeof window === "undefined"
+        ? true
+        : window.confirm(
+            t("employee.messages.groups.actions.deleteConfirm", {
+              name: groupLabel,
+            }),
+          );
+    if (!confirmed) return;
+    const groupId = activeGroup.id;
+    const wasActiveGroup = activeGroup.id === groupId;
+    const key = `group:delete:${groupId}`;
+    setPreferenceBusyKey(key);
+    setPreferenceError(null);
+    try {
+      const { error } = await deleteGroupThread(supabase, groupId);
+      if (error) throw error;
+      setGroups((prev) => prev.filter((group) => group.id !== groupId));
+      setActiveGroup((prev) => (prev && prev.id === groupId ? null : prev));
+      if (wasActiveGroup) {
+        setMessages([]);
+      }
+      setGroupIncomingCounts((prev) => {
+        if (!prev[groupId]) return prev;
+        const clone = { ...prev };
+        delete clone[groupId];
+        return clone;
+      });
+      setMutedGroups((prev) => {
+        if (!prev[groupId]) return prev;
+        const clone = { ...prev };
+        delete clone[groupId];
+        return clone;
+      });
+      delete groupTotalsRef.current[groupId];
+      delete groupReadCountsRef.current[groupId];
+      await refreshMessagingPreferences();
+    } catch (err) {
+      console.error("Failed to delete group", err);
+      setPreferenceError(t("employee.messages.groups.actions.error"));
+    } finally {
+      setPreferenceBusyKey((prev) => (prev === key ? null : prev));
+    }
+  }, [activeGroup, refreshMessagingPreferences, supabase, t]);
+
+  const handleRemoveGroupMember = useCallback(
+    async (memberId: UUID, memberName: string) => {
+      if (!activeGroup) return;
+      const confirmLabel = t(
+        "employee.messages.groups.actions.removeConfirm",
+        {
+          name:
+            memberName || t("employee.messages.groups.unknownMember"),
+        },
+      );
+      const confirmed =
+        typeof window === "undefined" ? true : window.confirm(confirmLabel);
+      if (!confirmed) return;
+      const key = `group:remove:${memberId}`;
+      const groupId = activeGroup.id;
+      setPreferenceBusyKey(key);
+      setPreferenceError(null);
+      try {
+        const { error } = await removeGroupMember(
+          supabase,
+          groupId,
+          memberId,
+        );
+        if (error) throw error;
+        setGroups((prev) =>
+          prev.map((group) =>
+            group.id === groupId
+              ? { ...group, memberIds: group.memberIds.filter((id) => id !== memberId) }
+              : group,
+          ),
+        );
+        setActiveGroup((prev) => {
+          if (!prev || prev.id !== groupId) return prev;
+          return {
+            ...prev,
+            memberIds: prev.memberIds.filter((id) => id !== memberId),
+          };
+        });
+      } catch (err) {
+        console.error("Failed to remove group member", err);
+        setPreferenceError(t("employee.messages.groups.actions.error"));
+      } finally {
+        setPreferenceBusyKey((prev) => (prev === key ? null : prev));
+      }
+    },
+    [activeGroup, supabase, t],
+  );
 
   function getReminderUsageInfo(
     requestType: ReminderRequestType,
@@ -2869,6 +3257,21 @@ export default function EmployeeMessagingPage() {
     }
     return t("employee.messages.header.emptySubtitle");
   }, [activeGroup, activePeer, t]);
+  const composerBlocked = Boolean(activePeer && activePeerBlocked);
+  const composerPlaceholder = composerBlocked
+    ? t("employee.messages.preferences.blockedPlaceholder")
+    : activePeer
+      ? t("employee.messages.placeholderWithPeer", {
+          name: resolvedPeerName,
+        })
+      : activeGroup
+        ? t("employee.messages.placeholderWithGroup", {
+            name: activeGroup.name,
+          })
+        : t("employee.messages.placeholderWithoutPeer");
+  const composerDisabled =
+    (!activePeer && !activeGroup) || sending || composerBlocked;
+  const sendDisabled = composerDisabled || !newMessage.trim();
 
   if (loadingUser) {
     return (
@@ -2897,10 +3300,12 @@ export default function EmployeeMessagingPage() {
   return (
     <div className="flex h-[calc(100vh-4rem)] min-h-[600px] w-full bg-background gap-4 lg:gap-12">
       {/* Left sidebar */}
-      <aside className="flex w-64 flex-col border-r bg-card/60 backdrop-blur-sm">
+      <aside className="relative flex w-64 flex-col border-r bg-card/60 backdrop-blur-sm">
         <div className="flex items-center gap-2 border-b px-4 py-3">
-          <MessageCircle className="h-5 w-5 text-primary" />
-          <div>
+          <div className="relative">
+            <MessageCircle className="h-5 w-5 text-primary" />
+          </div>
+          <div className="flex-1">
             <h1 className="text-sm font-semibold">
               {t("employee.messages.title")}
             </h1>
@@ -2908,6 +3313,11 @@ export default function EmployeeMessagingPage() {
               {t("employee.messages.subtitle")}
             </p>
           </div>
+          {hasUnreadMessages ? (
+            <span className="inline-flex items-center rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-600 animate-pulse">
+              {unreadBadgeLabel} new
+            </span>
+          ) : null}
         </div>
 
         <div className="flex-1 overflow-y-auto">
@@ -2992,6 +3402,10 @@ export default function EmployeeMessagingPage() {
                 const isActive = !activeGroup && activePeer?.id === conv.peer.id;
                 const incomingCount = incomingCounts[conv.peer.id] ?? 0;
                 const peerProfile = conv.peer ?? null;
+                const isMuted = Boolean(mutedPeers[conv.peer.id]);
+                const isBlockedOutbound = Boolean(blockedByMe[conv.peer.id]);
+                const isBlockedInbound = Boolean(blockedMe[conv.peer.id]);
+                const displayIncomingCount = isMuted ? 0 : incomingCount;
 
                 return (
                   <li key={conv.peer.id}>
@@ -3003,6 +3417,7 @@ export default function EmployeeMessagingPage() {
                         isActive
                           ? "bg-primary/10 text-primary-foreground/90"
                           : "hover:bg-muted",
+                        isMuted && !isActive ? "opacity-70" : "",
                       ].join(" ")}
                     >
                       <AvatarCircle profile={peerProfile} sizeClass="h-8 w-8 shrink-0" />
@@ -3017,10 +3432,22 @@ export default function EmployeeMessagingPage() {
                           {conv.lastMessage?.content ||
                             t("employee.messages.startConversation")}
                         </p>
+                        {isMuted && (
+                          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                            {t("employee.messages.preferences.silencedBadge")}
+                          </p>
+                        )}
+                        {(isBlockedOutbound || isBlockedInbound) && (
+                          <p className="text-[10px] text-amber-600">
+                            {isBlockedOutbound
+                              ? t("employee.messages.preferences.blockedByYouBadge")
+                              : t("employee.messages.preferences.blockedYouBadge")}
+                          </p>
+                        )}
                       </div>
-                      {incomingCount > 0 && (
+                      {displayIncomingCount > 0 && (
                         <span className="ml-2 inline-flex min-w-[1.5rem] justify-center rounded-full border border-rose-300 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600 dark:border-rose-400/60 dark:text-rose-200">
-                          {incomingCount > 9 ? "9+" : incomingCount}
+                          {displayIncomingCount > 9 ? "9+" : displayIncomingCount}
                         </span>
                       )}
                     </button>
@@ -3146,6 +3573,8 @@ export default function EmployeeMessagingPage() {
                       : "";
                   const isActive = activeGroup?.id === group.id;
                   const unreadCount = groupIncomingCounts[group.id] ?? 0;
+                  const isMutedGroup = Boolean(mutedGroups[group.id]);
+                  const displayUnread = isMutedGroup ? 0 : unreadCount;
                   return (
                     <li key={group.id}>
                       <button
@@ -3156,6 +3585,7 @@ export default function EmployeeMessagingPage() {
                           isActive
                             ? "border-primary bg-primary/10"
                             : "border-border/60 bg-card/70 hover:border-border",
+                          isMutedGroup && !isActive ? "opacity-75" : "",
                         ].join(" ")}
                       >
                         <div className="flex items-center justify-between gap-2">
@@ -3166,9 +3596,9 @@ export default function EmployeeMessagingPage() {
                                 count: group.memberIds.length,
                               })}
                             </span>
-                            {unreadCount > 0 && (
+                            {displayUnread > 0 && (
                               <span className="inline-flex min-w-[1.5rem] justify-center rounded-full border border-rose-300 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600 dark:border-rose-400/60 dark:text-rose-200">
-                                {unreadCount > 9 ? "9+" : unreadCount}
+                                {displayUnread > 9 ? "9+" : displayUnread}
                               </span>
                             )}
                           </div>
@@ -3177,6 +3607,11 @@ export default function EmployeeMessagingPage() {
                           {previewNames || t("employee.messages.groupsBuilder.membersPending")}
                           {remainderLabel ? ` ${remainderLabel}` : ""}
                         </p>
+                        {isMutedGroup && (
+                          <p className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                            {t("employee.messages.preferences.silencedBadge")}
+                          </p>
+                        )}
                       </button>
                     </li>
                   );
@@ -3228,6 +3663,18 @@ export default function EmployeeMessagingPage() {
                   {activeGroup
                     ? t("employee.messages.groups.emptyConversation")
                     : t("employee.messages.emptyConversation")}
+                </div>
+              )}
+
+              {activePeer && activePeerBlocked && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  {activePeerBlockedByMe
+                    ? t("employee.messages.preferences.blockedByYouNotice", {
+                        name: resolvedPeerName,
+                      })
+                    : t("employee.messages.preferences.blockedYouNotice", {
+                        name: resolvedPeerName,
+                      })}
                 </div>
               )}
 
@@ -3357,26 +3804,16 @@ export default function EmployeeMessagingPage() {
               <textarea
                 ref={textareaRef}
                 className="max-h-32 min-h-[40px] flex-1 resize-none bg-white dark:bg-slate-900 text-sm outline-none placeholder:text-xs placeholder:text-muted-foreground border border-gray-200 dark:border-slate-700 rounded-md px-3 py-2"
-                placeholder={
-                  activePeer
-                    ? t("employee.messages.placeholderWithPeer", {
-                        name: resolvedPeerName,
-                      })
-                    : activeGroup
-                      ? t("employee.messages.placeholderWithGroup", {
-                          name: activeGroup.name,
-                        })
-                    : t("employee.messages.placeholderWithoutPeer")
-                }
+                placeholder={composerPlaceholder}
                 value={newMessage}
                 onChange={handleTextareaChange}
-                disabled={(!activePeer && !activeGroup) || sending}
+                disabled={composerDisabled}
               />
               <div className="flex flex-col items-center">
                 <button
                   type="submit"
                   onContextMenu={handleSendButtonContextMenu}
-                  disabled={(!activePeer && !activeGroup) || sending || !newMessage.trim()}
+                  disabled={sendDisabled}
                   className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs disabled:opacity-50"
                   aria-label={t("employee.messages.sendButton")}
                   title={t("employee.messages.menu.rightClickHint")}
@@ -3805,9 +4242,21 @@ export default function EmployeeMessagingPage() {
                             profile,
                             t("employee.messages.groups.unknownMember"),
                           ) || t("employee.messages.groups.unknownMember");
+                    const removeBusy =
+                      preferenceBusyKey === `group:remove:${memberId}`;
                     return (
-                      <li key={memberId}>
-                        • {label}
+                      <li key={memberId} className="flex items-center justify-between gap-2">
+                        <span>• {label}</span>
+                        {activeGroupCreatedByCurrentUser && memberId !== currentUserId && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveGroupMember(memberId, label)}
+                            disabled={removeBusy}
+                            className="text-[10px] font-semibold text-rose-600 hover:underline disabled:opacity-50"
+                          >
+                            {t("employee.messages.groups.actions.remove")}
+                          </button>
+                        )}
                       </li>
                     );
                   })}
@@ -3856,10 +4305,98 @@ export default function EmployeeMessagingPage() {
                       {activePeerSummary ?? t("employee.messages.conversation.bio")}
                     </p>
                   </div>
+                  <div ref={peerPreferenceMenuRef} className="relative ml-auto shrink-0">
+                    <button
+                      type="button"
+                      aria-label={t("employee.messages.preferences.title")}
+                      onClick={() =>
+                        setPreferenceMenuOpen((prev) =>
+                          prev === "peer" ? null : "peer",
+                        )
+                      }
+                      className="rounded-full border border-border/60 p-2 text-muted-foreground transition hover:bg-muted"
+                    >
+                      <Cog className="h-4 w-4" />
+                    </button>
+                    {peerMenuOpen && (
+                      <div className="absolute right-0 top-10 z-30 w-60 rounded-md border border-border/60 bg-card p-2 text-xs shadow-lg">
+                        <button
+                          type="button"
+                          onClick={handleTogglePeerMute}
+                          disabled={peerMuteBusy}
+                          className="flex w-full items-center justify-between rounded-md px-3 py-2 text-left font-semibold transition hover:bg-muted/60 disabled:opacity-60"
+                        >
+                          <span>
+                            {activePeerMuted
+                              ? t("employee.messages.preferences.unsilenceButton")
+                              : t("employee.messages.preferences.silenceButton")}
+                          </span>
+                          {peerMuteBusy && <Loader2 className="h-3 w-3 animate-spin" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleTogglePeerBlock}
+                          disabled={peerBlockBusy}
+                          className="mt-1 flex w-full items-center justify-between rounded-md px-3 py-2 text-left font-semibold text-rose-700 transition hover:bg-rose-50 disabled:opacity-60"
+                        >
+                          <span>
+                            {activePeerBlockedByMe
+                              ? t("employee.messages.preferences.unblockButton")
+                              : t("employee.messages.preferences.blockButton")}
+                          </span>
+                          {peerBlockBusy && <Loader2 className="h-3 w-3 animate-spin" />}
+                        </button>
+                        {activePeerBlocked && (
+                          <p className="mt-2 text-[11px] text-amber-600">
+                            {activePeerBlockedByMe
+                              ? t("employee.messages.preferences.blockedByYouNotice", {
+                                  name: resolvedPeerName,
+                                })
+                              : t("employee.messages.preferences.blockedYouNotice", {
+                                  name: resolvedPeerName,
+                                })}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </>
             )}
           </div>
+          {preferenceError && (
+            <p className="mt-2 text-[11px] text-rose-600">
+              {preferenceError}
+            </p>
+          )}
+
+          {activeGroup ? (
+            <div>
+              <h4 className="text-xs font-semibold text-muted-foreground">
+                {t("employee.messages.groups.actions.title")}
+              </h4>
+              <div className="mt-2 space-y-2 text-xs">
+                <button
+                  type="button"
+                  onClick={handleLeaveGroup}
+                  disabled={groupLeaveBusy}
+                  className="w-full rounded-md border border-border/60 bg-background px-3 py-2 text-left font-semibold transition hover:border-primary/40 hover:bg-primary/5 disabled:opacity-60"
+                >
+                  {t("employee.messages.groups.actions.leave")}
+                </button>
+                {activeGroupCreatedByCurrentUser && (
+                  <button
+                    type="button"
+                    onClick={handleDeleteGroup}
+                    disabled={groupDeleteBusy}
+                    className="w-full rounded-md border border-rose-300/80 bg-rose-50/40 px-3 py-2 text-left font-semibold text-rose-700 transition hover:border-rose-400 disabled:opacity-60"
+                  >
+                    {t("employee.messages.groups.actions.delete")}
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : null}
 
           <div>
             <h4 className="text-xs font-semibold text-muted-foreground">
