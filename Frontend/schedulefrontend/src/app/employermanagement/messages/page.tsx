@@ -14,12 +14,15 @@ import {
   Cog,
   Loader2,
   MessageCircle,
+  Paperclip,
   Plus,
   Send,
   Share2,
+  Trash2,
   Users,
   X,
 } from "lucide-react";
+import { AttachmentPreview } from "@/components/messages/AttachmentPreview";
 import {
   ForwardCardPayload,
   parseForwardCard,
@@ -35,6 +38,12 @@ import {
   UnreadScope,
 } from "../../../lib/unreadTracker";
 import { useI18n } from "../../../lib/i18n";
+import {
+  formatFileSize,
+  MAX_MESSAGE_ATTACHMENT_BYTES,
+  uploadMessageAttachment,
+  type UploadedAttachment,
+} from "../../../lib/messageAttachments";
 import {
   blockUser as blockUserPreference,
   deleteGroupThread,
@@ -131,6 +140,11 @@ type MessageRow = {
   created_at: string;
   delivered_at: string | null;
   read_at: string | null;
+  attachment_url?: string | null;
+  attachment_name?: string | null;
+  attachment_mime?: string | null;
+  attachment_size?: number | null;
+  attachment_path?: string | null;
 };
 
 type DMConversation = {
@@ -139,6 +153,7 @@ type DMConversation = {
 };
 
 const EMPLOYER_SCOPE: UnreadScope = "employer";
+const GROUP_NAME_MAX = 100;
 
 type GroupChat = {
   id: UUID;
@@ -153,11 +168,22 @@ type GroupMessageRow = {
   sender_id: UUID;
   content: string;
   created_at: string;
+  attachment_url?: string | null;
+  attachment_name?: string | null;
+  attachment_mime?: string | null;
+  attachment_size?: number | null;
+  attachment_path?: string | null;
 };
 
 type ConversationMessage =
   | (MessageRow & { kind: "dm" })
   | (GroupMessageRow & { kind: "group" });
+
+type AttachmentDraft = {
+  id: string;
+  file: File;
+  previewUrl: string | null;
+};
 
 type ScheduleSummarySlot = {
   day: string;
@@ -172,6 +198,7 @@ type EmploymentSnapshot = {
   roleIds: UUID[];
   locationId: UUID | null;
 };
+
 function formatStatusLabel(status: string) {
   switch (status) {
     case "approved":
@@ -318,6 +345,16 @@ export default function EmployerMessagingPage() {
   const [sending, setSending] = useState(false);
   const [newMessage, setNewMessage] = useState("");
   const [initialMessagesLoaded, setInitialMessagesLoaded] = useState(false);
+  const [pendingAttachment, setPendingAttachment] = useState<AttachmentDraft | null>(null);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pendingAttachment?.previewUrl) {
+        URL.revokeObjectURL(pendingAttachment.previewUrl);
+      }
+    };
+  }, [pendingAttachment]);
 
   const [isLoadingContacts, setIsLoadingContacts] = useState(true);
   const [businessScopeChecked, setBusinessScopeChecked] = useState(false);
@@ -620,6 +657,7 @@ export default function EmployerMessagingPage() {
 
   const messageEndRef = useRef<HTMLDivElement | null>(null);
   const messageContainerRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const channelRef = useRef<ReturnType<SupabaseClient['channel']> | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activePeerRef = useRef<Profile | null>(null);
@@ -2193,33 +2231,79 @@ export default function EmployerMessagingPage() {
         ? t("employee.messages.placeholderWithGroup", { name: activeGroup.name })
         : t("employee.messages.placeholderWithoutPeer");
   const composerDisabled = (!activePeer && !activeGroup) || sending || composerBlocked;
-  const sendDisabled = composerDisabled || !newMessage.trim();
+  const sendDisabled =
+    composerDisabled || (!newMessage.trim() && !pendingAttachment);
+
+  async function sendMessageContent(
+    rawContent: string,
+    attachmentDraft?: AttachmentDraft | null,
+  ): Promise<ConversationMessage | null> {
+    if (!currentUserId) return null;
+    if (!activePeer && !activeGroup) return null;
+    if (activePeer && activePeerBlocked) return null;
+
+    const content = rawContent.trim();
+    if (!content && !attachmentDraft) return null;
+
+    let uploadedAttachment: UploadedAttachment | null = null;
+    if (attachmentDraft) {
+      try {
+        uploadedAttachment = await uploadMessageAttachment(
+          supabase,
+          attachmentDraft.file,
+          currentUserId,
+          activeGroup ? "group" : "dm",
+        );
+      } catch (err) {
+        console.error("Employer attachment upload failed", err);
+        setAttachmentError(
+          t("employer.messages.attachments.uploadError"),
+        );
+        return null;
+      }
+    }
+
+    setAttachmentError(null);
+    setSending(true);
+    try {
+      if (activeGroup) {
+        return await sendGroupMessage(content, uploadedAttachment);
+      }
+      if (activePeer) {
+        return await sendDirectMessage(content, uploadedAttachment);
+      }
+      return null;
+    } finally {
+      setSending(false);
+    }
+  }
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
     if (!currentUserId) return;
     if (!activePeer && !activeGroup) return;
     if (activePeer && activePeerBlocked) return;
-    const content = newMessage.trim();
-    if (!content) return;
+    if (!newMessage.trim() && !pendingAttachment) return;
 
-    setNewMessage("");
-    setSending(true);
-
-    try {
-      if (activeGroup) {
-        await sendGroupMessage(content);
-      } else if (activePeer) {
-        await sendDirectMessage(content);
+    const draftContent = newMessage;
+    const draftAttachment = pendingAttachment;
+    const result = await sendMessageContent(draftContent, draftAttachment);
+    if (result) {
+      setNewMessage("");
+      setPendingAttachment(null);
+      setAttachmentError(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
       }
-    } finally {
-      setSending(false);
     }
   }
 
-  async function sendDirectMessage(content: string) {
-    if (!currentUserId || !activePeer) return;
-    if (activePeerBlocked) return;
+  async function sendDirectMessage(
+    content: string,
+    attachment?: UploadedAttachment | null,
+  ): Promise<ConversationMessage | null> {
+    if (!currentUserId || !activePeer) return null;
+    if (activePeerBlocked) return null;
 
     const tempId = `temp-dm-${Date.now().toString(36)}`;
     const optimisticMessage: ConversationMessage = {
@@ -2231,6 +2315,11 @@ export default function EmployerMessagingPage() {
       delivered_at: null,
       read_at: null,
       kind: "dm",
+      attachment_url: attachment?.url ?? null,
+      attachment_name: attachment?.name ?? null,
+      attachment_mime: attachment?.mime ?? null,
+      attachment_size: attachment?.size ?? null,
+      attachment_path: attachment?.path ?? null,
     };
 
     setMessages((prev) => [...prev, optimisticMessage]);
@@ -2247,7 +2336,8 @@ export default function EmployerMessagingPage() {
       console.warn("Failed to read session before DM send", err);
     }
 
-    const baseSelect = "id,sender_id,recipient_id,content,created_at";
+    const baseSelect =
+      "id,sender_id,recipient_id,content,created_at,attachment_url,attachment_name,attachment_mime,attachment_size,attachment_path";
     const receiptSelect = `${baseSelect},delivered_at,read_at`;
 
     const performInsert = async (selectColumns: string) =>
@@ -2257,6 +2347,11 @@ export default function EmployerMessagingPage() {
           sender_id: currentUserId,
           recipient_id: activePeer.id,
           content,
+          attachment_url: attachment?.url ?? null,
+          attachment_name: attachment?.name ?? null,
+          attachment_mime: attachment?.mime ?? null,
+          attachment_size: attachment?.size ?? null,
+          attachment_path: attachment?.path ?? null,
         })
         .select(selectColumns)
         .single();
@@ -2279,7 +2374,7 @@ export default function EmployerMessagingPage() {
     if (error) {
       console.error("Error sending direct message:", error);
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
-      return;
+      return null;
     }
 
     if (data) {
@@ -2300,11 +2395,17 @@ export default function EmployerMessagingPage() {
           payload: data,
         });
       }
+      return savedMessage;
     }
+
+    return null;
   }
 
-  async function sendGroupMessage(content: string) {
-    if (!currentUserId || !activeGroup) return;
+  async function sendGroupMessage(
+    content: string,
+    attachment?: UploadedAttachment | null,
+  ): Promise<ConversationMessage | null> {
+    if (!currentUserId || !activeGroup) return null;
 
     const tempId = `temp-group-${Date.now().toString(36)}`;
     const optimisticMessage: ConversationMessage = {
@@ -2314,6 +2415,11 @@ export default function EmployerMessagingPage() {
       content,
       created_at: new Date().toISOString(),
       kind: "group",
+      attachment_url: attachment?.url ?? null,
+      attachment_name: attachment?.name ?? null,
+      attachment_mime: attachment?.mime ?? null,
+      attachment_size: attachment?.size ?? null,
+      attachment_path: attachment?.path ?? null,
     };
 
     setMessages((prev) => [...prev, optimisticMessage]);
@@ -2336,6 +2442,11 @@ export default function EmployerMessagingPage() {
         group_id: activeGroup.id,
         sender_id: currentUserId,
         content,
+        attachment_url: attachment?.url ?? null,
+        attachment_name: attachment?.name ?? null,
+        attachment_mime: attachment?.mime ?? null,
+        attachment_size: attachment?.size ?? null,
+        attachment_path: attachment?.path ?? null,
       })
       .select("*")
       .single();
@@ -2343,7 +2454,7 @@ export default function EmployerMessagingPage() {
     if (error) {
       console.error("Error sending group message:", error);
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
-      return;
+      return null;
     }
 
     if (data) {
@@ -2354,7 +2465,10 @@ export default function EmployerMessagingPage() {
       setMessages((prev) =>
         prev.map((m) => (m.id === tempId ? savedMessage : m)),
       );
+      return savedMessage;
     }
+
+    return null;
   }
 
   function handleTextareaChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
@@ -2370,6 +2484,43 @@ export default function EmployerMessagingPage() {
       payload: { senderId: currentUserId },
     });
   }
+
+  const handleAttachmentButtonClick = () => {
+    if (!activePeer && !activeGroup) return;
+    fileInputRef.current?.click();
+  };
+
+  const handleAttachmentChange = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0] ?? null;
+    event.target.value = "";
+    if (!file) return;
+    if (file.size > MAX_MESSAGE_ATTACHMENT_BYTES) {
+      setAttachmentError(
+        t("employer.messages.attachments.tooLarge", { limit: "50 MB" }),
+      );
+      return;
+    }
+
+    setAttachmentError(null);
+    const draft: AttachmentDraft = {
+      id: crypto.randomUUID?.() ?? Math.random().toString(36).slice(2),
+      file,
+      previewUrl: file.type.startsWith("image/")
+        ? URL.createObjectURL(file)
+        : null,
+    };
+    setPendingAttachment(draft);
+  };
+
+  const handleRemoveAttachment = () => {
+    setPendingAttachment(null);
+    setAttachmentError(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
 
   function openForwardAction(
     card: ForwardCardPayload,
@@ -2490,13 +2641,22 @@ export default function EmployerMessagingPage() {
 
   async function handleCreateGroup() {
     if (!currentUserId) {
-      setGroupBuilderError("You must be signed in to create a group chat.");
+      setGroupBuilderError(t("employee.messages.groups.errors.auth"));
       return;
     }
 
     const trimmedName = groupDraftName.trim();
     if (!trimmedName) {
-      setGroupBuilderError("Name your group to continue.");
+      setGroupBuilderError(t("employee.messages.groups.errors.name"));
+      return;
+    }
+
+    if (trimmedName.length > GROUP_NAME_MAX) {
+      setGroupBuilderError(
+        t("employee.messages.groups.errors.nameLength", {
+          limit: GROUP_NAME_MAX,
+        }),
+      );
       return;
     }
 
@@ -2505,7 +2665,7 @@ export default function EmployerMessagingPage() {
       .map(([id]) => id as UUID);
 
     if (teammateIds.length < 2) {
-      setGroupBuilderError("Pick at least two teammates in addition to you.");
+      setGroupBuilderError(t("employee.messages.groups.errors.members"));
       return;
     }
 
@@ -2565,7 +2725,7 @@ export default function EmployerMessagingPage() {
       setIsGroupBuilderOpen(false);
     } catch (err) {
       console.error("Error creating group chat:", err);
-      setGroupBuilderError("Unable to create this group. Please try again.");
+      setGroupBuilderError(t("employee.messages.groups.errors.generic"));
     } finally {
       setIsCreatingGroup(false);
     }
@@ -3076,7 +3236,7 @@ export default function EmployerMessagingPage() {
 
   return (
     <>
-      <div className="flex h-[calc(100vh-4rem)] min-h-[600px] w-full bg-background gap-4 lg:gap-12">
+      <div className="flex h-[calc(100vh-4rem)] min-h-[600px] w-full bg-background gap-4 overflow-hidden lg:gap-12">
       {/* Left sidebar */}
       <aside className="relative flex w-64 flex-col border-r bg-card/60 backdrop-blur-sm">
         <div className="flex items-center gap-2 border-b px-4 py-3">
@@ -3250,6 +3410,7 @@ export default function EmployerMessagingPage() {
                   <input
                     type="text"
                     value={groupDraftName}
+                    maxLength={GROUP_NAME_MAX}
                     onChange={(event) => setGroupDraftName(event.target.value)}
                     className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
                     placeholder="Front desk crew"
@@ -3372,7 +3533,7 @@ export default function EmployerMessagingPage() {
       </aside>
 
       {/* Main chat panel */}
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex items-center justify-between border-b px-4 py-3">
           <div className="min-w-0">
             <h2 className="truncate text-sm font-semibold">{headerTitle}</h2>
@@ -3388,7 +3549,7 @@ export default function EmployerMessagingPage() {
 
         <div
           ref={messageContainerRef}
-          className="flex-1 overflow-y-auto bg-muted/40 px-4 py-3"
+          className="flex-1 min-h-0 overflow-y-auto bg-muted/40 px-4 py-3"
           onScroll={handleMessageScroll}
         >
           {!activePeer && !activeGroup && (
@@ -3484,6 +3645,17 @@ export default function EmployerMessagingPage() {
                           {senderLabel}
                         </p>
                       ) : null}
+                      {msg.attachment_url ? (
+                        <AttachmentPreview
+                          url={msg.attachment_url}
+                          name={msg.attachment_name}
+                          mime={msg.attachment_mime ?? undefined}
+                          size={msg.attachment_size ?? undefined}
+                          downloadLabel={t(
+                            "employer.messages.attachments.download",
+                          )}
+                        />
+                      ) : null}
                       {scheduleCard ? (
                         <ScheduleCardBlock
                           payload={scheduleCard}
@@ -3533,6 +3705,36 @@ export default function EmployerMessagingPage() {
         </div>
 
         <footer className="border-t bg-background/80 px-4 py-3">
+          {pendingAttachment && (
+            <div className="mb-2 flex items-center gap-3 rounded-lg border border-border/70 bg-muted/40 px-3 py-2 text-xs">
+              {pendingAttachment.previewUrl ? (
+                <div className="h-16 w-16 overflow-hidden rounded-md border border-border/60 bg-background">
+                  <img
+                    src={pendingAttachment.previewUrl}
+                    alt={pendingAttachment.file.name}
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+              ) : null}
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-semibold text-foreground">
+                  {pendingAttachment.file.name}
+                </p>
+                <p className="text-[10px] text-muted-foreground">
+                  {formatFileSize(pendingAttachment.file.size)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleRemoveAttachment}
+                className="rounded-full p-1 text-muted-foreground hover:text-foreground"
+                aria-label={t("employer.messages.attachments.remove")}
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+
           <form
             onSubmit={handleSend}
             className="flex items-end gap-2 rounded-xl border border-gray-200 bg-white dark:bg-slate-800 px-3 py-3 shadow-sm"
@@ -3544,6 +3746,24 @@ export default function EmployerMessagingPage() {
               onChange={handleTextareaChange}
               disabled={composerDisabled}
             />
+            <div className="flex flex-col items-center gap-2">
+              <button
+                type="button"
+                onClick={handleAttachmentButtonClick}
+                disabled={composerDisabled}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border text-muted-foreground hover:text-foreground disabled:opacity-40"
+                aria-label={t("employer.messages.attachments.add")}
+                title={t("employer.messages.attachments.add")}
+              >
+                <Paperclip className="h-4 w-4" />
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                onChange={handleAttachmentChange}
+              />
+            </div>
             <button
               type="submit"
               disabled={sendDisabled}
@@ -3557,6 +3777,9 @@ export default function EmployerMessagingPage() {
               )}
             </button>
           </form>
+          {attachmentError && (
+            <p className="mt-2 text-xs text-destructive">{attachmentError}</p>
+          )}
         </footer>
       </main>
 

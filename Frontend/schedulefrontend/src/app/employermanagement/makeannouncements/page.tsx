@@ -7,6 +7,10 @@ import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import type { Announcement } from "../../../lib/supabase";
 import { AnnouncementForm } from "../../../components/ui/AnnouncementForm";
 import { AnnouncementCard } from "../../../components/ui/AnnouncementCard";
+import {
+  normalizeAnnouncementRow,
+  type AnnouncementRow,
+} from "../../../lib/announcements";
 
 type RoleRow = { id: string; name: string };
 
@@ -25,15 +29,14 @@ export default function AnnouncementsPage() {
 
       if (error) throw error;
 
-      const rows = (data ?? []) as Announcement[];
+      const rows = ((data ?? []) as AnnouncementRow[]).map(normalizeAnnouncementRow);
 
       // If we know the role ids for this business, filter announcements to
       // those that are broadcast (null/empty) or target one of these roles.
       if (businessRoleIds && businessRoleIds.length > 0) {
         const filtered = rows.filter((a) => {
-          const targets = a.target_role_ids as string[] | null | undefined;
-          if (!targets || targets.length === 0) return true; // broadcast
-          return targets.some((t) => businessRoleIds.includes(t));
+          if (a.target_role_ids.length === 0) return true; // broadcast
+          return a.target_role_ids.some((t) => businessRoleIds.includes(t));
         });
         setAnnouncements(filtered);
       } else {

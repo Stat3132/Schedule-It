@@ -4,6 +4,12 @@ import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import type { Announcement } from "../../../lib/supabase";
+import {
+  normalizeAnnouncementRow,
+  markAnnouncementsAsRead,
+  type AnnouncementRow,
+} from "../../../lib/announcements";
 import { createAnnouncement } from "../../../lib/announcements";
 import { Clock, AlertCircle } from "lucide-react";
 import { useI18n } from "../../../lib/i18n";
@@ -156,14 +162,7 @@ type SelectedShift = {
   end: string;
 };
 
-type AnnouncementLite = {
-  id: string;
-  title: string;
-  content: string;
-  created_at: string;
-  created_by: string;
-  target_role_ids?: string[] | null;
-};
+type AnnouncementLite = Announcement;
 
 const PROFILE_PHOTO_BUCKET =
   process.env.NEXT_PUBLIC_SUPABASE_PROFILE_BUCKET ?? "profile-photos";
@@ -346,101 +345,76 @@ export default function EmployeeHomePage() {
 
   const maybeShowAnnouncementForUser = useCallback(
     async (userId: string, roleId: string | null) => {
-    if (!roleId) return;
-    if (typeof window === "undefined") return;
+      if (!roleId) return;
 
-    const { data, error } = await supabase
-      .from("announcements")
-      .select("id,title,content,created_at,created_by,target_role_ids")
-      .order("created_at", { ascending: false });
+      const { data, error } = await supabase
+        .from("announcements")
+        .select("id,title,content,created_at,created_by,target_role_ids")
+        .order("created_at", { ascending: false });
 
-    if (error || !data) {
-      if (error) console.error("[EmployeeHome] load announcements error", error);
-      return;
-    }
-
-    const all = data as AnnouncementLite[];
-
-    const applicable = all.filter((a) => {
-      if (a.created_by === userId) return false;
-      const targets = a.target_role_ids;
-      if (!targets || targets.length === 0) return true; // broadcast
-      return targets.includes(roleId);
-    });
-
-    if (applicable.length === 0) return;
-
-    // Show the newest applicable announcement the user hasn't seen yet.
-    // Read seen announcements for this user
-    let seenIds: string[] = [];
-    try {
-      const raw = window.localStorage.getItem(`seenAnnouncements:${userId}`);
-      if (raw) seenIds = JSON.parse(raw) as string[];
-    } catch {
-      seenIds = [];
-    }
-
-    const firstUnseen = applicable.find((a) => !seenIds.includes(a.id));
-    if (!firstUnseen) return;
-
-    const { data: sender, error: senderErr } = await supabase
-      .from("profiles")
-      .select("full_name,display_name,email")
-      .eq("id", firstUnseen.created_by)
-      .maybeSingle();
-
-    if (senderErr) {
-      console.error("[EmployeeHome] load announcement sender error", senderErr);
-    }
-
-    const senderName =
-      (sender?.full_name as string | null) ||
-      (sender?.display_name as string | null) ||
-      (sender?.email as string | null) ||
-      t("shared.messages.managerFallback");
-
-    // Mark as seen and persist
-    try {
-      if (!seenIds.includes(firstUnseen.id)) {
-        seenIds.push(firstUnseen.id);
-        window.localStorage.setItem(
-          `seenAnnouncements:${userId}`,
-          JSON.stringify(seenIds),
-        );
+      if (error || !data) {
+        if (error)
+          console.error("[EmployeeHome] load announcements error", error);
+        return;
       }
-    } catch {
-      // ignore storage errors
-    }
 
-    setAnnouncementToShow({ announcement: firstUnseen, senderName });
-  },
-  [supabase, t],
+      const all = (data as AnnouncementRow[]).map(normalizeAnnouncementRow);
+
+      const applicable = all.filter((a) => {
+        if (a.created_by === userId) return false;
+        if (a.target_role_ids.length === 0) return true; // broadcast
+        return a.target_role_ids.includes(roleId);
+      });
+
+      if (applicable.length === 0) return;
+
+      const applicableIds = applicable.map((a) => a.id);
+      let readIds = new Set<string>();
+      if (applicableIds.length) {
+        const { data: receipts, error: receiptErr } = await supabase
+          .from("announcement_receipt")
+          .select("announcement_id")
+          .eq("user_id", userId)
+          .in("announcement_id", applicableIds);
+        if (receiptErr) {
+          console.error(
+            "[EmployeeHome] load announcement receipts error",
+            receiptErr,
+          );
+        } else {
+          readIds = new Set(
+            (receipts ?? []).map((r) => r.announcement_id as string),
+          );
+        }
+      }
+
+      const firstUnseen = applicable.find((a) => !readIds.has(a.id));
+      if (!firstUnseen) return;
+
+      await markAnnouncementsAsRead(supabase, userId, [firstUnseen.id]);
+
+      const { data: sender, error: senderErr } = await supabase
+        .from("profiles")
+        .select("full_name,display_name,email")
+        .eq("id", firstUnseen.created_by)
+        .maybeSingle();
+
+      if (senderErr) {
+        console.error("[EmployeeHome] load announcement sender error", senderErr);
+      }
+
+      const senderName =
+        (sender?.full_name as string | null) ||
+        (sender?.display_name as string | null) ||
+        (sender?.email as string | null) ||
+        t("shared.messages.managerFallback");
+
+      setAnnouncementToShow({ announcement: firstUnseen, senderName });
+    },
+    [supabase, t],
   );
 
   const handleDismissAnnouncement = () => {
-    if (!announcementToShow || !currentUserId) {
-      setAnnouncementToShow(null);
-      return;
-    }
-    if (typeof window === "undefined") {
-      setAnnouncementToShow(null);
-      return;
-    }
-
-    const storageKey = `seenAnnouncements:${currentUserId}`;
-    let seen: string[] = [];
-    try {
-      const raw = window.localStorage.getItem(storageKey);
-      if (raw) seen = JSON.parse(raw);
-    } catch {
-      // ignore
-    }
-
-    if (!seen.includes(announcementToShow.announcement.id)) {
-      seen.push(announcementToShow.announcement.id);
-      window.localStorage.setItem(storageKey, JSON.stringify(seen));
-    }
-
     setAnnouncementToShow(null);
   };
 
@@ -720,22 +694,24 @@ export default function EmployeeHomePage() {
           .from("availability")
           .select("weekly_pattern_json,effective_from,effective_to,status")
           .eq("user_id", uid)
+          .eq("status", "approved")
           .lte("effective_from", todayISODate)
           .or(`effective_to.is.null,effective_to.gte.${todayISODate}`)
           .order("effective_from", { ascending: false });
 
         if (!availErr && availRows && availRows.length > 0) {
           const rows = availRows as AvailabilityRowLite[];
-          const current =
-            rows.find((r) => r.status === "approved") ?? rows[0];
+          const current = rows[0];
 
-          const pattern = normalizePattern(current.weekly_pattern_json);
+          if (current) {
+            const pattern = normalizePattern(current.weekly_pattern_json);
 
-          for (let i = 0; i < 7; i++) {
-            const key = DAY_KEYS[i];
-            const statusForDay = pattern[key];
-            if (statusForDay === "unavailable") {
-              flagsByIndex[i].isUnavailableByAvailability = true;
+            for (let i = 0; i < 7; i++) {
+              const key = DAY_KEYS[i];
+              const statusForDay = pattern[key];
+              if (statusForDay === "unavailable") {
+                flagsByIndex[i].isUnavailableByAvailability = true;
+              }
             }
           }
         }
@@ -749,7 +725,7 @@ export default function EmployeeHomePage() {
           .from("time_off_request")
           .select("start_ts,end_ts,status")
           .eq("user_id", uid)
-          .in("status", ["pending", "approved"]);
+          .eq("status", "approved");
 
         if (!torErr && torRows && torRows.length > 0) {
           const rows = torRows as TORowLite[];
@@ -1527,7 +1503,7 @@ export default function EmployeeHomePage() {
             <div className="flex items-center justify-between gap-3 border-t border-border/70 px-6 py-4 text-xs text-muted-foreground">
               <span>
                 {t("employee.home.announcement.timestamp", {
-                  time: announcementTimestampLabel(
+                  timestamp: announcementTimestampLabel(
                     announcementToShow.announcement.created_at,
                   ),
                 })}

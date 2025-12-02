@@ -256,6 +256,7 @@
   "employee.messages.groupsBuilder.moreMembers": "+{count} más",
   "employee.messages.groupsEmpty": "Crea espacios compartidos para equipos o turnos. Selecciona uno para chatear juntos.",
   "employee.messages.groups.errors.name": "Ponle un nombre al grupo para continuar.",
+  "employee.messages.groups.errors.nameLength": "Los nombres de los grupos tienen un límite de {limit} caracteres.",
   "employee.messages.groups.errors.members": "Elige al menos dos compañeros.",
   "employee.messages.groups.errors.auth": "Inicia sesión para crear un chat grupal.",
   "employee.messages.groups.errors.generic": "No se pudo crear este grupo. Inténtalo de nuevo.",

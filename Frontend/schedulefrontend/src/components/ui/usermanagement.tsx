@@ -62,6 +62,33 @@ type EmploymentWithProfile = Employment & {
   roleIds: UUID[];
 };
 
+type DayOfWeek =
+  | "monday"
+  | "tuesday"
+  | "wednesday"
+  | "thursday"
+  | "friday"
+  | "saturday"
+  | "sunday";
+
+type AvailabilityStatus = "available" | "partial" | "unavailable";
+
+type AvailabilityPattern = Record<DayOfWeek, AvailabilityStatus>;
+
+type AvailabilityRow = {
+  user_id: UUID;
+  weekly_pattern_json: unknown;
+  effective_from: string;
+  effective_to: string | null;
+};
+
+type AvailabilitySummary = {
+  pattern: AvailabilityPattern;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  isFuture: boolean;
+};
+
 type RosterDraft = {
   primaryRoleId: UUID | "";
   roleIds: UUID[];
@@ -104,6 +131,38 @@ const STATUS_BADGE: Record<Employment["status"], string> = {
   inactive: "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200",
   invited: "bg-sky-100 text-sky-800 dark:bg-sky-500/20 dark:text-sky-200",
   terminated: "bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-200",
+};
+
+const AVAILABILITY_BADGE: Record<AvailabilityStatus, string> = {
+  available: "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-100",
+  partial: "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-100",
+  unavailable: "bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-100",
+};
+
+const AVAILABILITY_STATUS_LABEL: Record<AvailabilityStatus, string> = {
+  available: "Available",
+  partial: "Partial",
+  unavailable: "Unavailable",
+};
+
+const AVAILABILITY_DAY_ORDER: { key: DayOfWeek; label: string }[] = [
+  { key: "sunday", label: "Sun" },
+  { key: "monday", label: "Mon" },
+  { key: "tuesday", label: "Tue" },
+  { key: "wednesday", label: "Wed" },
+  { key: "thursday", label: "Thu" },
+  { key: "friday", label: "Fri" },
+  { key: "saturday", label: "Sat" },
+];
+
+const DEFAULT_AVAILABILITY_PATTERN: AvailabilityPattern = {
+  sunday: "available",
+  monday: "available",
+  tuesday: "available",
+  wednesday: "available",
+  thursday: "available",
+  friday: "available",
+  saturday: "available",
 };
 
 function buildRosterDraft(row: EmploymentWithProfile): RosterDraft {
@@ -175,6 +234,46 @@ function formatDateShort(iso: string | null) {
 
   const date = new Date(year, month, day);
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date);
+}
+
+function formatDisplayDate(iso: string | null) {
+  if (!iso) return null;
+  return formatDateShort(iso) ?? iso.split("T")[0] ?? iso;
+}
+
+function normalizeToLocalDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function normalizeAvailabilityPattern(raw: unknown): AvailabilityPattern {
+  let src: Record<string, unknown> = {};
+  if (raw && typeof raw === "object") {
+    const r = raw as Record<string, unknown>;
+    if (r.pattern && typeof r.pattern === "object" && r.pattern !== null) {
+      src = r.pattern as Record<string, unknown>;
+    } else {
+      src = r;
+    }
+  }
+
+  const defaults: AvailabilityPattern = {
+    sunday: "available",
+    monday: "available",
+    tuesday: "available",
+    wednesday: "available",
+    thursday: "available",
+    friday: "available",
+    saturday: "available",
+  };
+
+  for (const key of Object.keys(defaults) as DayOfWeek[]) {
+    const value = src[key];
+    if (value === "available" || value === "partial" || value === "unavailable") {
+      defaults[key] = value;
+    }
+  }
+
+  return defaults;
 }
 
 
@@ -267,6 +366,7 @@ export default function UserManagement({ businessId }: Props) {
   const [inviteSending, setInviteSending] = useState(false);
   const [inviteError, setInviteError] = useState("");
   const [inviteResults, setInviteResults] = useState<InviteResult[]>([]);
+  const [availabilityByUser, setAvailabilityByUser] = useState<Record<string, AvailabilitySummary>>({});
 
   type AcceptTarget =
     | { kind: "invite"; invite: Invite }
@@ -412,6 +512,7 @@ export default function UserManagement({ businessId }: Props) {
         setError("Business not found or no access.");
         setBiz(null);
         setRoles([]); setLocations([]); setInvites([]); setPendingEmps([]); setJoinRequests([]);
+        setAvailabilityByUser({});
         return;
       }
       setBiz(found);
@@ -495,6 +596,50 @@ export default function UserManagement({ businessId }: Props) {
         }
       }
 
+      const availabilitySummary: Record<string, AvailabilitySummary> = {};
+      if (userIds.length) {
+        const { data: availRows, error: availErr } = await supabase
+          .from("availability")
+          .select("user_id,weekly_pattern_json,effective_from,effective_to")
+          .in("user_id", userIds)
+          .eq("status", "approved")
+          .order("effective_from", { ascending: false });
+
+        if (availErr) {
+          console.error("Availability query failed", availErr);
+        } else if (availRows) {
+          const today = normalizeToLocalDay(new Date());
+          const active = new Map<string, AvailabilitySummary>();
+          const fallback = new Map<string, AvailabilitySummary>();
+          for (const row of availRows as AvailabilityRow[]) {
+            const start = normalizeToLocalDay(new Date(row.effective_from));
+            if (Number.isNaN(start.getTime())) continue;
+            const end = row.effective_to ? normalizeToLocalDay(new Date(row.effective_to)) : null;
+            const pattern = normalizeAvailabilityPattern(row.weekly_pattern_json);
+            const isActive = start.getTime() <= today.getTime() && (!end || end.getTime() >= today.getTime());
+            const summary: AvailabilitySummary = {
+              pattern,
+              effectiveFrom: row.effective_from,
+              effectiveTo: row.effective_to,
+              isFuture: start.getTime() > today.getTime(),
+            };
+
+            if (isActive) {
+              if (!active.has(row.user_id)) active.set(row.user_id, summary);
+            } else if (!active.has(row.user_id) && !fallback.has(row.user_id)) {
+              fallback.set(row.user_id, summary);
+            }
+          }
+
+          for (const [uid, summary] of active) {
+            availabilitySummary[uid] = summary;
+          }
+          for (const [uid, summary] of fallback) {
+            if (!availabilitySummary[uid]) availabilitySummary[uid] = summary;
+          }
+        }
+      }
+
       const decoratedEmps: EmploymentWithProfile[] = typedEmpRows.map(e => {
         const perms = (e.permissions ?? {}) as { locations_allowed?: UUID[] };
         const allowed = Array.isArray(perms?.locations_allowed)
@@ -524,6 +669,20 @@ export default function UserManagement({ businessId }: Props) {
         return next;
       });
 
+      const todayISO = new Date().toISOString();
+      for (const row of decoratedEmps) {
+        if (!availabilitySummary[row.user_id]) {
+          availabilitySummary[row.user_id] = {
+            pattern: { ...DEFAULT_AVAILABILITY_PATTERN },
+            effectiveFrom: todayISO,
+            effectiveTo: null,
+            isFuture: false,
+          };
+        }
+      }
+
+      setAvailabilityByUser(availabilitySummary);
+
       setRosterSummary({
         total: decoratedEmps.length,
         invited: decoratedEmps.filter(r => r.status === "invited").length,
@@ -535,9 +694,13 @@ export default function UserManagement({ businessId }: Props) {
       setJoinRequests(
         (reqRows ?? []).map(r => ({ ...r, profile: profilesById.get(r.requester_user_id) ?? null }))
       );
+      if (!userIds.length) {
+        setAvailabilityByUser({});
+      }
     } catch (e) {
       const msg = (e as PostgrestError)?.message ?? "Failed to load";
       setError(msg);
+      setAvailabilityByUser({});
     } finally {
       setLoading(false);
     }
@@ -1198,43 +1361,65 @@ export default function UserManagement({ businessId }: Props) {
               <div className="px-4 py-3 border-b font-medium">Join requests</div>
               <ul className="divide-y">
                 {joinRequests.length === 0 && <li className="px-4 py-6 text-sm text-foreground/60">No pending requests.</li>}
-                {joinRequests.map(req => (
-                  <li key={req.id} className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="font-medium">
-                          {req.profile?.full_name || req.profile?.email || req.requester_user_id}
+                {joinRequests.map(req => {
+                  const fullName = req.profile?.full_name || "Name unavailable";
+                  const email = req.profile?.email || "No email on file";
+                  const userId = req.requester_user_id;
+                  const requestedRole = roles.find(r => r.id === req.requested_role_id)?.name ?? "Any role";
+                  const requestedLocation = locations.find(l => l.id === req.requested_location_id)?.name ?? "Any location";
+                  return (
+                    <li key={req.id} className="p-4">
+                      <div className="rounded-xl border border-border bg-card/40 p-4 space-y-4">
+                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                          <div>
+                            <p className="text-sm font-semibold text-foreground">{fullName}</p>
+                            <p className="text-sm text-foreground/70">{email}</p>
+                            <p className="text-xs text-foreground/50">
+                              User ID: <span className="font-mono text-foreground/80">{userId}</span>
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              className="px-3 py-1.5 rounded-md bg-emerald-600 text-white text-sm disabled:opacity-50 dark:bg-emerald-500 dark:hover:bg-emerald-600"
+                              onClick={() => openAcceptForRequest(req)}
+                              disabled={disabledUI}
+                              title={disabledUI ? "Business must be verified" : "Approve"}
+                            >
+                              <span className="inline-flex items-center gap-1">
+                                <Check className="w-4 h-4" /> Approve
+                              </span>
+                            </button>
+                            <button
+                              className="px-3 py-1.5 rounded-md bg-rose-600 text-white text-sm dark:bg-rose-600 dark:hover:bg-rose-700"
+                              onClick={() => denyRequest(req.id)}
+                              title="Deny"
+                            >
+                              <span className="inline-flex items-center gap-1">
+                                <X className="w-4 h-4" /> Deny
+                              </span>
+                            </button>
+                          </div>
                         </div>
-                        <div className="text-xs text-foreground/60">
-                          Requested role: {roles.find(r => r.id === req.requested_role_id)?.name ?? "—"} ·{" "}
-                          Requested location: {locations.find(l => l.id === req.requested_location_id)?.name ?? "—"}
+                        <div className="grid gap-3 text-xs text-foreground/70 sm:grid-cols-2">
+                          <div className="rounded-lg border border-border bg-background/40 p-3">
+                            <p className="text-foreground/60 uppercase text-[11px] tracking-wide">Requested role</p>
+                            <p className="text-sm text-foreground mt-1">{requestedRole}</p>
+                          </div>
+                          <div className="rounded-lg border border-border bg-background/40 p-3">
+                            <p className="text-foreground/60 uppercase text-[11px] tracking-wide">Requested location</p>
+                            <p className="text-sm text-foreground mt-1">{requestedLocation}</p>
+                          </div>
                         </div>
+                        {req.message && (
+                          <div className="rounded-lg border border-dashed border-border/70 bg-background/30 p-3 text-xs text-foreground/80">
+                            <p className="font-medium text-foreground text-sm mb-1">Message</p>
+                            <p>{req.message}</p>
+                          </div>
+                        )}
                       </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          className="px-3 py-1 rounded-md bg-emerald-600 text-white text-sm disabled:opacity-50 dark:bg-emerald-500 dark:hover:bg-emerald-600"
-                          onClick={() => openAcceptForRequest(req)}
-                          disabled={disabledUI}
-                          title={disabledUI ? "Business must be verified" : "Approve"}
-                        >
-                          <span className="inline-flex items-center gap-1">
-                            <Check className="w-4 h-4" /> Approve
-                          </span>
-                        </button>
-                        <button
-                          className="px-3 py-1 rounded-md bg-rose-600 text-white text-sm dark:bg-rose-600 dark:hover:bg-rose-700"
-                          onClick={() => denyRequest(req.id)}
-                          title="Deny"
-                        >
-                          <span className="inline-flex items-center gap-1">
-                            <X className="w-4 h-4" /> Deny
-                          </span>
-                        </button>
-                      </div>
-                    </div>
-                    {req.message && <p className="mt-1 text-xs text-foreground/70">{req.message}</p>}
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             </section>
           </div>
@@ -1280,180 +1465,198 @@ export default function UserManagement({ businessId }: Props) {
                 const removalDate = row.terminated_at ? formatDateShort(addDays(row.terminated_at, 7)) : null;
                 const avatarUrl = row.profile?.photo_url || null;
                 const avatarAlt = row.profile?.display_name || row.profile?.full_name || row.profile?.email || "Employee avatar";
+                const availability = availabilityByUser[row.user_id];
+                const availabilityFrom = availability ? formatDisplayDate(availability.effectiveFrom) : null;
+                const availabilityTo = availability?.effectiveTo ? formatDisplayDate(availability.effectiveTo) : null;
 
                 return (
-                  <div key={row.id} className="p-4 space-y-4">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:gap-6">
-                      <div className="flex gap-3 w-full lg:w-72">
-                        <div className="relative h-12 w-12 rounded-full border border-border bg-foreground/10 text-foreground flex items-center justify-center font-semibold overflow-hidden shrink-0">
+                  <div
+                    key={row.id}
+                    className="rounded-2xl border border-border bg-card/50 p-6 shadow-sm space-y-6"
+                  >
+                    <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="flex gap-4 w-full lg:max-w-sm">
+                        <div className="relative h-16 w-16 rounded-full border border-border bg-foreground/10 text-foreground flex items-center justify-center font-semibold overflow-hidden shrink-0">
                           {avatarUrl ? (
                             <Image
                               src={avatarUrl}
                               alt={`${avatarAlt} profile photo`}
                               fill
-                              sizes="48px"
+                              sizes="64px"
                               className="object-cover"
                             />
                           ) : (
                             profileInitials(row.profile)
                           )}
                         </div>
-                        <div className="space-y-2 flex-1">
-                          <div>
-                            <label className="text-xs uppercase tracking-wide text-foreground/60">Full name</label>
-                            <input
-                              className="mt-1 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
-                              value={draft.fullName}
-                              onChange={e => updateRosterDraft(row, d => ({ ...d, fullName: e.target.value }))}
-                              disabled={!canEdit}
-                            />
-                          </div>
-                          <div>
-                            <label className="text-xs uppercase tracking-wide text-foreground/60">Display name</label>
-                            <input
-                              className="mt-1 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
-                              value={draft.displayName}
-                              onChange={e => updateRosterDraft(row, d => ({ ...d, displayName: e.target.value }))}
-                              disabled={!canEdit}
-                            />
-                          </div>
-                          <p className="text-xs text-foreground/60">Email: {row.profile?.email ?? "—"}</p>
-                          <div className="text-xs font-medium">
-                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 capitalize ${statusBadge}`}>
-                              {row.status}
-                            </span>
-                          </div>
-                          {row.roleIds.length > 0 && (
-                            <div className="text-xs text-foreground/70">
-                              Roles: {row.roleIds
-                                .map(rid => roleNameById.get(rid) ?? "")
-                                .filter(Boolean)
-                                .join(", ") || "—"}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
-                        <div>
-                          <label className="text-sm text-foreground">Primary role</label>
-                          <select
-                            className="mt-1 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
-                            value={draft.primaryRoleId}
-                            onChange={e =>
-                              updateRosterDraft(row, d => {
-                                const nextPrimary = e.target.value as UUID | "";
-                                const alreadyIncluded = nextPrimary ? d.roleIds.includes(nextPrimary) : false;
-                                return {
-                                  ...d,
-                                  primaryRoleId: nextPrimary,
-                                  roleIds: nextPrimary && !alreadyIncluded ? [...d.roleIds, nextPrimary] : d.roleIds,
-                                };
-                              })
-                            }
-                            disabled={!canEdit}
-                          >
-                            <option value="">No role</option>
-                            {roles.map(role => (
-                              <option key={role.id} value={role.id}>
-                                {role.name}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="md:col-span-2">
-                          <label className="text-sm text-foreground">All roles</label>
-                          <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                            {roles.map(role => {
-                              const checked = draft.roleIds.includes(role.id);
-                              return (
-                                <label key={role.id} className="inline-flex items-center gap-2">
-                                  <input
-                                    type="checkbox"
-                                    className="accent-primary"
-                                    checked={checked}
-                                    onChange={() => toggleRosterRole(row, role.id)}
-                                    disabled={!canEdit}
-                                  />
-                                  <span>{role.name}</span>
-                                </label>
-                              );
-                            })}
-                          </div>
-                          <p className="mt-1 text-xs text-foreground/60">
-                            Select every role this employee can cover; the primary role is used for scheduling defaults.
-                          </p>
-                        </div>
-                        <div>
-                          <label className="text-sm text-foreground">Primary location</label>
-                          <select
-                            className="mt-1 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
-                            value={draft.primaryLocationId}
-                            onChange={e => updateRosterDraft(row, d => ({ ...d, primaryLocationId: e.target.value as UUID | "" }))}
-                            disabled={!canEdit}
-                          >
-                            <option value="">None</option>
-                            {locations.map(loc => (
-                              <option key={loc.id} value={loc.id}>
-                                {loc.name}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="md:col-span-2">
-                          <label className="text-sm text-foreground">Allowed locations</label>
-                          <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                            {locations.map(loc => {
-                              const checked = draft.allowedLocations.includes(loc.id);
-                              return (
-                                <label key={loc.id} className="inline-flex items-center gap-2">
-                                  <input
-                                    type="checkbox"
-                                    className="accent-primary"
-                                    checked={checked}
-                                    onChange={() => toggleAllowedLocation(row, loc.id)}
-                                    disabled={!canEdit}
-                                  />
-                                  <span>{loc.name}</span>
-                                </label>
-                              );
-                            })}
-                          </div>
-                        </div>
-                        <div className="space-y-4">
-                          <div>
-                            <label className="text-sm text-foreground">Hourly wage</label>
-                            <div className="mt-1 flex items-center gap-2">
-                              <span className="text-sm text-foreground/60">$</span>
+                        <div className="flex-1 space-y-3">
+                          <div className="space-y-2">
+                            <div>
+                              <label className="text-xs uppercase tracking-wide text-foreground/60">Full name</label>
                               <input
-                                type="text"
-                                inputMode="decimal"
-                                pattern="\\d*(\\.\\d{0,2})?"
-                                className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
-                                value={draft.payRate}
-                                placeholder="0.00"
-                                onChange={e =>
-                                  updateRosterDraft(row, d => ({ ...d, payRate: sanitizePayRateInput(e.target.value) }))
-                                }
-                                onBlur={() =>
-                                  updateRosterDraft(row, d => ({ ...d, payRate: formatPayRateString(d.payRate) }))
-                                }
+                                className="mt-1 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
+                                value={draft.fullName}
+                                onChange={e => updateRosterDraft(row, d => ({ ...d, fullName: e.target.value }))}
+                                disabled={!canEdit}
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs uppercase tracking-wide text-foreground/60">Display name</label>
+                              <input
+                                className="mt-1 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
+                                value={draft.displayName}
+                                onChange={e => updateRosterDraft(row, d => ({ ...d, displayName: e.target.value }))}
                                 disabled={!canEdit}
                               />
                             </div>
                           </div>
+                          <div className="space-y-1 text-sm">
+                            <p className="text-foreground/70">{row.profile?.email ?? "No email on file"}</p>
+                            <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium capitalize ${statusBadge}`}>
+                              {row.status}
+                            </span>
+                            {row.roleIds.length > 0 && (
+                              <p className="text-xs text-foreground/70">
+                                Roles: {row.roleIds
+                                  .map(rid => roleNameById.get(rid) ?? "")
+                                  .filter(Boolean)
+                                  .join(", ") || "—"}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex-1 w-full">
+                        <div className="grid gap-4 md:grid-cols-2">
                           <div>
-                            <label className="text-sm text-foreground">Hire date</label>
+                            <label className="text-sm text-foreground">Primary role</label>
+                            <select
+                              className="mt-2 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
+                              value={draft.primaryRoleId}
+                              onChange={e =>
+                                updateRosterDraft(row, d => {
+                                  const nextPrimary = e.target.value as UUID | "";
+                                  const alreadyIncluded = nextPrimary ? d.roleIds.includes(nextPrimary) : false;
+                                  return {
+                                    ...d,
+                                    primaryRoleId: nextPrimary,
+                                    roleIds: nextPrimary && !alreadyIncluded ? [...d.roleIds, nextPrimary] : d.roleIds,
+                                  };
+                                })
+                              }
+                              disabled={!canEdit}
+                            >
+                              <option value="">No role</option>
+                              {roles.map(role => (
+                                <option key={role.id} value={role.id}>
+                                  {role.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-sm text-foreground">Primary location</label>
+                            <select
+                              className="mt-2 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
+                              value={draft.primaryLocationId}
+                              onChange={e => updateRosterDraft(row, d => ({ ...d, primaryLocationId: e.target.value as UUID | "" }))}
+                              disabled={!canEdit}
+                            >
+                              <option value="">None</option>
+                              {locations.map(loc => (
+                                <option key={loc.id} value={loc.id}>
+                                  {loc.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="md:col-span-2">
+                            <label className="text-sm text-foreground">All roles</label>
+                            <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                              {roles.map(role => {
+                                const checked = draft.roleIds.includes(role.id);
+                                return (
+                                  <label key={role.id} className="inline-flex items-center gap-2">
+                                    <input
+                                      type="checkbox"
+                                      className="accent-primary"
+                                      checked={checked}
+                                      onChange={() => toggleRosterRole(row, role.id)}
+                                      disabled={!canEdit}
+                                    />
+                                    <span>{role.name}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                            <p className="mt-1 text-xs text-foreground/60">
+                              Select every role this teammate can cover; the primary role drives scheduling defaults.
+                            </p>
+                          </div>
+                          <div className="md:col-span-2">
+                            <label className="text-sm text-foreground">Allowed locations</label>
+                            <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                              {locations.map(loc => {
+                                const checked = draft.allowedLocations.includes(loc.id);
+                                return (
+                                  <label key={loc.id} className="inline-flex items-center gap-2">
+                                    <input
+                                      type="checkbox"
+                                      className="accent-primary"
+                                      checked={checked}
+                                      onChange={() => toggleAllowedLocation(row, loc.id)}
+                                      disabled={!canEdit}
+                                    />
+                                    <span>{loc.name}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-6 lg:grid-cols-2">
+                      <div className="space-y-4">
+                        <div>
+                          <label className="text-sm text-foreground">Hourly wage</label>
+                          <div className="mt-2 flex items-center gap-2">
+                            <span className="text-sm text-foreground/60">$</span>
                             <input
-                              type="date"
-                              className="mt-1 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
-                              value={draft.hireDate}
-                              onChange={e => updateRosterDraft(row, d => ({ ...d, hireDate: e.target.value }))}
+                              type="text"
+                              inputMode="decimal"
+                              pattern="\\d*(\\.\\d{0,2})?"
+                              className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
+                              value={draft.payRate}
+                              placeholder="0.00"
+                              onChange={e =>
+                                updateRosterDraft(row, d => ({ ...d, payRate: sanitizePayRateInput(e.target.value) }))
+                              }
+                              onBlur={() =>
+                                updateRosterDraft(row, d => ({ ...d, payRate: formatPayRateString(d.payRate) }))
+                              }
                               disabled={!canEdit}
                             />
                           </div>
-                          <div className="flex gap-4">
-                            <label className="inline-flex items-center gap-2 text-sm text-foreground">
+                        </div>
+                        <div>
+                          <label className="text-sm text-foreground">Hire date</label>
+                          <input
+                            type="date"
+                            className="mt-2 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
+                            value={draft.hireDate}
+                            onChange={e => updateRosterDraft(row, d => ({ ...d, hireDate: e.target.value }))}
+                            disabled={!canEdit}
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-4">
+                        <div className="flex flex-col gap-2">
+                          <label className="text-sm text-foreground">Leadership permissions</label>
+                          <div className="flex flex-wrap gap-4 text-sm">
+                            <label className="inline-flex items-center gap-2">
                               <input
                                 type="checkbox"
                                 className="accent-primary"
@@ -1463,7 +1666,7 @@ export default function UserManagement({ businessId }: Props) {
                               />
                               Manager
                             </label>
-                            <label className="inline-flex items-center gap-2 text-sm text-foreground">
+                            <label className="inline-flex items-center gap-2">
                               <input
                                 type="checkbox"
                                 className="accent-primary"
@@ -1475,19 +1678,44 @@ export default function UserManagement({ businessId }: Props) {
                             </label>
                           </div>
                         </div>
+                        <div className="rounded-xl border border-border bg-background/40 p-4">
+                          <div className="flex items-center justify-between text-sm font-medium text-foreground">
+                            <span>Current availability</span>
+                            <span className="text-xs text-foreground/60">
+                              {availability.isFuture ? "Pending" : "Active"}
+                            </span>
+                          </div>
+                          {availability ? (
+                            <div className="mt-3 space-y-2">
+                              <div className="grid grid-cols-2 gap-1 text-[11px] sm:grid-cols-3">
+                                {AVAILABILITY_DAY_ORDER.map(({ key, label }) => {
+                                  const status = availability.pattern[key];
+                                  return (
+                                    <span
+                                      key={key}
+                                      className={`inline-flex items-center justify-between rounded-md px-2 py-1 ${AVAILABILITY_BADGE[status]}`}
+                                    >
+                                      <span className="font-semibold">{label}</span>
+                                      <span>{AVAILABILITY_STATUS_LABEL[status]}</span>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                              <p className="text-[11px] text-foreground/60">
+                                Effective {availabilityFrom ?? "Unknown"}
+                                {availabilityTo ? ` - ${availabilityTo}` : ""}
+                              </p>
+                            </div>
+                          ) : (
+                            <p className="mt-2 text-xs text-foreground/60">No approved availability on file.</p>
+                          )}
+                        </div>
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-3 border-t border-border pt-3 md:flex-row md:items-center md:justify-between">
-                      <div className="text-xs text-foreground/70 space-y-1">
-                        <div>Employment ID: {row.id}</div>
-                        {row.hire_date && <div>Hired: {formatDateShort(row.hire_date)}</div>}
-                        {row.terminated_at && (
-                          <div className="text-rose-600 dark:text-rose-300">
-                            Terminated: {formatDateShort(row.terminated_at)}
-                            {removalDate && ` · Scheduled removal ${removalDate}`}
-                          </div>
-                        )}
+                    <div className="flex flex-col gap-3 border-t border-border pt-4 md:flex-row md:items-center md:justify-between">
+                      <div className="text-xs text-foreground/70">
+                        Last updated fields reflect saved employment data. Remember to save after making adjustments.
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <button

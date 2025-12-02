@@ -3,6 +3,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import type { Announcement } from "../../../lib/supabase";
+import {
+  normalizeAnnouncementRow,
+  markAnnouncementsAsRead,
+  type AnnouncementRow,
+} from "../../../lib/announcements";
 
 /* ---------- Types ---------- */
 type EmploymentRow = {
@@ -87,6 +93,12 @@ const DAY_KEYS: DayOfWeek[] = [
   "saturday",
 ];
 
+type AvailabilityWindow = {
+  start: Date;
+  end: Date | null;
+  pattern: AvailabilityPattern;
+};
+
 type DayCell = {
   start?: string;
   end?: string;
@@ -164,10 +176,7 @@ export default function EmployerHomePage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Announcement popup state (initial announcement on first login)
-  const [announcementToShow, setAnnouncementToShow] = useState<
-    | { id: string; title: string; content: string; created_at: string; created_by: string; target_role_ids?: string[] | null }
-    | null
-  >(null);
+  const [announcementToShow, setAnnouncementToShow] = useState<Announcement | null>(null);
   const [announcementSender, setAnnouncementSender] = useState<string | null>(null);
 
   const [businesses, setBusinesses] = useState<BusinessOpt[]>([]);
@@ -327,42 +336,45 @@ export default function EmployerHomePage() {
           .select("id,title,content,created_at,created_by,target_role_ids")
           .order("created_at", { ascending: false });
 
-        if (annErr || !annRows || annRows.length === 0) return;
+        if (annErr) {
+          console.error("[EmployerHome] load announcements error", annErr);
+          return;
+        }
+        if (!annRows || annRows.length === 0) return;
 
-        const rows = (annRows ?? []) as unknown[];
-        const applicable = rows.filter((a) => {
-          const rec = a as Record<string, unknown>;
-          const targets = Array.isArray(rec.target_role_ids)
-            ? (rec.target_role_ids as string[])
-            : null;
-          if (!targets || targets.length === 0) return true;
+        const normalized = (annRows as AnnouncementRow[]).map(normalizeAnnouncementRow);
+        const applicable = normalized.filter((announcement) => {
+          if (announcement.target_role_ids.length === 0) return true;
           if (roleIds.length === 0) return false;
-          return targets.some((t) => roleIds.includes(t));
+          return announcement.target_role_ids.some((t) => roleIds.includes(t));
         });
 
         if (applicable.length === 0) return;
 
-        // Read seen announcements for this user
-        let seenIds: string[] = [];
-        try {
-          const raw = window.localStorage.getItem(`seenAnnouncements:${user.id}`);
-          if (raw) seenIds = JSON.parse(raw) as string[];
-        } catch {
-          seenIds = [];
+        const applicableIds = applicable.map((a) => a.id);
+        let readIds = new Set<string>();
+        if (applicableIds.length) {
+          const { data: receipts, error: receiptErr } = await supabase
+            .from("announcement_receipt")
+            .select("announcement_id")
+            .eq("user_id", user.id)
+            .in("announcement_id", applicableIds);
+          if (receiptErr) {
+            console.error("[EmployerHome] load announcement receipts error", receiptErr);
+          } else {
+            readIds = new Set(
+              (receipts ?? []).map((r) => r.announcement_id as string),
+            );
+          }
         }
 
-        // Find the first applicable announcement the user hasn't seen
-        const firstUnseenRec = applicable.find((a) => {
-          const rec = a as Record<string, unknown>;
-          const id = typeof rec.id === "string" ? rec.id : "";
-          return id && !seenIds.includes(id);
-        });
-        if (!firstUnseenRec) return;
+        const firstUnseen = applicable.find((a) => !readIds.has(a.id));
+        if (!firstUnseen) return;
 
-        const firstRec = firstUnseenRec as Record<string, unknown>;
+        await markAnnouncementsAsRead(supabase, user.id, [firstUnseen.id]);
 
         // Resolve sender name
-        const creatorId = typeof firstRec.created_by === "string" ? firstRec.created_by : "";
+        const creatorId = firstUnseen.created_by;
         const { data: prof } = await supabase
           .from("profiles")
           .select("full_name,display_name,email")
@@ -376,32 +388,9 @@ export default function EmployerHomePage() {
           else if (typeof p.display_name === "string" && p.display_name.trim()) senderName = p.display_name;
           else if (typeof p.email === "string" && p.email.trim()) senderName = p.email;
         }
-
-        // Normalize announcement object into expected shape
-        const announcement = {
-          id: typeof firstRec.id === "string" ? firstRec.id : "",
-          title: typeof firstRec.title === "string" ? firstRec.title : "",
-          content: typeof firstRec.content === "string" ? firstRec.content : "",
-          created_at: typeof firstRec.created_at === "string" ? firstRec.created_at : "",
-          created_by: typeof firstRec.created_by === "string" ? firstRec.created_by : "",
-          target_role_ids: Array.isArray(firstRec.target_role_ids) ? (firstRec.target_role_ids as string[]) : undefined,
-        };
-
-        // show it and mark it seen for this user
-        setAnnouncementToShow(announcement);
+        // Show the announcement and mark sender
+        setAnnouncementToShow(firstUnseen);
         setAnnouncementSender(senderName);
-        try {
-          const id = announcement.id;
-          if (id && !seenIds.includes(id)) {
-            seenIds.push(id);
-            window.localStorage.setItem(
-              `seenAnnouncements:${user.id}`,
-              JSON.stringify(seenIds),
-            );
-          }
-        } catch {
-          // ignore storage errors silently
-        }
       } catch (e) {
         console.error("Error checking announcements for employer:", e);
       }
@@ -497,6 +486,9 @@ export default function EmployerHomePage() {
           date: fmtDateMMDD(d),
         };
       });
+
+      const weekStartISO = ws.toISOString();
+      const weekEndISO = we.toISOString();
 
       const header = `Week of ${ws.toLocaleDateString([], {
         month: "long",
@@ -620,15 +612,14 @@ export default function EmployerHomePage() {
         const { data: torRaw, error: torErr } = await supabase
           .from("time_off_request")
           .select("id,user_id,start_ts,end_ts,status")
-          .in("user_id", employeeIds);
+          .in("user_id", employeeIds)
+          .eq("status", "approved");
 
         if (torErr) {
           console.error("Time off query failed:", torErr);
         } else if (torRaw) {
           const rows = torRaw as TORow[];
           for (const r of rows) {
-            if (r.status !== "pending" && r.status !== "approved") continue;
-
             const startLocal = normalizeToLocalDay(new Date(r.start_ts));
             const endExclusive = normalizeToLocalDay(new Date(r.end_ts));
             const lastIncluded = new Date(endExclusive.getTime() - 1);
@@ -647,7 +638,7 @@ export default function EmployerHomePage() {
         }
       }
 
-      const availByUser = new Map<string, AvailabilityPattern>();
+      const availabilityWindowsByUser = new Map<string, AvailabilityWindow[]>();
       if (employeeIds.length) {
         const { data: avRaw, error: avErr } = await supabase
           .from("availability")
@@ -655,26 +646,35 @@ export default function EmployerHomePage() {
             "id,user_id,weekly_pattern_json,effective_from,effective_to,status",
           )
           .in("user_id", employeeIds)
+          .eq("status", "approved")
+          .lte("effective_from", weekEndISO)
+          .or(`effective_to.is.null,effective_to.gte.${weekStartISO}`)
           .order("effective_from", { ascending: false });
 
         if (avErr) {
           console.error("Availability query failed:", avErr);
         } else if (avRaw) {
           const rows = avRaw as AvailabilityRow[];
-          const byUser: Record<string, AvailabilityRow[]> = {};
+          const byUser: Record<string, AvailabilityWindow[]> = {};
           for (const r of rows) {
+            const start = normalizeToLocalDay(new Date(r.effective_from));
+            if (Number.isNaN(start.getTime())) continue;
+            const end = r.effective_to
+              ? normalizeToLocalDay(new Date(r.effective_to))
+              : null;
+            const entry: AvailabilityWindow = {
+              start,
+              end,
+              pattern: normalizeAvailabilityPattern(r.weekly_pattern_json),
+            };
             if (!byUser[r.user_id]) byUser[r.user_id] = [];
-            byUser[r.user_id].push(r);
+            byUser[r.user_id].push(entry);
           }
           for (const uid of Object.keys(byUser)) {
-            const list = byUser[uid];
-            const latest =
-              list.find((r) => r.status === "approved") ?? list[0] ?? null;
-            if (!latest) continue;
-            availByUser.set(
-              uid,
-              normalizeAvailabilityPattern(latest.weekly_pattern_json),
+            const windows = byUser[uid].sort(
+              (a, b) => b.start.getTime() - a.start.getTime(),
             );
+            availabilityWindowsByUser.set(uid, windows);
           }
         }
       }
@@ -721,12 +721,13 @@ export default function EmployerHomePage() {
         const row = byUser.get(uid);
         if (!row) continue;
 
-        const availPattern = availByUser.get(uid) ?? null;
+        const availabilityWindows = availabilityWindowsByUser.get(uid) ?? null;
         const torMap = timeOffByUserDay.get(uid);
 
         for (let i = 0; i < 7; i++) {
           const date = new Date(ws);
           date.setDate(ws.getDate() + i);
+          const dayStart = normalizeToLocalDay(date);
           const ymd = toYMD(date);
           const cell = row.byDay[i] || ({} as DayCell);
 
@@ -737,10 +738,20 @@ export default function EmployerHomePage() {
             }
           }
 
-          if (availPattern) {
-            const dayKey = DAY_KEYS[i];
-            if (availPattern[dayKey] === "unavailable") {
-              cell.unavailable = true;
+          if (availabilityWindows && availabilityWindows.length) {
+            const windowForDay = availabilityWindows.find((window) => {
+              if (window.start.getTime() > dayStart.getTime()) return false;
+              if (window.end && window.end.getTime() < dayStart.getTime()) {
+                return false;
+              }
+              return true;
+            });
+
+            if (windowForDay) {
+              const dayKey = DAY_KEYS[i];
+              if (windowForDay.pattern[dayKey] === "unavailable") {
+                cell.unavailable = true;
+              }
             }
           }
 

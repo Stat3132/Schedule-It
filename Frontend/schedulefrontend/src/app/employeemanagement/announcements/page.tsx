@@ -9,15 +9,12 @@ import {
   Trash2,
 } from "lucide-react";
 import { useI18n } from "../../../lib/i18n";
-
-type AnnouncementRow = {
-  id: string;
-  title: string;
-  content: string;
-  created_at: string;
-  created_by: string;
-  target_role_ids?: string[] | null;
-};
+import type { Announcement } from "../../../lib/supabase";
+import {
+  normalizeAnnouncementRow,
+  markAnnouncementsAsRead,
+  type AnnouncementRow,
+} from "../../../lib/announcements";
 
 type Employment = {
   role_id: string | null;
@@ -31,8 +28,9 @@ type ProfileRow = {
   email?: string | null;
 };
 
-type AnnouncementWithSender = AnnouncementRow & {
+type AnnouncementWithSender = Announcement & {
   senderName: string;
+  isNew: boolean;
 };
 
 export default function EmployeeAnnouncementsPage() {
@@ -108,13 +106,13 @@ export default function EmployeeAnnouncementsPage() {
         }
 
         const rawAnnouncements = (annRows ?? []) as AnnouncementRow[];
+        const normalized = rawAnnouncements.map(normalizeAnnouncementRow);
 
         // 4) Filter to announcements that apply to this role
-        const applicable = rawAnnouncements.filter((a) => {
-          const targets = a.target_role_ids;
-          if (!targets || targets.length === 0) return true; // broadcast
+        const applicable = normalized.filter((a) => {
+          if (a.target_role_ids.length === 0) return true; // broadcast
           if (!roleId) return false;
-          return targets.includes(roleId);
+          return a.target_role_ids.includes(roleId);
         });
 
         if (applicable.length === 0) {
@@ -122,6 +120,41 @@ export default function EmployeeAnnouncementsPage() {
             setAnnouncements([]);
           }
           return;
+        }
+
+        const applicableIds = applicable.map((a) => a.id);
+        let previouslyReadIds = new Set<string>();
+        if (applicableIds.length) {
+          const { data: receipts, error: receiptErr } = await supabase
+            .from("announcement_receipt")
+            .select("announcement_id")
+            .eq("user_id", user.id)
+            .in("announcement_id", applicableIds);
+
+          if (receiptErr) {
+            console.error(
+              "[EmployeeAnnouncements] receipts error",
+              receiptErr,
+            );
+          } else {
+            previouslyReadIds = new Set(
+              (receipts ?? []).map((r) => r.announcement_id as string),
+            );
+          }
+        }
+
+        const unreadIds = new Set(
+          applicable
+            .filter((a) => !previouslyReadIds.has(a.id))
+            .map((a) => a.id),
+        );
+
+        if (unreadIds.size) {
+          await markAnnouncementsAsRead(
+            supabase,
+            user.id,
+            Array.from(unreadIds),
+          );
         }
 
         // 5) Load sender names for all creators
@@ -151,6 +184,7 @@ export default function EmployeeAnnouncementsPage() {
         const withSender: AnnouncementWithSender[] = applicable.map((a) => ({
           ...a,
           senderName: senderMap[a.created_by] ?? "",
+          isNew: unreadIds.has(a.id),
         }));
 
         if (!cancelled) {
@@ -239,11 +273,12 @@ export default function EmployeeAnnouncementsPage() {
         ) : (
           <div className="space-y-6">
             {announcements.map((a) => {
-              const audienceLabel = !a.target_role_ids || a.target_role_ids.length === 0
-                ? t("employee.announcements.audienceAll")
-                : t("employee.announcements.audienceTargeted", {
-                    count: a.target_role_ids.length,
-                  });
+              const audienceLabel =
+                a.target_role_ids.length === 0
+                  ? t("employee.announcements.audienceAll")
+                  : t("employee.announcements.audienceTargeted", {
+                      count: a.target_role_ids.length,
+                    });
               const canDelete = currentUserId === a.created_by;
               const deleting = deletingId === a.id;
               return (
@@ -253,9 +288,16 @@ export default function EmployeeAnnouncementsPage() {
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="space-y-1">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-primary/80">
-                        {t("employee.announcements.cardLabel")}
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-primary/80">
+                          {t("employee.announcements.cardLabel")}
+                        </p>
+                        {a.isNew && (
+                          <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                            {t("employee.home.announcement.newLabel")}
+                          </span>
+                        )}
+                      </div>
                       <h3 className="text-xl font-semibold text-card-foreground">
                         {a.title}
                       </h3>
