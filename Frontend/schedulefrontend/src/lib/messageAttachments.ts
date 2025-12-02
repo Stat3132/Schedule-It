@@ -12,11 +12,13 @@ export type UploadedAttachment = {
   size: number;
 };
 
+export type AttachmentScope = "dm" | "group" | "announcement";
+
 export async function uploadMessageAttachment(
   supabase: SupabaseClient,
   file: File,
   userId: string,
-  scope: "dm" | "group",
+  scope: AttachmentScope,
 ): Promise<UploadedAttachment> {
   const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
   const path = `${scope}/${userId}/${Date.now()}-${sanitizedName}`;

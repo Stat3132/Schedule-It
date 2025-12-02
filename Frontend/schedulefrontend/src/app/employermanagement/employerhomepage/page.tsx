@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import type { Announcement } from "../../../lib/supabase";
+import { AttachmentPreview } from "../../../components/messages/AttachmentPreview";
 import {
   normalizeAnnouncementRow,
   markAnnouncementsAsRead,
@@ -333,7 +334,9 @@ export default function EmployerHomePage() {
         // Load announcements ordered most-recent-first
         const { data: annRows, error: annErr } = await supabase
           .from("announcements")
-          .select("id,title,content,created_at,created_by,target_role_ids")
+          .select(
+            "id,title,content,created_at,created_by,target_role_ids,target_recipient_emails,target_recipient_display_names,attachment_url,attachment_name,attachment_mime,attachment_size,attachment_path",
+          )
           .order("created_at", { ascending: false });
 
         if (annErr) {
@@ -343,10 +346,28 @@ export default function EmployerHomePage() {
         if (!annRows || annRows.length === 0) return;
 
         const normalized = (annRows as AnnouncementRow[]).map(normalizeAnnouncementRow);
+        const userEmailLower = user.email ? user.email.toLowerCase() : null;
         const applicable = normalized.filter((announcement) => {
-          if (announcement.target_role_ids.length === 0) return true;
-          if (roleIds.length === 0) return false;
-          return announcement.target_role_ids.some((t) => roleIds.includes(t));
+          if (announcement.created_by === user.id) return false;
+          const hasRoleTargets = announcement.target_role_ids.length > 0;
+          const hasRecipientTargets = announcement.target_recipients.length > 0;
+          const matchesRole =
+            hasRoleTargets && roleIds.length
+              ? announcement.target_role_ids.some((t) => roleIds.includes(t))
+              : false;
+          const matchesRecipient =
+            hasRecipientTargets && userEmailLower
+              ? announcement.target_recipients.some(
+                  (recipient) =>
+                    recipient.email &&
+                    recipient.email.toLowerCase() === userEmailLower,
+                )
+              : false;
+
+          if (!hasRoleTargets && !hasRecipientTargets) return true;
+          if (matchesRole) return true;
+          if (matchesRecipient) return true;
+          return false;
         });
 
         if (applicable.length === 0) return;
@@ -987,6 +1008,15 @@ export default function EmployerHomePage() {
             </div>
             <div className="mt-4 text-sm text-foreground/70 whitespace-pre-wrap leading-relaxed">
               {announcementToShow.content}
+              {announcementToShow.attachment && (
+                <AttachmentPreview
+                  url={announcementToShow.attachment.url}
+                  name={announcementToShow.attachment.name}
+                  mime={announcementToShow.attachment.mime}
+                  size={announcementToShow.attachment.size}
+                  downloadLabel="View attachment"
+                />
+              )}
             </div>
 
             <div className="mt-6 flex justify-end">

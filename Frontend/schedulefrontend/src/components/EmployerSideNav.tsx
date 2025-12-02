@@ -16,14 +16,15 @@ import {
   AlertTriangle,
   MessageCircle,
 } from "lucide-react";
-import { useUnreadFlag } from "../hooks/useUnreadFlag";
+import { useUnreadCount } from "../hooks/useUnreadCount";
 import { useUnreadRealtimeBridge } from "../hooks/useUnreadRealtimeBridge";
 
 export default function EmployerSideNav() {
   const pathname = usePathname() ?? "/";
   const router = useRouter();
   const supabase = useMemo(() => createClientComponentClient(), []);
-  const hasUnreadMessages = useUnreadFlag("employer");
+  const unreadCount = useUnreadCount("employer");
+  const hasUnreadMessages = unreadCount > 0;
 
   useUnreadRealtimeBridge("employer", supabase);
 
@@ -144,21 +145,21 @@ export default function EmployerSideNav() {
                 className={`${navBase} ${isActive ? active : inactive} relative`}
                 aria-current={isActive ? "page" : undefined}
               >
-                <span className="relative flex items-center justify-center">
-                  {hasUnreadMessages && it.id === "messages" ? (
-                    <>
-                      <span className="sr-only" aria-live="polite">
-                        Unread messages
-                      </span>
-                      <span className="pointer-events-none absolute -left-3 flex h-3 w-3" aria-hidden="true">
-                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400/80 opacity-75" />
-                        <span className="relative inline-flex h-3 w-3 rounded-full bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.6)]" />
-                      </span>
-                    </>
-                  ) : null}
-                  {it.icon}
-                </span>
+                <span className="relative flex items-center justify-center">{it.icon}</span>
                 <span>{it.label}</span>
+                {hasUnreadMessages && it.id === "messages" ? (
+                  <>
+                    <span className="sr-only" aria-live="polite">
+                      {unreadCount === 1 ? "1 unread message" : `${unreadCount} unread messages`}
+                    </span>
+                    <span className="ml-auto relative flex min-w-[1.25rem] items-center justify-center" aria-hidden="true">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400/80 opacity-75" />
+                      <span className="relative inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-rose-500 px-1 py-[2px] text-[9px] font-semibold text-white shadow-[0_0_6px_rgba(244,63,94,0.6)]">
+                        {unreadCount > 9 ? "9+" : unreadCount}
+                      </span>
+                    </span>
+                  </>
+                ) : null}
               </button>
             );
           })}

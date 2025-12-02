@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useI18n } from "../../../lib/i18n";
 import type { Announcement } from "../../../lib/supabase";
+import { AttachmentPreview } from "../../../components/messages/AttachmentPreview";
 import {
   normalizeAnnouncementRow,
   markAnnouncementsAsRead,
@@ -94,7 +95,9 @@ export default function EmployeeAnnouncementsPage() {
         // 3) Load all announcements
         const { data: annRows, error: annErr } = await supabase
           .from("announcements")
-          .select("id,title,content,created_at,created_by,target_role_ids")
+          .select(
+            "id,title,content,created_at,created_by,target_role_ids,target_recipient_emails,target_recipient_display_names,attachment_url,attachment_name,attachment_mime,attachment_size,attachment_path",
+          )
           .order("created_at", { ascending: false });
 
         if (annErr) {
@@ -324,6 +327,15 @@ export default function EmployeeAnnouncementsPage() {
                   <p className="mt-4 text-sm leading-relaxed text-foreground">
                     {a.content}
                   </p>
+                  {a.attachment && (
+                    <AttachmentPreview
+                      url={a.attachment.url}
+                      name={a.attachment.name}
+                      mime={a.attachment.mime}
+                      size={a.attachment.size}
+                      downloadLabel={t("employee.messages.attachments.download")}
+                    />
+                  )}
 
                   <div className="mt-5 flex flex-wrap gap-3 text-xs text-muted-foreground">
                     <span className="inline-flex items-center gap-1 rounded-full border border-border/60 px-3 py-1">

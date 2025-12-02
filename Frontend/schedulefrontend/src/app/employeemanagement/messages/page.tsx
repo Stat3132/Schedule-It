@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element */
+
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
@@ -694,7 +696,7 @@ export default function EmployeeMessagingPage() {
         void syncPeerReceipts(peerId);
       }
     },
-    [readCountsReady, persistDmReads, syncPeerReceipts],
+    [readCountsReady, persistDmReads, setIncomingCounts, syncPeerReceipts],
   );
 
   const markGroupAsRead = useCallback(
@@ -712,7 +714,7 @@ export default function EmployeeMessagingPage() {
         return clone;
       });
     },
-    [readCountsReady, persistGroupReads],
+    [readCountsReady, persistGroupReads, setGroupIncomingCounts],
   );
 
   const handleMessageScroll = useCallback(() => {
@@ -1319,7 +1321,7 @@ export default function EmployeeMessagingPage() {
     return () => {
       cancelled = true;
     };
-  }, [supabase, currentUserId, conversations, readCountsReady, markPeerAsRead]);
+  }, [supabase, currentUserId, conversations, readCountsReady, markPeerAsRead, setIncomingCounts]);
 
   useEffect(() => {
     if (!currentUserId) return;
@@ -1365,7 +1367,7 @@ export default function EmployeeMessagingPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [supabase, currentUserId, activePeer?.id, markPeerAsRead]);
+  }, [supabase, currentUserId, activePeer?.id, markPeerAsRead, setIncomingCounts]);
 
   useEffect(() => {
     if (!readCountsReady) return;
@@ -1435,7 +1437,7 @@ export default function EmployeeMessagingPage() {
     return () => {
       cancelled = true;
     };
-  }, [supabase, currentUserId, groups, readCountsReady, markGroupAsRead]);
+  }, [supabase, currentUserId, groups, readCountsReady, markGroupAsRead, setGroupIncomingCounts]);
 
   useEffect(() => {
     if (!currentUserId || groups.length === 0) return;
@@ -1485,7 +1487,7 @@ export default function EmployeeMessagingPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [supabase, currentUserId, groups, activeGroup?.id, markGroupAsRead]);
+  }, [supabase, currentUserId, groups, activeGroup?.id, markGroupAsRead, setGroupIncomingCounts]);
 
   useEffect(() => {
     markPeerAsRead(activePeer?.id ?? null);
@@ -2150,15 +2152,12 @@ export default function EmployeeMessagingPage() {
   const peerFallbackName = t("employee.messages.conversationFallback");
   const resolvedPeerName = activePeerDisplayName ?? peerFallbackName;
   const activePeerMuted = activePeer ? Boolean(mutedPeers[activePeer.id]) : false;
-  const activeGroupMuted = activeGroup ? Boolean(mutedGroups[activeGroup.id]) : false;
   const activePeerBlockedByMe = activePeer ? Boolean(blockedByMe[activePeer.id]) : false;
   const activePeerBlockedMe = activePeer ? Boolean(blockedMe[activePeer.id]) : false;
   const activePeerBlocked = activePeerBlockedByMe || activePeerBlockedMe;
   const peerMenuOpen = preferenceMenuOpen === "peer";
-  const groupMenuOpen = preferenceMenuOpen === "group";
   const peerMuteBusy = activePeer ? preferenceBusyKey === `mute:dm:${activePeer.id}` : false;
   const peerBlockBusy = activePeer ? preferenceBusyKey === `block:${activePeer.id}` : false;
-  const groupMuteBusy = activeGroup ? preferenceBusyKey === `mute:group:${activeGroup.id}` : false;
   const groupLeaveBusy = activeGroup ? preferenceBusyKey === `group:leave:${activeGroup.id}` : false;
   const groupDeleteBusy = activeGroup ? preferenceBusyKey === `group:delete:${activeGroup.id}` : false;
   const activeGroupCreatedByCurrentUser = activeGroup
@@ -2876,26 +2875,6 @@ export default function EmployeeMessagingPage() {
     t,
   ]);
 
-  const handleToggleGroupMute = useCallback(async () => {
-    if (!activeGroup) return;
-    const key = `mute:group:${activeGroup.id}`;
-    setPreferenceBusyKey(key);
-    setPreferenceError(null);
-    try {
-      if (mutedGroups[activeGroup.id]) {
-        await unmuteThread(supabase, currentUserId, "group", activeGroup.id);
-      } else {
-        await muteThread(supabase, currentUserId, "group", activeGroup.id);
-      }
-      await refreshMessagingPreferences();
-    } catch (err) {
-      console.error("Failed to toggle group mute", err);
-      setPreferenceError(t("employee.messages.preferences.genericError"));
-    } finally {
-      setPreferenceBusyKey((prev) => (prev === key ? null : prev));
-    }
-  }, [activeGroup, currentUserId, mutedGroups, refreshMessagingPreferences, supabase, t]);
-
   const handleLeaveGroup = useCallback(async () => {
     if (!activeGroup) return;
     const groupLabel =
@@ -2943,7 +2922,7 @@ export default function EmployeeMessagingPage() {
     } finally {
       setPreferenceBusyKey((prev) => (prev === key ? null : prev));
     }
-  }, [activeGroup, refreshMessagingPreferences, supabase, t]);
+  }, [activeGroup, refreshMessagingPreferences, setGroupIncomingCounts, supabase, t]);
 
   const handleDeleteGroup = useCallback(async () => {
     if (!activeGroup) return;
@@ -2992,7 +2971,7 @@ export default function EmployeeMessagingPage() {
     } finally {
       setPreferenceBusyKey((prev) => (prev === key ? null : prev));
     }
-  }, [activeGroup, refreshMessagingPreferences, supabase, t]);
+  }, [activeGroup, refreshMessagingPreferences, setGroupIncomingCounts, supabase, t]);
 
   const handleRemoveGroupMember = useCallback(
     async (memberId: UUID, memberName: string) => {
@@ -3870,6 +3849,11 @@ export default function EmployeeMessagingPage() {
                         bubbleToneClass,
                       ].join(" ")}
                     >
+                      {!isMine && senderLabel ? (
+                        <div className="mb-1 text-[10px] font-semibold text-muted-foreground">
+                          {senderLabel}
+                        </div>
+                      ) : null}
                       {msg.attachment_url ? (
                         <AttachmentPreview
                           url={msg.attachment_url}

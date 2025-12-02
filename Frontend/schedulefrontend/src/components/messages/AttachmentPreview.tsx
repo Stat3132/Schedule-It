@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element */
+
 import { Paperclip } from "lucide-react";
 import { formatFileSize } from "@/lib/messageAttachments";
 
@@ -34,7 +36,7 @@ export function AttachmentPreview({
             src={url}
             alt={label}
             loading="lazy"
-            className="max-h-60 w-full object-cover"
+            className="w-full max-h-80 object-contain bg-muted/20"
           />
         </a>
         <div className="flex items-center justify-between px-3 py-2 text-[11px] text-muted-foreground">

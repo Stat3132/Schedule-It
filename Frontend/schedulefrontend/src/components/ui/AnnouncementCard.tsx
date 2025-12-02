@@ -1,5 +1,8 @@
-import { Trash2, Calendar } from 'lucide-react';
-import { Announcement } from '../../lib/supabase';
+"use client";
+
+import { Trash2, Calendar, Users2, Mail } from "lucide-react";
+import { Announcement } from "../../lib/supabase";
+import { AttachmentPreview } from "../messages/AttachmentPreview";
 
 interface AnnouncementCardProps {
   announcement: Announcement;
@@ -24,6 +27,21 @@ export function AnnouncementCard({ announcement, onDelete }: AnnouncementCardPro
     });
   };
 
+  const roleSummary =
+    announcement.target_role_ids.length > 0
+      ? announcement.target_role_ids.join(", ")
+      : null;
+  const recipientSummary =
+    announcement.target_recipients.length > 0
+      ? announcement.target_recipients
+          .map((recipient) =>
+            recipient.display_name
+              ? `${recipient.display_name} (${recipient.email})`
+              : recipient.email,
+          )
+          .join(", ")
+      : null;
+
   return (
     <div className="bg-background rounded-xl shadow-sm border border-border p-6 hover:shadow-md transition-shadow">
       <div className="flex justify-between items-start gap-4 mb-3">
@@ -40,9 +58,33 @@ export function AnnouncementCard({ announcement, onDelete }: AnnouncementCardPro
         {announcement.content}
       </p>
 
-      <div className="flex items-center gap-2 text-sm text-foreground/60">
-        <Calendar size={14} />
-        <span>{formatDate(announcement.created_at)}</span>
+      {announcement.attachment && (
+        <AttachmentPreview
+          url={announcement.attachment.url}
+          name={announcement.attachment.name}
+          mime={announcement.attachment.mime}
+          size={announcement.attachment.size}
+          downloadLabel="View attachment"
+        />
+      )}
+
+      <div className="flex flex-wrap items-center gap-3 text-sm text-foreground/60">
+        <span className="inline-flex items-center gap-2">
+          <Calendar size={14} />
+          <span>{formatDate(announcement.created_at)}</span>
+        </span>
+        {roleSummary && (
+          <span className="inline-flex items-center gap-1 text-xs">
+            <Users2 size={12} />
+            <span>Roles: {roleSummary}</span>
+          </span>
+        )}
+        {recipientSummary && (
+          <span className="inline-flex items-center gap-1 text-xs">
+            <Mail size={12} />
+            <span>Individuals: {recipientSummary}</span>
+          </span>
+        )}
       </div>
     </div>
   );

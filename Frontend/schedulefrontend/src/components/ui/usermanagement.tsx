@@ -275,15 +275,6 @@ function normalizeAvailabilityPattern(raw: unknown): AvailabilityPattern {
 
   return defaults;
 }
-
-
-function addDays(iso: string, days: number) {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString();
-}
-
 const ROSTER_PAGE_SIZE = 8;
 
 function formatPayRateFromNumber(value: number | null | undefined) {
@@ -1274,11 +1265,11 @@ export default function UserManagement({ businessId }: Props) {
         {loading ? (
           <div className="text-sm">Loading…</div>
         ) : (
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-3 auto-rows-fr">
             {/* Pending invites */}
-            <section className="bg-background border border-border rounded-xl shadow-sm overflow-hidden xl:col-span-1">
+            <section className="bg-background border border-border rounded-xl shadow-sm overflow-hidden xl:col-span-1 flex flex-col">
                 <div className="px-4 py-3 border-b font-medium">Pending invites</div>
-                <ul className="divide-y">
+                <ul className="divide-y flex-1">
                   {invites.length === 0 && <li className="px-4 py-6 text-sm text-foreground/60">No pending invites.</li>}
                 {invites.map(inv => (
                   <li key={inv.id} className="p-4">
@@ -1318,9 +1309,9 @@ export default function UserManagement({ businessId }: Props) {
             </section>
 
             {/* Pending activations */}
-            <section className="bg-background border border-border rounded-xl shadow-sm overflow-hidden xl:col-span-1">
+            <section className="bg-background border border-border rounded-xl shadow-sm overflow-hidden xl:col-span-1 flex flex-col">
               <div className="px-4 py-3 border-b font-medium">Pending activations</div>
-              <ul className="divide-y">
+              <ul className="divide-y flex-1">
                 {pendingEmps.length === 0 && <li className="px-4 py-6 text-sm text-foreground/60">No pending activations.</li>}
                 {pendingEmps.map(emp => {
                   const allRoleIds = emp.roleIds.length ? emp.roleIds : emp.role_id ? [emp.role_id] : [];
@@ -1357,9 +1348,9 @@ export default function UserManagement({ businessId }: Props) {
             </section>
 
             {/* Join requests */}
-            <section className="bg-background border border-border rounded-xl shadow-sm overflow-hidden xl:col-span-1">
+            <section className="bg-background border border-border rounded-xl shadow-sm overflow-hidden xl:col-span-1 flex flex-col">
               <div className="px-4 py-3 border-b font-medium">Join requests</div>
-              <ul className="divide-y">
+              <ul className="divide-y flex-1">
                 {joinRequests.length === 0 && <li className="px-4 py-6 text-sm text-foreground/60">No pending requests.</li>}
                 {joinRequests.map(req => {
                   const fullName = req.profile?.full_name || "Name unavailable";
@@ -1455,14 +1446,13 @@ export default function UserManagement({ businessId }: Props) {
             </div>
           ) : (
             <>
-              <div className="divide-y">
+              <div className="space-y-6">
                 {pagedRoster.map(row => {
                 const draft = rosterDrafts[row.id] ?? buildRosterDraft(row);
                 const saving = !!rosterSaving[row.id];
                 const canEdit = verified && row.status !== "terminated";
                 const hasChanges = canEdit && rosterRowHasChanges(row, draft);
                 const statusBadge = STATUS_BADGE[row.status] || "bg-muted text-foreground";
-                const removalDate = row.terminated_at ? formatDateShort(addDays(row.terminated_at, 7)) : null;
                 const avatarUrl = row.profile?.photo_url || null;
                 const avatarAlt = row.profile?.display_name || row.profile?.full_name || row.profile?.email || "Employee avatar";
                 const availability = availabilityByUser[row.user_id];
@@ -1474,8 +1464,8 @@ export default function UserManagement({ businessId }: Props) {
                     key={row.id}
                     className="rounded-2xl border border-border bg-card/50 p-6 shadow-sm space-y-6"
                   >
-                    <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="flex gap-4 w-full lg:max-w-sm">
+                    <div className="grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)]">
+                      <div className="flex gap-4 w-full">
                         <div className="relative h-16 w-16 rounded-full border border-border bg-foreground/10 text-foreground flex items-center justify-center font-semibold overflow-hidden shrink-0">
                           {avatarUrl ? (
                             <Image
@@ -1526,93 +1516,92 @@ export default function UserManagement({ businessId }: Props) {
                           </div>
                         </div>
                       </div>
-
-                      <div className="flex-1 w-full">
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <div>
-                            <label className="text-sm text-foreground">Primary role</label>
-                            <select
-                              className="mt-2 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
-                              value={draft.primaryRoleId}
-                              onChange={e =>
-                                updateRosterDraft(row, d => {
-                                  const nextPrimary = e.target.value as UUID | "";
-                                  const alreadyIncluded = nextPrimary ? d.roleIds.includes(nextPrimary) : false;
-                                  return {
-                                    ...d,
-                                    primaryRoleId: nextPrimary,
-                                    roleIds: nextPrimary && !alreadyIncluded ? [...d.roleIds, nextPrimary] : d.roleIds,
-                                  };
-                                })
-                              }
-                              disabled={!canEdit}
-                            >
-                              <option value="">No role</option>
-                              {roles.map(role => (
-                                <option key={role.id} value={role.id}>
-                                  {role.name}
-                                </option>
-                              ))}
-                            </select>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="text-sm text-foreground">Primary role</label>
+                          <select
+                            className="mt-2 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
+                            value={draft.primaryRoleId}
+                            onChange={e =>
+                              updateRosterDraft(row, d => {
+                                const nextPrimary = e.target.value as UUID | "";
+                                const alreadyIncluded = nextPrimary ? d.roleIds.includes(nextPrimary) : false;
+                                return {
+                                  ...d,
+                                  primaryRoleId: nextPrimary,
+                                  roleIds: nextPrimary && !alreadyIncluded ? [...d.roleIds, nextPrimary] : d.roleIds,
+                                };
+                              })
+                            }
+                            disabled={!canEdit}
+                          >
+                            <option value="">No role</option>
+                            {roles.map(role => (
+                              <option key={role.id} value={role.id}>
+                                {role.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-sm text-foreground">All roles</label>
+                          <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                            {roles.map(role => {
+                              const checked = draft.roleIds.includes(role.id);
+                              return (
+                                <label key={role.id} className="inline-flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    className="accent-primary"
+                                    checked={checked}
+                                    onChange={() => toggleRosterRole(row, role.id)}
+                                    disabled={!canEdit}
+                                  />
+                                  <span>{role.name}</span>
+                                </label>
+                              );
+                            })}
                           </div>
-                          <div>
-                            <label className="text-sm text-foreground">Primary location</label>
-                            <select
-                              className="mt-2 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
-                              value={draft.primaryLocationId}
-                              onChange={e => updateRosterDraft(row, d => ({ ...d, primaryLocationId: e.target.value as UUID | "" }))}
-                              disabled={!canEdit}
-                            >
-                              <option value="">None</option>
-                              {locations.map(loc => (
-                                <option key={loc.id} value={loc.id}>
-                                  {loc.name}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="md:col-span-2">
-                            <label className="text-sm text-foreground">All roles</label>
-                            <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                              {roles.map(role => {
-                                const checked = draft.roleIds.includes(role.id);
-                                return (
-                                  <label key={role.id} className="inline-flex items-center gap-2">
-                                    <input
-                                      type="checkbox"
-                                      className="accent-primary"
-                                      checked={checked}
-                                      onChange={() => toggleRosterRole(row, role.id)}
-                                      disabled={!canEdit}
-                                    />
-                                    <span>{role.name}</span>
-                                  </label>
-                                );
-                              })}
-                            </div>
-                            <p className="mt-1 text-xs text-foreground/60">
-                              Select every role this teammate can cover; the primary role drives scheduling defaults.
-                            </p>
-                          </div>
-                          <div className="md:col-span-2">
-                            <label className="text-sm text-foreground">Allowed locations</label>
-                            <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                              {locations.map(loc => {
-                                const checked = draft.allowedLocations.includes(loc.id);
-                                return (
-                                  <label key={loc.id} className="inline-flex items-center gap-2">
-                                    <input
-                                      type="checkbox"
-                                      className="accent-primary"
-                                      checked={checked}
-                                      onChange={() => toggleAllowedLocation(row, loc.id)}
-                                      disabled={!canEdit}
-                                    />
-                                    <span>{loc.name}</span>
-                                  </label>
-                                );
-                              })}
-                            </div>
+                          <p className="mt-1 text-xs text-foreground/60">
+                            Select every role this teammate can cover; the primary role drives scheduling defaults.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="text-sm text-foreground">Primary location</label>
+                          <select
+                            className="mt-2 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
+                            value={draft.primaryLocationId}
+                            onChange={e => updateRosterDraft(row, d => ({ ...d, primaryLocationId: e.target.value as UUID | "" }))}
+                            disabled={!canEdit}
+                          >
+                            <option value="">None</option>
+                            {locations.map(loc => (
+                              <option key={loc.id} value={loc.id}>
+                                {loc.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-sm text-foreground">Allowed locations</label>
+                          <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                            {locations.map(loc => {
+                              const checked = draft.allowedLocations.includes(loc.id);
+                              return (
+                                <label key={loc.id} className="inline-flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    className="accent-primary"
+                                    checked={checked}
+                                    onChange={() => toggleAllowedLocation(row, loc.id)}
+                                    disabled={!canEdit}
+                                  />
+                                  <span>{loc.name}</span>
+                                </label>
+                              );
+                            })}
                           </div>
                         </div>
                       </div>

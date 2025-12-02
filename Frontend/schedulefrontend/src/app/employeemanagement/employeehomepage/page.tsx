@@ -5,12 +5,13 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import type { Announcement } from "../../../lib/supabase";
+import { AttachmentPreview } from "../../../components/messages/AttachmentPreview";
 import {
   normalizeAnnouncementRow,
   markAnnouncementsAsRead,
   type AnnouncementRow,
+  createAnnouncement,
 } from "../../../lib/announcements";
-import { createAnnouncement } from "../../../lib/announcements";
 import { Clock, AlertCircle } from "lucide-react";
 import { useI18n } from "../../../lib/i18n";
 
@@ -329,6 +330,7 @@ export default function EmployeeHomePage() {
   const [selectedPresetAvatarId, setSelectedPresetAvatarId] =
     useState<string | null>(null);
   const [profilePhotoUploading, setProfilePhotoUploading] = useState(false);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -344,12 +346,14 @@ export default function EmployeeHomePage() {
   };
 
   const maybeShowAnnouncementForUser = useCallback(
-    async (userId: string, roleId: string | null) => {
-      if (!roleId) return;
+    async (userId: string, roleId: string | null, userEmail: string | null) => {
+      const userEmailLower = userEmail?.toLowerCase() ?? null;
 
       const { data, error } = await supabase
         .from("announcements")
-        .select("id,title,content,created_at,created_by,target_role_ids")
+        .select(
+          "id,title,content,created_at,created_by,target_role_ids,target_recipient_emails,target_recipient_display_names,attachment_url,attachment_name,attachment_mime,attachment_size,attachment_path",
+        )
         .order("created_at", { ascending: false });
 
       if (error || !data) {
@@ -362,8 +366,23 @@ export default function EmployeeHomePage() {
 
       const applicable = all.filter((a) => {
         if (a.created_by === userId) return false;
-        if (a.target_role_ids.length === 0) return true; // broadcast
-        return a.target_role_ids.includes(roleId);
+        const hasRoleTargets = a.target_role_ids.length > 0;
+        const hasRecipientTargets = a.target_recipients.length > 0;
+        const matchesRole =
+          hasRoleTargets && roleId ? a.target_role_ids.includes(roleId) : false;
+        const matchesRecipient =
+          hasRecipientTargets && userEmailLower
+            ? a.target_recipients.some(
+                (recipient) =>
+                  recipient.email &&
+                  recipient.email.toLowerCase() === userEmailLower,
+              )
+            : false;
+
+        if (!hasRoleTargets && !hasRecipientTargets) return true; // broadcast
+        if (matchesRole) return true;
+        if (matchesRecipient) return true;
+        return false;
       });
 
       if (applicable.length === 0) return;
@@ -581,6 +600,7 @@ export default function EmployeeHomePage() {
       const user = auth.user ?? null;
       const uid: string | undefined = user?.id;
       setCurrentUserId(uid ?? null);
+      setCurrentUserEmail(user?.email ?? null);
       if (!uid) {
         if (!cancelled) {
           setAwaitingAuthorization(false);
@@ -593,6 +613,7 @@ export default function EmployeeHomePage() {
           setDayFlags({});
           setDroppedShifts([]);
           setLoading(false);
+          setCurrentUserEmail(null);
         }
         return;
       }
@@ -945,9 +966,19 @@ export default function EmployeeHomePage() {
   useEffect(() => {
     (async () => {
       if (!currentUserId || !employmentState || awaitingAuthorization) return;
-      await maybeShowAnnouncementForUser(currentUserId, employmentState.role_id);
+      await maybeShowAnnouncementForUser(
+        currentUserId,
+        employmentState.role_id,
+        currentUserEmail,
+      );
     })();
-  }, [currentUserId, employmentState, awaitingAuthorization, maybeShowAnnouncementForUser]);
+  }, [
+    currentUserId,
+    employmentState,
+    currentUserEmail,
+    awaitingAuthorization,
+    maybeShowAnnouncementForUser,
+  ]);
 
   const todayIdx = new Date().getDay();
   const todayFlags = dayFlags[todayIdx];
@@ -1499,6 +1530,15 @@ export default function EmployeeHomePage() {
             </div>
             <div className="px-6 py-5 text-sm leading-relaxed text-foreground">
               {announcementToShow.announcement.content}
+              {announcementToShow.announcement.attachment && (
+                <AttachmentPreview
+                  url={announcementToShow.announcement.attachment.url}
+                  name={announcementToShow.announcement.attachment.name}
+                  mime={announcementToShow.announcement.attachment.mime}
+                  size={announcementToShow.announcement.attachment.size}
+                  downloadLabel={t("employee.messages.attachments.download")}
+                />
+              )}
             </div>
             <div className="flex items-center justify-between gap-3 border-t border-border/70 px-6 py-4 text-xs text-muted-foreground">
               <span>

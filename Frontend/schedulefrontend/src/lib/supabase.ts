@@ -44,6 +44,19 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 /* ========= Shared Types ========= */
 
+export interface AnnouncementRecipient {
+  email: string;
+  display_name: string | null;
+}
+
+export interface AnnouncementAttachment {
+  url: string;
+  name: string | null;
+  mime: string | null;
+  size: number | null;
+  path: string | null;
+}
+
 export interface Announcement {
   id: string;
   title: string;
@@ -52,6 +65,8 @@ export interface Announcement {
   created_by: string;
   updated_at: string;
   target_role_ids: string[];
+  target_recipients: AnnouncementRecipient[];
+  attachment: AnnouncementAttachment | null;
 }
 
 /* ========= Availability Types ========= */

@@ -2,6 +2,8 @@
 
 "use client";
 
+/* eslint-disable @next/next/no-img-element */
+
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
@@ -415,34 +417,30 @@ export default function EmployerMessagingPage() {
   const [preferenceMenuOpen, setPreferenceMenuOpen] = useState<"peer" | "group" | null>(null);
   const peerPreferenceMenuRef = useRef<HTMLDivElement | null>(null);
   const groupPreferenceMenuRef = useRef<HTMLDivElement | null>(null);
-  const [incomingCounts, setIncomingCountsState] = useState<Record<string, number>>(() =>
+  const [incomingCounts, setIncomingCounts] = useState<Record<string, number>>(() =>
     loadUnreadCounts(EMPLOYER_SCOPE, "dm"),
   );
-  const [groupIncomingCounts, setGroupIncomingCountsState] = useState<Record<string, number>>(() =>
+  const [groupIncomingCounts, setGroupIncomingCounts] = useState<Record<string, number>>(() =>
     loadUnreadCounts(EMPLOYER_SCOPE, "group"),
   );
+  const hasHydratedDmCountsRef = useRef(false);
+  const hasHydratedGroupCountsRef = useRef(false);
 
-  const setIncomingCounts = useCallback(
-    (value: React.SetStateAction<Record<string, number>>) => {
-      setIncomingCountsState((prev) => {
-        const next = typeof value === "function" ? value(prev) : value;
-        saveUnreadCounts(EMPLOYER_SCOPE, "dm", next);
-        return next;
-      });
-    },
-    [setIncomingCountsState],
-  );
+  useEffect(() => {
+    if (!hasHydratedDmCountsRef.current) {
+      hasHydratedDmCountsRef.current = true;
+      return;
+    }
+    saveUnreadCounts(EMPLOYER_SCOPE, "dm", incomingCounts);
+  }, [incomingCounts]);
 
-  const setGroupIncomingCounts = useCallback(
-    (value: React.SetStateAction<Record<string, number>>) => {
-      setGroupIncomingCountsState((prev) => {
-        const next = typeof value === "function" ? value(prev) : value;
-        saveUnreadCounts(EMPLOYER_SCOPE, "group", next);
-        return next;
-      });
-    },
-    [setGroupIncomingCountsState],
-  );
+  useEffect(() => {
+    if (!hasHydratedGroupCountsRef.current) {
+      hasHydratedGroupCountsRef.current = true;
+      return;
+    }
+    saveUnreadCounts(EMPLOYER_SCOPE, "group", groupIncomingCounts);
+  }, [groupIncomingCounts]);
   const dmTotalsRef = useRef<Record<string, number>>({});
   const groupTotalsRef = useRef<Record<string, number>>({});
   const dmReadCountsRef = useRef<Record<string, number>>({});
