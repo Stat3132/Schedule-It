@@ -4,45 +4,65 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-export default function Brand() {
-  const pathname = usePathname() ?? "/";
-
-  let href = "/";
-  if (pathname.startsWith("/employermanagement"))
-    href = "/employermanagement/employerhomepage";
-  else if (pathname.startsWith("/employeemanagement"))
-    href = "/employeemanagement/employeehomepage";
-
+function Wordmark({ isDesktop }: { isDesktop: boolean }) {
   return (
-    <Link
-      href={href}
-      aria-label="Schedule-It"
-      className="
-        fixed 
-        top-4 
-        left-4      /* <<< moved back fully to the left */
-        z-50 
-        flex 
-        items-center 
-        gap-3
-      "
-    >
+    <>
       <Image
         src="/scheduleitlogo.png"
         alt="Schedule-It"
-        width={36}
-        height={36}
+        width={isDesktop ? 40 : 36}
+        height={isDesktop ? 40 : 36}
         priority
       />
 
       <div className="leading-tight">
-        <div className="text-xl font-semibold text-primary">
+        <div
+          className={`${isDesktop ? "text-xl" : "text-lg"} font-semibold text-primary`}
+        >
           Schedule<span className="text-accent">It</span>
         </div>
-        <div className="text-xs tracking-widest text-secondary">
+        <div
+          className={`${
+            isDesktop ? "text-xs" : "text-[10px]"
+          } uppercase tracking-[0.2em] text-secondary`}
+        >
           Schedule it your way!
         </div>
       </div>
-    </Link>
+    </>
+  );
+}
+
+export default function Brand() {
+  const pathname = usePathname() ?? "/";
+  const isEmployeeRoute = pathname.startsWith("/employeemanagement");
+  const isEmployerRoute = pathname.startsWith("/employermanagement");
+
+  let href = "/";
+  if (pathname.startsWith("/employermanagement"))
+    href = "/employermanagement/employerhomepage";
+
+  if (isEmployeeRoute || isEmployerRoute) {
+    return null;
+  }
+
+  return (
+    <>
+      <Link
+        href={href}
+        aria-label="Schedule-It"
+        className="fixed left-1/2 top-6 z-50 flex -translate-x-1/2 flex-col items-center gap-2 text-center transition-all duration-200 md:hidden"
+      >
+        <Wordmark isDesktop={false} />
+      </Link>
+
+      <Link
+        href={href}
+        aria-label="Schedule-It"
+        className="fixed left-4 top-4 z-50 hidden -translate-x-0 flex-row items-center gap-3 text-left transition-all duration-200 md:flex"
+      >
+        <Wordmark isDesktop />
+      </Link>
+    </>
   );
 }

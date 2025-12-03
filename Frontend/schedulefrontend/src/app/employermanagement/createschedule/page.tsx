@@ -120,6 +120,18 @@ type EmployeePreview = {
 };
 
 type PreviewMode = "byDay" | "byEmployee";
+type ScheduleCellState = {
+  draft: ShiftDraft | undefined;
+  label: string;
+  isBlocked: boolean;
+  isOff: boolean;
+  isUnavailableByAvail: boolean;
+  isPartial: boolean;
+  availHint: string;
+  partialStart: string | null;
+  partialEnd: string | null;
+  allowedWindow: { start: string; end: string } | null;
+};
 
 const ALL_DAY_NAMES: DayOfWeek[] = [
   "sunday",
@@ -790,6 +802,50 @@ export default function CreateSchedulePage(): JSX.Element {
 
     const window = intersectWindow(openHH, closeHH, avail.start, avail.end);
     return window;
+  };
+
+  const buildCellState = (empId: string, day: number): ScheduleCellState => {
+    const draft = getDraft(empId, day);
+    const isOff = isEmployeeOffOnDay(empId, day);
+    const availWindow = getAvailabilityWindow(empId, day);
+    const allowedWindow = computeAllowedWindowForDay(empId, day);
+    const isUnavailableByAvail = availWindow?.status === "unavailable";
+    const isPartial = availWindow?.status === "partial";
+    const isBlocked = isOff || isUnavailableByAvail || !allowedWindow;
+
+    let label: string;
+    if (isOff) {
+      label = "Time off";
+    } else if (isUnavailableByAvail) {
+      label = "Unavailable";
+    } else if (draft) {
+      label = formatRange12(draft.start, draft.end);
+    } else if (!allowedWindow) {
+      label = "Blocked";
+    } else {
+      label = "Add shift";
+    }
+
+    const partialStart = availWindow?.start ?? null;
+    const partialEnd = availWindow?.end ?? null;
+    const availHint = isPartial
+      ? `Partial availability ${formatTime12(partialStart)}–${formatTime12(partialEnd)}`
+      : availWindow
+      ? "Available"
+      : "";
+
+    return {
+      draft,
+      label,
+      isBlocked,
+      isOff,
+      isUnavailableByAvail,
+      isPartial,
+      availHint,
+      partialStart,
+      partialEnd,
+      allowedWindow,
+    };
   };
 
   function openEditor(empId: string, day: number) {
@@ -1476,8 +1532,151 @@ export default function CreateSchedulePage(): JSX.Element {
           </section>
         )}
 
+        {/* Mobile builder intro */}
+        <section className="md:hidden border border-dashed border-border rounded-2xl bg-background/80 p-4 space-y-2">
+          <p className="text-[11px] uppercase tracking-wide text-foreground/60">
+            Schedule builder
+          </p>
+          <h2 className="text-base font-semibold text-foreground">
+            Create this week&apos;s schedule
+          </h2>
+          <p className="text-xs text-foreground/70">
+            Tap an employee card and pick a day to add or edit their shift. Changes stay in
+            sync with the desktop grid view.
+          </p>
+          <div className="flex flex-wrap items-center gap-2 pt-2 text-[11px]">
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-900 dark:text-amber-200 dark:border-amber-700">
+              Off / unavailable
+            </span>
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200 dark:bg-blue-900 dark:text-blue-200 dark:border-blue-800">
+              Has shift
+            </span>
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-border text-foreground/70 border border-border">
+              Tap day to add / edit
+            </span>
+          </div>
+        </section>
+
+        {/* Mobile builder */}
+        <section className="md:hidden border border-border rounded-2xl bg-background shadow-sm p-4 space-y-4">
+          <div className="space-y-2">
+            <p className="text-[11px] uppercase tracking-wide text-foreground/60">
+              Highlight day
+            </p>
+            <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+              {DAYS.map((d) => (
+                <button
+                  key={`mobile-highlight-${d.day}`}
+                  onClick={() => setActiveDay(d.day)}
+                  className={`flex-shrink-0 px-3 py-1.5 rounded-full border text-[11px] font-medium transition-colors ${
+                    activeDay === d.day
+                      ? "bg-blue-600 text-white border-blue-600"
+                      : "text-foreground/70 border-border bg-background"
+                  }`}
+                >
+                  {d.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {employees.length === 0 ? (
+              <p className="text-sm text-foreground/70">
+                No active employees found for this business (or RLS blocked the query).
+              </p>
+            ) : (
+              employees.map((e) => {
+                const draftCount = drafts.filter((draft) => draft.employeeId === e.id).length;
+                return (
+                  <div
+                    key={`mobile-${e.id}`}
+                    className="rounded-2xl border border-border/80 bg-background/70 p-3 space-y-2"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-foreground truncate">{e.name}</p>
+                        {e.roleName && (
+                          <p className="text-[11px] text-foreground/60 truncate">{e.roleName}</p>
+                        )}
+                      </div>
+                      <span className="text-[11px] px-2 py-0.5 rounded-full border border-border bg-background text-foreground/70">
+                        {draftCount} shift{draftCount === 1 ? "" : "s"}
+                      </span>
+                    </div>
+
+                    <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 snap-x snap-mandatory">
+                      {DAYS.map((d) => {
+                        const cell = buildCellState(e.id, d.day);
+                        const disabled =
+                          cell.isOff || cell.isUnavailableByAvail || !cell.allowedWindow;
+                        const blockedMessage = cell.isOff
+                          ? "Approved time off"
+                          : cell.isUnavailableByAvail
+                          ? "Marked unavailable"
+                          : "Outside availability / hours";
+
+                        return (
+                          <button
+                            key={`${e.id}-${d.day}-mobile-day`}
+                            type="button"
+                            disabled={disabled}
+                            onClick={() => openEditor(e.id, d.day)}
+                            className={`flex-shrink-0 min-w-[140px] rounded-xl border px-3 py-2 text-left snap-center transition-colors ${
+                              cell.draft
+                                ? "bg-blue-50 border-blue-200 text-blue-900 dark:bg-blue-900/40 dark:border-blue-800 dark:text-blue-100"
+                                : disabled
+                                ? "bg-amber-50/70 border-amber-200 text-amber-800 dark:bg-amber-900/40 dark:border-amber-700 dark:text-amber-100"
+                                : "bg-background border-border text-foreground hover:bg-background/70"
+                            } ${activeDay === d.day ? "ring-2 ring-blue-500" : ""}`}
+                          >
+                            <span className="text-[11px] font-semibold uppercase tracking-wide">
+                              {d.label}
+                            </span>
+                            <span className="text-xs font-medium block">{cell.label}</span>
+                            {cell.draft ? (
+                              <div className="mt-1 flex items-center justify-between text-[10px] text-foreground/70">
+                                <span>Edit shift</span>
+                                <span
+                                  role="button"
+                                  tabIndex={0}
+                                  className="font-semibold text-blue-700 hover:underline focus:outline-none"
+                                  onClick={(ev) => {
+                                    ev.preventDefault();
+                                    ev.stopPropagation();
+                                    removeDraft(e.id, d.day);
+                                  }}
+                                  onKeyDown={(ev) => {
+                                    if (ev.key === "Enter" || ev.key === " ") {
+                                      ev.preventDefault();
+                                      ev.stopPropagation();
+                                      removeDraft(e.id, d.day);
+                                    }
+                                  }}
+                                >
+                                  Remove
+                                </span>
+                              </div>
+                            ) : disabled ? (
+                              <span className="text-[10px] block mt-1">{blockedMessage}</span>
+                            ) : cell.availHint ? (
+                              <span className="text-[10px] text-foreground/60 block mt-1">
+                                {cell.availHint}
+                              </span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </section>
+
         {/* Grid controls */}
-        <section className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <section className="hidden md:flex md:flex-row md:items-center md:justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2 text-xs text-foreground/70">
             <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-900 dark:text-amber-200 dark:border-amber-700">
               Off / unavailable
@@ -1489,7 +1688,7 @@ export default function CreateSchedulePage(): JSX.Element {
               Click cell to add / edit
             </span>
           </div>
-          <div className="hidden sm:flex items-center gap-1 text-xs text-foreground/70">
+          <div className="flex items-center gap-1 text-xs text-foreground/70">
             <span>Highlight day:</span>
             <div className="inline-flex rounded-lg border border-border bg-background overflow-hidden">
               {DAYS.map((d) => (
@@ -1510,7 +1709,7 @@ export default function CreateSchedulePage(): JSX.Element {
         </section>
 
         {/* Grid */}
-        <section className="rounded-2xl border border-border bg-background shadow-sm overflow-x-auto">
+        <section className="hidden md:block rounded-2xl border border-border bg-background shadow-sm overflow-x-auto">
           <div className="min-w-[720px]">
             {/* Header row */}
             <div className="grid grid-cols-[minmax(220px,0.9fr)_repeat(7,minmax(90px,1fr))] border-b border-border bg-border text-xs font-semibold text-foreground/70">
@@ -1561,40 +1760,10 @@ export default function CreateSchedulePage(): JSX.Element {
 
                   {/* Day cells */}
                   {DAYS.map((d) => {
-                    const draft = getDraft(e.id, d.day);
-                    const isOff = isEmployeeOffOnDay(e.id, d.day);
-                    const availWindow = getAvailabilityWindow(e.id, d.day);
-                    const allowedWindow = computeAllowedWindowForDay(e.id, d.day);
-                    const isUnavailableByAvail =
-                      availWindow?.status === "unavailable";
-                    const isPartial = availWindow?.status === "partial";
-
-                    const isBlocked =
-                      isOff || isUnavailableByAvail || !allowedWindow;
-
-                    let label: string;
-                    if (isOff) {
-                      label = "Time off";
-                    } else if (isUnavailableByAvail) {
-                      label = "Unavailable";
-                    } else if (draft) {
-                      label = formatRange12(draft.start, draft.end);
-                    } else if (!allowedWindow) {
-                      label = "Blocked";
-                    } else {
-                      label = "Add shift";
-                    }
-
-                    const partialStart = availWindow?.start ?? null;
-                    const partialEnd = availWindow?.end ?? null;
-
-                    const availHint = isPartial
-                      ? `Partial availability ${formatTime12(
-                          partialStart
-                        )}–${formatTime12(partialEnd)}`
-                      : availWindow
-                      ? "Available"
-                      : "";
+                    const cell = buildCellState(e.id, d.day);
+                    const { draft, label, isBlocked, isOff, isUnavailableByAvail, availHint } =
+                      cell;
+                    const allowedWindow = cell.allowedWindow;
 
                     return (
                       <button

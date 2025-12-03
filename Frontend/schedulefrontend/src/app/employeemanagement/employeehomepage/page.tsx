@@ -1,8 +1,10 @@
 "use client";
 
-import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
+import NextImage from "next/image";
+import Cropper, { type Area, type MediaSize } from "react-easy-crop";
+import "react-easy-crop/react-easy-crop.css";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import type { Announcement } from "../../../lib/supabase";
 import { AttachmentPreview } from "../../../components/messages/AttachmentPreview";
@@ -12,7 +14,7 @@ import {
   type AnnouncementRow,
   createAnnouncement,
 } from "../../../lib/announcements";
-import { Clock, AlertCircle } from "lucide-react";
+import { Clock, AlertCircle, Loader2 } from "lucide-react";
 import { useI18n } from "../../../lib/i18n";
 
 // ---- Types ----
@@ -167,7 +169,10 @@ type AnnouncementLite = Announcement;
 
 const PROFILE_PHOTO_BUCKET =
   process.env.NEXT_PUBLIC_SUPABASE_PROFILE_BUCKET ?? "profile-photos";
-const MAX_PROFILE_PHOTO_BYTES = 4 * 1024 * 1024; // 4 MB
+const MAX_PROFILE_PHOTO_BYTES = 10 * 1024 * 1024; // 10 MB
+const CROPPED_OUTPUT_SIZE = 640;
+const CROPPED_MIME_TYPE = "image/jpeg";
+const CROPPED_FILE_EXT = "jpg";
 const PRESET_AVATARS = [
   {
     id: "aurora",
@@ -330,7 +335,42 @@ export default function EmployeeHomePage() {
   const [selectedPresetAvatarId, setSelectedPresetAvatarId] =
     useState<string | null>(null);
   const [profilePhotoUploading, setProfilePhotoUploading] = useState(false);
+  const profileUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const [profileCropModalOpen, setProfileCropModalOpen] = useState(false);
+  const [profileCropImageSrc, setProfileCropImageSrc] = useState<string | null>(null);
+  const [profileCrop, setProfileCrop] = useState({ x: 0, y: 0 });
+  const [profileCropZoom, setProfileCropZoom] = useState(1);
+  const [profileCroppedAreaPixels, setProfileCroppedAreaPixels] =
+    useState<Area | null>(null);
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  const [weekOffset, setWeekOffset] = useState(0);
+
+  // ---- Derived summary metrics ----
+  const totalShiftsThisWeek = useMemo(
+    () => days.reduce((sum, bucket) => sum + bucket.shifts.length, 0),
+    [days],
+  );
+
+  const daysWithoutScheduledShifts = useMemo(() => {
+    const daysWithAssignments = days.filter((bucket) => bucket.shifts.length > 0).length;
+    return Math.max(0, 7 - daysWithAssignments);
+  }, [days]);
+
+  const daysWithTimeOff = useMemo(
+    () =>
+      Object.values(dayFlags).filter(
+        (f) => f && f.hasTimeOff,
+      ).length,
+    [dayFlags],
+  );
+
+  const hasAnyContentThisWeek =
+    totalShiftsThisWeek > 0 ||
+    droppedShifts.length > 0 ||
+    daysWithTimeOff > 0;
+
+  const todayDate = normalizeToLocalDay(new Date());
+
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -373,10 +413,10 @@ export default function EmployeeHomePage() {
         const matchesRecipient =
           hasRecipientTargets && userEmailLower
             ? a.target_recipients.some(
-                (recipient) =>
-                  recipient.email &&
-                  recipient.email.toLowerCase() === userEmailLower,
-              )
+              (recipient) =>
+                recipient.email &&
+                recipient.email.toLowerCase() === userEmailLower,
+            )
             : false;
 
         if (!hasRoleTargets && !hasRecipientTargets) return true; // broadcast
@@ -474,6 +514,40 @@ export default function EmployeeHomePage() {
     setProfileError(null);
   };
 
+  const uploadProfilePhotoBlob = useCallback(
+    async (blob: Blob, extension: string, mimeType: string) => {
+      if (!currentUserId) {
+        throw new Error("Missing user id");
+      }
+
+      const safeExt = extension || CROPPED_FILE_EXT;
+      const filePath = `${currentUserId}/${Date.now()}.${safeExt}`;
+
+      const uploadResult = await supabase.storage
+        .from(PROFILE_PHOTO_BUCKET)
+        .upload(filePath, blob, {
+          cacheControl: "3600",
+          upsert: true,
+          contentType: mimeType,
+        });
+
+      if (uploadResult.error) {
+        throw uploadResult.error;
+      }
+
+      const { data: publicUrlData } = supabase.storage
+        .from(PROFILE_PHOTO_BUCKET)
+        .getPublicUrl(filePath);
+
+      if (!publicUrlData?.publicUrl) {
+        throw new Error("Unable to publish profile photo URL");
+      }
+
+      return publicUrlData.publicUrl;
+    },
+    [currentUserId, supabase],
+  );
+
   const handleProfilePhotoUpload = async (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
@@ -487,41 +561,108 @@ export default function EmployeeHomePage() {
       return;
     }
 
+    if (isGifFile(file)) {
+      setProfilePhotoUploading(true);
+      setProfileError(null);
+      try {
+        const extension = getFileExtension(file.name, "gif");
+        const publicUrl = await uploadProfilePhotoBlob(
+          file,
+          extension,
+          file.type || "image/gif",
+        );
+        setProfilePhotoUrl(publicUrl);
+        setSelectedPresetAvatarId(null);
+      } catch (error) {
+        console.error("[EmployeeHome] gif upload failed", error);
+        const message =
+          error instanceof Error
+            ? error.message
+            : t("employee.home.profilePrompt.errors.photoUploadFailed");
+        setProfileError(message);
+      } finally {
+        setProfilePhotoUploading(false);
+        event.target.value = "";
+      }
+      return;
+    }
+
+    try {
+      const reader = new FileReader();
+      const dataUrlPromise = new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+      });
+      reader.readAsDataURL(file);
+      const dataUrl = await dataUrlPromise;
+      setProfileCropImageSrc(dataUrl);
+      setProfileCrop({ x: 0, y: 0 });
+      setProfileCropZoom(1);
+      setProfileCroppedAreaPixels(null);
+      setProfileCropModalOpen(true);
+      setSelectedPresetAvatarId(null);
+      setProfileError(null);
+    } catch (error) {
+      console.error("[EmployeeHome] profile photo read failed", error);
+      const message =
+        error instanceof Error
+          ? error.message
+          : t("employee.home.profilePrompt.errors.photoUploadFailed");
+      setProfileError(message);
+    } finally {
+      event.target.value = "";
+    }
+  };
+
+  const handleProfileCropMediaLoaded = (media: MediaSize) => {
+    setProfileCroppedAreaPixels({
+      x: 0,
+      y: 0,
+      width: media.width,
+      height: media.height,
+    });
+  };
+
+  const handleProfileCropCancel = () => {
+    setProfileCropModalOpen(false);
+    setProfileCropImageSrc(null);
+    setProfileCroppedAreaPixels(null);
+    setProfileCrop({ x: 0, y: 0 });
+    setProfileCropZoom(1);
+    if (profileUploadInputRef.current) {
+      profileUploadInputRef.current.value = "";
+    }
+  };
+
+  const handleProfileCropApply = async () => {
+    if (!profileCropImageSrc || !profileCroppedAreaPixels) {
+      setProfileError(t("employee.home.profilePrompt.errors.photoUploadFailed"));
+      return;
+    }
+
     setProfilePhotoUploading(true);
     setProfileError(null);
 
     try {
-      const rawExt = file.name.split(".").pop();
-      const normalizedExt = rawExt
-        ? rawExt.toLowerCase().replace(/[^a-z0-9]/g, "")
-        : null;
-      const fileExt = normalizedExt && normalizedExt.length > 0 ? normalizedExt : "jpg";
-      const filePath = `${currentUserId}/${Date.now()}.${fileExt}`;
-
-      const uploadResult = await supabase.storage
-        .from(PROFILE_PHOTO_BUCKET)
-        .upload(filePath, file, {
-          cacheControl: "3600",
-          upsert: true,
-          contentType: file.type,
-        });
-
-      if (uploadResult.error) {
-        throw uploadResult.error;
-      }
-
-      const { data: publicData } = supabase.storage
-        .from(PROFILE_PHOTO_BUCKET)
-        .getPublicUrl(filePath);
-
-      if (!publicData?.publicUrl) {
-        throw new Error("Unable to publish profile photo URL");
-      }
-
-      setProfilePhotoUrl(publicData.publicUrl);
-      setSelectedPresetAvatarId(null);
+      const blob = await getCroppedBlob(
+        profileCropImageSrc,
+        profileCroppedAreaPixels,
+        CROPPED_OUTPUT_SIZE,
+        CROPPED_MIME_TYPE,
+      );
+      const publicUrl = await uploadProfilePhotoBlob(
+        blob,
+        CROPPED_FILE_EXT,
+        CROPPED_MIME_TYPE,
+      );
+      setProfilePhotoUrl(publicUrl);
+      setProfileCropModalOpen(false);
+      setProfileCropImageSrc(null);
+      setProfileCroppedAreaPixels(null);
+      setProfileCrop({ x: 0, y: 0 });
+      setProfileCropZoom(1);
     } catch (error) {
-      console.error("[EmployeeHome] profile photo upload failed", error);
+      console.error("[EmployeeHome] crop/upload failed", error);
       const message =
         error instanceof Error
           ? error.message
@@ -529,7 +670,9 @@ export default function EmployeeHomePage() {
       setProfileError(message);
     } finally {
       setProfilePhotoUploading(false);
-      event.target.value = "";
+      if (profileUploadInputRef.current) {
+        profileUploadInputRef.current.value = "";
+      }
     }
   };
 
@@ -595,6 +738,13 @@ export default function EmployeeHomePage() {
       setLoading(true);
       setProfileError(null);
 
+      const today = new Date();
+      const referenceDate = new Date(today);
+      referenceDate.setDate(referenceDate.getDate() + weekOffset * 7);
+      const weekStart = startOfWeek(referenceDate, 0);
+      const weekEnd = endOfWeek(referenceDate, 0);
+      const label = labelForWeek(referenceDate, locale, weekPrefix);
+
       // 1) Auth
       const { data: auth } = await supabase.auth.getUser();
       const user = auth.user ?? null;
@@ -607,8 +757,8 @@ export default function EmployeeHomePage() {
           setEmploymentState(null);
           setProfileNeedsSetup(false);
           setProfileModalOpen(false);
-          setDays(defaultEmptyWeek());
-          setWeekLabel(labelForWeek(new Date(), locale, weekPrefix));
+          setDays(defaultEmptyWeek(weekStart));
+          setWeekLabel(label);
           setHadRealAssignments(false);
           setDayFlags({});
           setDroppedShifts([]);
@@ -678,8 +828,8 @@ export default function EmployeeHomePage() {
           setEmploymentState(null);
           setProfileNeedsSetup(false);
           setProfileModalOpen(false);
-          setDays(defaultEmptyWeek());
-          setWeekLabel(labelForWeek(new Date(), locale, weekPrefix));
+          setDays(defaultEmptyWeek(weekStart));
+          setWeekLabel(label);
           setHadRealAssignments(false);
           setDayFlags({});
           setDroppedShifts([]);
@@ -693,12 +843,6 @@ export default function EmployeeHomePage() {
         setAwaitingAuthorization(false);
       }
 
-      // 3) Week window
-      const now = new Date();
-      const weekStart = startOfWeek(now, 0);
-      const weekEnd = endOfWeek(now, 0);
-      const label = labelForWeek(now, locale, weekPrefix);
-
       const flagsByIndex: Record<number, DayFlags> = {};
       for (let i = 0; i < 7; i++) {
         flagsByIndex[i] = {
@@ -707,7 +851,7 @@ export default function EmployeeHomePage() {
         };
       }
 
-      const todayISODate = now.toISOString().split("T")[0];
+      const todayISODate = today.toISOString().split("T")[0];
 
       // 3a) Availability
       try {
@@ -824,8 +968,8 @@ export default function EmployeeHomePage() {
             locIds.length
               ? supabase.from("location").select("id,name").in("id", locIds)
               : Promise.resolve({
-                  data: null,
-                } as { data: LocationRow[] | null }),
+                data: null,
+              } as { data: LocationRow[] | null }),
           ]);
 
           const roleById: Record<string, RoleRow> = {};
@@ -882,6 +1026,7 @@ export default function EmployeeHomePage() {
             assignmentByShiftId,
             locale,
             shiftFallbackLabel,
+            weekStart,
           );
 
           dropped.sort((a, b) => {
@@ -938,7 +1083,7 @@ export default function EmployeeHomePage() {
           setDays(bucketsFromTemplates);
           setWeekLabel(`${label} • ${typicalWeekSuffix}`);
         } else {
-          setDays(defaultEmptyWeek());
+          setDays(defaultEmptyWeek(weekStart));
           setWeekLabel(label);
         }
         setHadRealAssignments(false);
@@ -955,6 +1100,7 @@ export default function EmployeeHomePage() {
   }, [
     supabase,
     refreshKey,
+    weekOffset,
     locale,
     weekPrefix,
     shiftFallbackLabel,
@@ -979,9 +1125,6 @@ export default function EmployeeHomePage() {
     awaitingAuthorization,
     maybeShowAnnouncementForUser,
   ]);
-
-  const todayIdx = new Date().getDay();
-  const todayFlags = dayFlags[todayIdx];
 
   if (awaitingAuthorization) {
     return (
@@ -1192,54 +1335,86 @@ export default function EmployeeHomePage() {
 
   // ---- Render ----
   return (
-    <div className="min-h-screen bg-background">
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold text-foreground">
-            {t("employee.home.title")}
+    <div className="min-h-screen bg-muted/50 pb-12 overflow-x-hidden">
+      <main className="px-4 lg:px-8 py-6 w-full max-w-4xl mx-auto">
+        <div className="mb-6 text-center sm:text-left">
+          <h1 className="text-2xl font-semibold text-foreground">
+            {t("employee.home.schedule.heading")}
           </h1>
-          <p className="text-foreground/70 mt-1">
-            {loading ? t("shared.state.loading") : weekLabel}
-            {!loading && !hadRealAssignments
-              ? t("employee.home.week.noAssignments")
-              : ""}
+          <p className="text-sm text-muted-foreground mt-1">
+            {t("employee.home.header.description", { week: weekLabel })}
           </p>
-
-          {!loading &&
-            todayFlags &&
-            (todayFlags.hasTimeOff || todayFlags.isUnavailableByAvailability) && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {todayFlags.hasTimeOff && (
-                  <div className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800">
-                    <AlertCircle className="w-3 h-3 mr-1" />
-                    {todayFlags.timeOffStatus === "approved"
-                      ? t("employee.home.alerts.timeOffApproved")
-                      : t("employee.home.alerts.timeOffRequested")}
-                  </div>
-                )}
-                {todayFlags.isUnavailableByAvailability && (
-                  <div className="inline-flex items-center rounded-full border border-purple-200 bg-purple-50 px-3 py-1 text-xs font-medium text-purple-800">
-                    <AlertCircle className="w-3 h-3 mr-1" />
-                    {t("employee.home.alerts.unavailable")}
-                  </div>
-                )}
-              </div>
-            )}
         </div>
 
-        <div className="bg-background rounded-xl shadow-sm border border-border overflow-hidden">
-          <div className="grid grid-cols-7 gap-px bg-border">
+        <div className="mb-6 grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-3xl mx-auto w-full">
+          <div className="rounded-xl border border-border bg-background p-4 text-center sm:text-left">
+            <p className="text-xs text-muted-foreground">
+              {t("employee.home.metrics.totalShifts")}
+            </p>
+            <p className="text-xl font-semibold">{totalShiftsThisWeek}</p>
+          </div>
+          <div className="rounded-xl border border-border bg-background p-4 text-center sm:text-left">
+            <p className="text-xs text-muted-foreground">
+              {t("employee.home.metrics.daysOff")}
+            </p>
+            <p className="text-xl font-semibold">{daysWithoutScheduledShifts}</p>
+          </div>
+          <div className="rounded-xl border border-border bg-background p-4 text-center sm:text-left">
+            <p className="text-xs text-muted-foreground">
+              {t("employee.home.metrics.timeOffDays")}
+            </p>
+            <p className="text-xl font-semibold">{daysWithTimeOff}</p>
+          </div>
+        </div>
+
+        <div className="bg-background rounded-xl shadow-sm border border-border w-full mx-auto">
+          <div className="flex flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm font-medium text-foreground">
+              {t("employee.home.schedule.heading")}
+            </div>
+            <div className="flex items-center gap-2 justify-center sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setWeekOffset((w) => w - 1)}
+                className="px-2 py-1 rounded-md border border-border hover:bg-muted text-xs"
+                aria-label={t("employee.home.nav.previousWeek")}
+              >
+                ‹
+              </button>
+              <span className="text-xs text-muted-foreground">{weekLabel}</span>
+              <button
+                type="button"
+                onClick={() => setWeekOffset((w) => w + 1)}
+                className="px-2 py-1 rounded-md border border-border hover:bg-muted text-xs"
+                aria-label={t("employee.home.nav.nextWeek")}
+              >
+                ›
+              </button>
+            </div>
+          </div>
+
+          <div
+            className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-4 lg:gap-px p-4 lg:p-0 bg-transparent lg:bg-border"
+            role="list"
+          >
             {days.map((bucket: DayBucket) => {
               const flags = dayFlags[bucket.dayIndex];
-
+              const isToday =
+                normalizeToLocalDay(bucket.date).getTime() === todayDate.getTime();
               return (
                 <div
                   key={bucket.dayIndex}
-                  className="bg-background p-4 min-h-[200px] flex flex-col"
+                  className={`p-4 min-h-[200px] flex flex-col rounded-lg border border-border lg:rounded-none lg:border-none ${bucket.dayIndex % 2 === 1 ? "bg-muted/50" : "bg-background"}`}
+                  role="listitem"
                 >
-                  <div className="text-center mb-2">
-                    <div className="text-sm font-semibold text-foreground">
-                        {weekdayLabels[bucket.dayIndex]}
+                  <div className="text-center sm:text-left mb-2">
+                    <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 text-base font-semibold text-foreground">
+                      <span>{weekdayLabels[bucket.dayIndex]}</span>
+                      {isToday && (
+                        <span className="ml-2 inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                          {t("employee.home.badges.today")}
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-foreground/60 mt-1">
                       {fmtDateMMDD(bucket.date, locale)}
@@ -1301,15 +1476,22 @@ export default function EmployeeHomePage() {
                       ))
                     ) : (
                       <div className="text-center py-4">
-                        <div className="text-xs text-foreground/60">
-                          {flags?.hasTimeOff
-                            ? flags.timeOffStatus === "approved"
+                        {flags?.hasTimeOff ? (
+                          <div className="text-xs text-foreground/60">
+                            {flags.timeOffStatus === "approved"
                               ? t("employee.home.dayStatus.timeOffApproved")
-                              : t("employee.home.dayStatus.timeOffRequested")
-                            : flags?.isUnavailableByAvailability
-                            ? t("employee.home.dayStatus.unavailable")
-                            : t("employee.home.dayStatus.off")}
-                        </div>
+                              : t("employee.home.dayStatus.timeOffRequested")}
+                          </div>
+                        ) : flags?.isUnavailableByAvailability ? (
+                          <div className="text-xs text-foreground/60">
+                            {t("employee.home.dayStatus.unavailable")}
+                          </div>
+                        ) : (
+                          <div className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground border border-border/70">
+                            <Clock className="w-3 h-3 opacity-70" />
+                            {t("employee.home.dayStatus.off")}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1317,9 +1499,50 @@ export default function EmployeeHomePage() {
               );
             })}
           </div>
+          <div className="mt-4 flex flex-wrap gap-6 text-xs text-muted-foreground px-4 pb-4 justify-center lg:justify-start">
+            <div className="flex items-center gap-1">
+              <div className="h-3 w-3 rounded bg-teal-200" />
+              {t("employee.home.legend.assigned")}
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="h-3 w-3 rounded bg-amber-200" />
+              {t("employee.home.legend.timeOff")}
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="h-3 w-3 rounded bg-purple-200" />
+              {t("employee.home.legend.unavailable")}
+            </div>
+          </div>
+          {!loading && !hadRealAssignments && hasAnyContentThisWeek === false && (
+            <div className="border-t border-border px-4 py-5">
+              <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/40 px-4 py-6 text-center text-sm text-muted-foreground">
+                <p className="max-w-md">
+                  {t("employee.home.emptyWeek.body")}
+                </p>
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      router.push("/employeemanagement/entire-schedule")
+                    }
+                    className="inline-flex items-center rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground"
+                  >
+                    {t("employee.home.emptyWeek.primaryAction")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => router.push("/employeemanagement/messages")}
+                    className="inline-flex items-center rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
+                  >
+                    {t("employee.home.emptyWeek.secondaryAction")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
-        <section className="mt-8">
+        <section className="mt-8 w-full mx-auto">
           <h2 className="text-lg font-semibold text-foreground">
             {t("employee.home.section.dropped.title")}
           </h2>
@@ -1362,146 +1585,238 @@ export default function EmployeeHomePage() {
             )}
           </div>
         </section>
+
       </main>
 
-        {profileModalOpen && profileNeedsSetup && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4">
-            <div className="w-full max-w-2xl rounded-2xl border border-border bg-background px-6 py-8 shadow-2xl">
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-primary/80">
-                  {t("employee.home.profilePrompt.title")}
-                </p>
-                <h2 className="text-2xl font-semibold text-foreground">
-                  {t("employee.home.profilePrompt.subtitle")}
-                </h2>
+
+
+      {profileModalOpen && profileNeedsSetup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4">
+          <div className="w-full max-w-2xl rounded-2xl border border-border bg-background px-6 py-8 shadow-2xl">
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-primary/80">
+                {t("employee.home.profilePrompt.title")}
+              </p>
+              <h2 className="text-2xl font-semibold text-foreground">
+                {t("employee.home.profilePrompt.subtitle")}
+              </h2>
+            </div>
+            <div className="mt-6 space-y-6">
+              <div>
+                <label className="text-sm font-medium text-foreground">
+                  {t("employee.home.profilePrompt.displayNameLabel")}
+                </label>
+                <input
+                  type="text"
+                  value={profileDisplayName}
+                  onChange={(event) => setProfileDisplayName(event.target.value)}
+                  placeholder={t("employee.home.profilePrompt.displayNamePlaceholder")}
+                  className="mt-2 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
               </div>
-              <div className="mt-6 space-y-6">
-                <div>
+              <div>
+                <label className="text-sm font-medium text-foreground">
+                  {t("employee.home.profilePrompt.profileLabel")}
+                </label>
+                <textarea
+                  value={profileDescription}
+                  onChange={(event) => setProfileDescription(event.target.value)}
+                  placeholder={t("employee.home.profilePrompt.profilePlaceholder")}
+                  className="mt-2 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  rows={2}
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t("employee.home.profilePrompt.helper")}
+                </p>
+              </div>
+              <div>
+                <div className="flex items-center justify-between">
                   <label className="text-sm font-medium text-foreground">
-                    {t("employee.home.profilePrompt.displayNameLabel")}
+                    {t("employee.home.profilePrompt.photoLabel")}
                   </label>
-                  <input
-                    type="text"
-                    value={profileDisplayName}
-                    onChange={(event) => setProfileDisplayName(event.target.value)}
-                    placeholder={t("employee.home.profilePrompt.displayNamePlaceholder")}
-                    className="mt-2 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-foreground">
-                    {t("employee.home.profilePrompt.profileLabel")}
-                  </label>
-                  <textarea
-                    value={profileDescription}
-                    onChange={(event) => setProfileDescription(event.target.value)}
-                    placeholder={t("employee.home.profilePrompt.profilePlaceholder")}
-                    className="mt-2 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                    rows={2}
-                  />
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {t("employee.home.profilePrompt.helper")}
+                  <p className="text-xs text-muted-foreground">
+                    {t("employee.home.profilePrompt.photoHelper")}
                   </p>
                 </div>
-                <div>
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-medium text-foreground">
-                      {t("employee.home.profilePrompt.photoLabel")}
+                <div className="mt-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {t("employee.home.profilePrompt.photoPresetLabel")}
+                  </p>
+                  <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                    {PRESET_AVATARS.map((avatar) => {
+                      const isActive = selectedPresetAvatarId === avatar.id;
+                      return (
+                        <button
+                          key={avatar.id}
+                          type="button"
+                          onClick={() => handleSelectPresetAvatar(avatar.id, avatar.url)}
+                          className={`flex flex-col items-center gap-2 rounded-xl border px-3 py-2 text-center text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${isActive ? "border-primary bg-primary/5 text-primary" : "border-border hover:border-primary/60"}`}
+                          aria-pressed={isActive}
+                        >
+                          <NextImage
+                            src={avatar.url}
+                            alt={avatar.label}
+                            width={56}
+                            height={56}
+                            className="h-14 w-14 rounded-full border border-border object-cover"
+                          />
+                          <span>{avatar.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="mt-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {t("employee.home.profilePrompt.photoUploadLabel")}
+                  </p>
+                  <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <label className="inline-flex w-full cursor-pointer items-center justify-center rounded-lg border border-dashed border-border px-4 py-2 text-sm font-semibold text-foreground shadow-sm transition hover:border-primary/60 sm:w-auto">
+                      <input
+                        ref={profileUploadInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="sr-only"
+                        onChange={handleProfilePhotoUpload}
+                        disabled={profilePhotoUploading}
+                      />
+                      {profilePhotoUploading
+                        ? t("employee.home.profilePrompt.photoUploading")
+                        : t("employee.home.profilePrompt.photoUploadButton")}
                     </label>
                     <p className="text-xs text-muted-foreground">
-                      {t("employee.home.profilePrompt.photoHelper")}
+                      {t("employee.home.profilePrompt.photoUploadHint")}
                     </p>
                   </div>
-                  <div className="mt-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                      {t("employee.home.profilePrompt.photoPresetLabel")}
-                    </p>
-                    <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-                      {PRESET_AVATARS.map((avatar) => {
-                        const isActive = selectedPresetAvatarId === avatar.id;
-                        return (
-                          <button
-                            key={avatar.id}
-                            type="button"
-                            onClick={() => handleSelectPresetAvatar(avatar.id, avatar.url)}
-                            className={`flex flex-col items-center gap-2 rounded-xl border px-3 py-2 text-center text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${isActive ? "border-primary bg-primary/5 text-primary" : "border-border hover:border-primary/60"}`}
-                            aria-pressed={isActive}
-                          >
-                            <Image
-                              src={avatar.url}
-                              alt={avatar.label}
-                              width={56}
-                              height={56}
-                              className="h-14 w-14 rounded-full border border-border object-cover"
-                            />
-                            <span>{avatar.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  <div className="mt-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                      {t("employee.home.profilePrompt.photoUploadLabel")}
-                    </p>
-                    <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
-                      <label className="inline-flex w-full cursor-pointer items-center justify-center rounded-lg border border-dashed border-border px-4 py-2 text-sm font-semibold text-foreground shadow-sm transition hover:border-primary/60 sm:w-auto">
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="sr-only"
-                          onChange={handleProfilePhotoUpload}
-                          disabled={profilePhotoUploading}
-                        />
-                        {profilePhotoUploading
-                          ? t("employee.home.profilePrompt.photoUploading")
-                          : t("employee.home.profilePrompt.photoUploadButton")}
-                      </label>
-                      <p className="text-xs text-muted-foreground">
-                        {t("employee.home.profilePrompt.photoUploadHint")}
-                      </p>
-                    </div>
-                  </div>
-                  {profilePhotoUrl && (
-                    <div className="mt-4 flex items-center gap-3">
-                      <Image
-                        src={profilePhotoUrl}
-                        alt={t("employee.home.profilePrompt.photoPreviewAlt")}
-                        width={64}
-                        height={64}
-                        className="h-16 w-16 rounded-full border border-border object-cover"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleResetPhotoSelection}
-                        className="text-xs font-semibold text-destructive hover:underline"
-                      >
-                        {t("employee.home.profilePrompt.photoRemove")}
-                      </button>
-                    </div>
-                  )}
                 </div>
-                {profileError && (
-                  <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                    {profileError}
+                {profilePhotoUrl && (
+                  <div className="mt-4 flex items-center gap-3">
+                    <NextImage
+                      src={profilePhotoUrl}
+                      alt={t("employee.home.profilePrompt.photoPreviewAlt")}
+                      width={64}
+                      height={64}
+                      className="h-16 w-16 rounded-full border border-border object-cover"
+                      unoptimized={isGifUrl(profilePhotoUrl)}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleResetPhotoSelection}
+                      className="text-xs font-semibold text-destructive hover:underline"
+                    >
+                      {t("employee.home.profilePrompt.photoRemove")}
+                    </button>
                   </div>
                 )}
-                <button
-                  type="button"
-                  onClick={handleCompleteProfileCustomization}
-                  disabled={profileSubmitting || profilePhotoUploading}
-                  className="w-full rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-70"
-                >
-                  {profileSubmitting
-                    ? t("employee.home.profilePrompt.submitting")
-                    : t("employee.home.profilePrompt.submit")}
-                </button>
               </div>
+              {profileError && (
+                <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {profileError}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={handleCompleteProfileCustomization}
+                disabled={profileSubmitting || profilePhotoUploading}
+                className="w-full rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-70"
+              >
+                {profileSubmitting
+                  ? t("employee.home.profilePrompt.submitting")
+                  : t("employee.home.profilePrompt.submit")}
+              </button>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-      {/* Announcement popup */}
+      {profileCropModalOpen && profileCropImageSrc && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 px-4">
+          <div className="relative w-full max-w-2xl rounded-2xl border border-border bg-background p-6 shadow-2xl">
+            <button
+              type="button"
+              aria-label={t("shared.buttons.close")}
+              className="absolute right-4 top-4 rounded-full border border-transparent p-1 text-muted-foreground transition hover:text-foreground"
+              onClick={handleProfileCropCancel}
+              disabled={profilePhotoUploading}
+            >
+              <span className="text-lg">×</span>
+            </button>
+            <h3 className="text-lg font-semibold text-foreground">
+              {t("settings.profile.cropper.title")}
+            </h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {t("settings.profile.cropper.guide")}
+            </p>
+            <div className="mt-3 flex w-full justify-center">
+              <div className="relative aspect-square w-full max-w-[480px] overflow-hidden rounded-2xl bg-black/70">
+                <Cropper
+                  image={profileCropImageSrc}
+                  crop={profileCrop}
+                  zoom={profileCropZoom}
+                  aspect={1}
+                  onMediaLoaded={handleProfileCropMediaLoaded}
+                  onCropChange={setProfileCrop}
+                  onZoomChange={setProfileCropZoom}
+                  onCropComplete={(_, croppedPixels) => setProfileCroppedAreaPixels(croppedPixels)}
+                  objectFit="cover"
+                  showGrid
+                />
+                <div
+                  className="pointer-events-none absolute inset-4 rounded-2xl border-2 border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.6)]"
+                  aria-hidden="true"
+                />
+              </div>
+            </div>
+            <div className="mt-4 flex items-center gap-3">
+              <label className="text-sm font-medium text-foreground">
+                {t("settings.profile.cropper.zoomLabel")}
+              </label>
+              <input
+                type="range"
+                min={1}
+                max={3}
+                step={0.05}
+                value={profileCropZoom}
+                onChange={(event) => setProfileCropZoom(Number(event.target.value))}
+                className="flex-1 accent-primary"
+                disabled={profilePhotoUploading}
+              />
+            </div>
+            {!profileCroppedAreaPixels && (
+              <p className="mt-2 text-xs text-amber-500">
+                {t("settings.profile.cropper.applyDisabled")}
+              </p>
+            )}
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={handleProfileCropCancel}
+                disabled={profilePhotoUploading}
+                className="rounded-full border border-border px-4 py-2 text-sm font-medium text-foreground transition hover:bg-muted"
+              >
+                {t("settings.profile.cropper.cancel")}
+              </button>
+              <button
+                type="button"
+                onClick={handleProfileCropApply}
+                disabled={profilePhotoUploading || !profileCroppedAreaPixels}
+                className={`inline-flex items-center gap-2 rounded-full px-5 py-2 text-sm font-semibold text-white ${
+                  profilePhotoUploading || !profileCroppedAreaPixels
+                    ? "bg-primary/50"
+                    : "bg-primary hover:bg-primary/90"
+                }`}
+              >
+                {profilePhotoUploading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : null}
+                {t("settings.profile.cropper.apply")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      { }
       {announcementToShow && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4">
           <div className="w-full max-w-lg rounded-2xl border border-border bg-background shadow-2xl">
@@ -1551,19 +1866,19 @@ export default function EmployeeHomePage() {
               <div className="flex gap-2">
                 {announcementToShow.announcement.created_by ===
                   currentUserId && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleDeleteAnnouncement(announcementToShow.announcement.id)
-                    }
-                    disabled={announcementDeleteLoading}
-                    className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-destructive/80 hover:border-destructive disabled:opacity-50"
-                  >
-                    {announcementDeleteLoading
-                      ? t("employee.home.announcement.deleting")
-                      : t("employee.home.announcement.delete")}
-                  </button>
-                )}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleDeleteAnnouncement(announcementToShow.announcement.id)
+                      }
+                      disabled={announcementDeleteLoading}
+                      className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-destructive/80 hover:border-destructive disabled:opacity-50"
+                    >
+                      {announcementDeleteLoading
+                        ? t("employee.home.announcement.deleting")
+                        : t("employee.home.announcement.delete")}
+                    </button>
+                  )}
                 <button
                   type="button"
                   onClick={handleDismissAnnouncement}
@@ -1675,9 +1990,9 @@ export default function EmployeeHomePage() {
 }
 
 // ---- Builders ----
-function defaultEmptyWeek(): DayBucket[] {
-  const now = new Date();
-  const start = startOfWeek(now, 0);
+function defaultEmptyWeek(referenceStart?: Date): DayBucket[] {
+  const start = referenceStart ? new Date(referenceStart) : startOfWeek(new Date(), 0);
+  start.setHours(0, 0, 0, 0);
   return Array.from({ length: 7 }, (_: unknown, i: number) => {
     const d = new Date(start);
     d.setDate(start.getDate() + i);
@@ -1706,8 +2021,9 @@ function buildBucketsFromShifts(
   assignmentByShiftId: Record<string, ShiftAssignmentRow>,
   locale?: string,
   shiftFallback = "Shift",
+  weekStart?: Date,
 ): DayBucket[] {
-  const buckets = defaultEmptyWeek();
+  const buckets = defaultEmptyWeek(weekStart);
   for (const r of rows) {
     const s = new Date(r.shift.start_ts);
     const idx = s.getDay();
@@ -1740,7 +2056,7 @@ function buildBucketsFromTemplates(
   locale?: string,
   typicalShiftLabel = "Typical shift",
 ): DayBucket[] {
-  const buckets = defaultEmptyWeek();
+  const buckets = defaultEmptyWeek(weekStart);
   for (const t of templates) {
     const dayDate = new Date(weekStart);
     dayDate.setDate(weekStart.getDate() + t.weekday);
@@ -1807,4 +2123,75 @@ async function hasPendingAccess(
     console.error("[EmployeeHome] awaiting access lookup failed", error);
     return false;
   }
+}
+
+async function getCroppedBlob(
+  imageSrc: string,
+  croppedPixels: Area,
+  outputSize: number,
+  mimeType: string,
+): Promise<Blob> {
+  const image = await createImage(imageSrc);
+  const canvas = document.createElement("canvas");
+  canvas.width = outputSize;
+  canvas.height = outputSize;
+  const ctx = canvas.getContext("2d");
+
+  if (!ctx) {
+    throw new Error("Unable to create canvas context");
+  }
+
+  const { x, y, width, height } = croppedPixels;
+
+  ctx.drawImage(
+    image,
+    x,
+    y,
+    width,
+    height,
+    0,
+    0,
+    outputSize,
+    outputSize,
+  );
+
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error("Canvas is empty"));
+          return;
+        }
+        resolve(blob);
+      },
+      mimeType,
+      0.92,
+    );
+  });
+}
+
+function createImage(src: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.addEventListener("load", () => resolve(image));
+    image.addEventListener("error", (error) => reject(error));
+    image.setAttribute("crossOrigin", "anonymous");
+    image.src = src;
+  });
+}
+
+function isGifFile(file: File) {
+  const type = file.type.toLowerCase();
+  return type === "image/gif" || file.name.toLowerCase().endsWith(".gif");
+}
+
+function getFileExtension(fileName: string, fallback: string) {
+  const rawExt = fileName.split(".").pop();
+  const normalized = rawExt?.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return normalized && normalized.length > 0 ? normalized : fallback;
+}
+
+function isGifUrl(url: string | null) {
+  if (!url) return false;
+  return url.toLowerCase().includes(".gif");
 }

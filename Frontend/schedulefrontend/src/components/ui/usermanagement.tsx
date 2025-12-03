@@ -1086,7 +1086,7 @@ export default function UserManagement({ businessId }: Props) {
   /* ---------- UI ---------- */
   return (
     <main className="relative min-h-screen bg-background">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 pb-12">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt--2 sm:pt-12 lg:pt-24 pb-12">
         {isOwner && (
           <section className="mb-8 rounded-2xl border border-border bg-card shadow-sm p-6">
             <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">

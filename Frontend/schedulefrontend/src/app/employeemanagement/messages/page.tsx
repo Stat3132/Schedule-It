@@ -1,35 +1,13 @@
 "use client";
 
-/* eslint-disable @next/next/no-img-element */
-
-import type React from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Image from "next/image";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-import type { SupabaseClient } from "@supabase/auth-helpers-nextjs";
-import type { PostgrestError } from "@supabase/supabase-js";
+import { AttachmentPreview } from "@/components/messages/AttachmentPreview";
+import { ConversationSkeleton } from "@/components/messages/ConversationSkeleton";
+import { useI18n } from "@/lib/i18n";
+import { UploadedAttachment, uploadMessageAttachment, MAX_MESSAGE_ATTACHMENT_BYTES, formatFileSize } from "@/lib/messageAttachments";
+import { ScheduleSlot, ScheduleCardPayload, parseForwardCard, ForwardCardPayload, encodeForwardCard, encodeScheduleCard, parseScheduleCard } from "@/lib/messagingCards";
 import {
-  BellRing,
-  CalendarDays,
-  Cog,
-  Loader2,
-  MessageCircle,
-  Paperclip,
-  Plus,
-  Send,
-  Share2,
-  Trash2,
-  Users,
-  X,
-} from "lucide-react";
-import { useI18n } from "../../../lib/i18n";
-import {
-  formatFileSize,
-  MAX_MESSAGE_ATTACHMENT_BYTES,
-  uploadMessageAttachment,
-  type UploadedAttachment,
-} from "../../../lib/messageAttachments";
-import {
+  BlockMap,
+  MuteMap,
   blockUser as blockUserPreference,
   deleteGroupThread,
   fetchBlockMap,
@@ -39,32 +17,15 @@ import {
   removeGroupMember,
   unblockUser as unblockUserPreference,
   unmuteThread,
-} from "../../../lib/messagingPreferences";
-import type {
-  BlockMap,
-  MuteMap,
-} from "../../../lib/messagingPreferences";
-import { AttachmentPreview } from "@/components/messages/AttachmentPreview";
-import { ConversationSkeleton } from "@/components/messages/ConversationSkeleton";
-import {
-  encodeForwardCard,
-  encodeScheduleCard,
-  ForwardCardPayload,
-  parseForwardCard,
-  parseScheduleCard,
-  ScheduleCardPayload,
-  ScheduleSlot,
-} from "../../../lib/messagingCards";
-import {
-  loadReadCounts,
-  loadUnreadCounts,
-  saveReadCounts,
-  saveUnreadCounts,
-  saveUnreadFlag,
-  UnreadScope,
-} from "../../../lib/unreadTracker";
-
-type UUID = string;
+} from "@/lib/messagingPreferences";
+import { UnreadScope, loadUnreadCounts, saveUnreadCounts, loadReadCounts, saveReadCounts, saveUnreadFlag } from "@/lib/unreadTracker";
+import { cn } from "@/lib/utils";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
+import { UUID } from "crypto";
+import { CalendarDays, Share2, Loader2, MessageCircle, Plus, Users, X, ChevronLeft, Trash2, Paperclip, Send, BellRing, Cog } from "lucide-react";
+import Image from "next/image";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 
 type Profile = {
   id: UUID;
@@ -120,6 +81,8 @@ type GroupMessageRow = {
 type ConversationMessage =
   | (MessageRow & { kind: "dm"; localOnly?: boolean; blockedNotice?: boolean })
   | (GroupMessageRow & { kind: "group"; localOnly?: boolean });
+
+type MobileMessagingView = "list" | "chat";
 
 type AttachmentDraft = {
   id: string;
@@ -279,11 +242,6 @@ function buildReminderKey(
   recipientId: UUID,
 ) {
   return `${type}:${identifier}:${recipientId}`;
-}
-
-function currentWeekIdentifier(date = new Date()) {
-  const start = startOfWeek(date);
-  return start.toISOString().split("T")[0];
 }
 
 function dmChannelName(a: UUID, b: UUID) {
@@ -458,9 +416,29 @@ export default function EmployeeMessagingPage() {
   const [isAddContactOpen, setIsAddContactOpen] = useState(false);
   const [addContactSearch, setAddContactSearch] = useState("");
   const [groups, setGroups] = useState<GroupChat[]>([]);
+  const profileById = useMemo(() => {
+    const map = new Map<UUID, Profile>();
+    contacts.forEach((profile) => {
+      if (profile?.id) {
+        map.set(profile.id, profile);
+      }
+    });
+    if (selfProfile?.id) {
+      map.set(selfProfile.id, selfProfile);
+    }
+    return map;
+  }, [contacts, selfProfile]);
   const [isGroupBuilderOpen, setIsGroupBuilderOpen] = useState(false);
   const [groupDraftName, setGroupDraftName] = useState("");
   const [groupDraftMembers, setGroupDraftMembers] = useState<Record<UUID, boolean>>({});
+  const groupDraftSelectionCount = useMemo(
+    () =>
+      Object.values(groupDraftMembers).reduce(
+        (count, selected) => (selected ? count + 1 : count),
+        0,
+      ),
+    [groupDraftMembers],
+  );
   const [groupBuilderError, setGroupBuilderError] = useState<string | null>(null);
   const [isLoadingGroups, setIsLoadingGroups] = useState(false);
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
@@ -473,6 +451,9 @@ export default function EmployeeMessagingPage() {
   const [preferenceMenuOpen, setPreferenceMenuOpen] = useState<"peer" | "group" | null>(null);
   const peerPreferenceMenuRef = useRef<HTMLDivElement | null>(null);
   const groupPreferenceMenuRef = useRef<HTMLDivElement | null>(null);
+  const [isMobileLayout, setIsMobileLayout] = useState(false);
+  const [mobileView, setMobileView] = useState<MobileMessagingView>("list");
+  const [infoPanelMode, setInfoPanelMode] = useState<"peer" | "group" | null>(null);
   const [incomingCounts, setIncomingCountsState] = useState<Record<string, number>>(() =>
     loadUnreadCounts(EMPLOYEE_SCOPE, "dm"),
   );
@@ -612,6 +593,43 @@ export default function EmployeeMessagingPage() {
   useEffect(() => {
     setPreferenceError(null);
   }, [activePeer?.id, activeGroup?.id]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mediaQuery = window.matchMedia("(max-width: 1023px)");
+    const handleChange = (event: MediaQueryListEvent) => {
+      setIsMobileLayout(event.matches);
+    };
+    setIsMobileLayout(mediaQuery.matches);
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleChange);
+    } else {
+      mediaQuery.addListener(handleChange);
+    }
+    return () => {
+      if (typeof mediaQuery.removeEventListener === "function") {
+        mediaQuery.removeEventListener("change", handleChange);
+      } else {
+        mediaQuery.removeListener(handleChange);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileLayout) return;
+    if (!activePeer && !activeGroup) {
+      setMobileView("list");
+    }
+  }, [activeGroup, activePeer, isMobileLayout]);
+
+  useEffect(() => {
+    if (infoPanelMode === "peer" && !activePeer) {
+      setInfoPanelMode(null);
+    }
+    if (infoPanelMode === "group" && !activeGroup) {
+      setInfoPanelMode(null);
+    }
+  }, [activeGroup, activePeer, infoPanelMode]);
 
   const messageEndRef = useRef<HTMLDivElement | null>(null);
   const messageContainerRef = useRef<HTMLDivElement | null>(null);
@@ -2158,38 +2176,24 @@ export default function EmployeeMessagingPage() {
   const peerMenuOpen = preferenceMenuOpen === "peer";
   const peerMuteBusy = activePeer ? preferenceBusyKey === `mute:dm:${activePeer.id}` : false;
   const peerBlockBusy = activePeer ? preferenceBusyKey === `block:${activePeer.id}` : false;
-  const groupLeaveBusy = activeGroup ? preferenceBusyKey === `group:leave:${activeGroup.id}` : false;
-  const groupDeleteBusy = activeGroup ? preferenceBusyKey === `group:delete:${activeGroup.id}` : false;
+  const groupLeaveBusy = activeGroup
+    ? preferenceBusyKey === `group:leave:${activeGroup.id}`
+    : false;
+  const groupDeleteBusy = activeGroup
+    ? preferenceBusyKey === `group:delete:${activeGroup.id}`
+    : false;
   const activeGroupCreatedByCurrentUser = activeGroup
     ? activeGroup.createdBy === currentUserId
     : false;
-
-  const activePeerIsEmployer = useMemo(() => {
-    if (!activePeer) return false;
-    const meta = employmentMetaByUserId[activePeer.id];
-    return Boolean(meta?.is_manager || meta?.is_admin);
-  }, [activePeer, employmentMetaByUserId]);
-
-  const currentUserIsEmployer = useMemo(
-    () =>
-      Boolean(
-        currentEmploymentFlags?.is_manager || currentEmploymentFlags?.is_admin,
-      ),
-    [currentEmploymentFlags],
+  const currentUserIsEmployer = Boolean(
+    currentEmploymentFlags?.is_admin || currentEmploymentFlags?.is_manager,
   );
-
-  const scheduleWeekKey = currentWeekIdentifier();
-
-  const scheduleWeekLabel = useMemo(() => {
-    if (!scheduleWeekKey) return "";
-    const date = new Date(`${scheduleWeekKey}T00:00:00`);
-    const formatted = date.toLocaleDateString(locale, {
-      month: "long",
-      day: "numeric",
-    });
-    return t("employee.messages.scheduleCard.weekLabel", { date: formatted });
-  }, [scheduleWeekKey, locale, t]);
-
+  const activePeerIsEmployer = activePeer
+    ? Boolean(
+        employmentMetaByUserId[activePeer.id]?.is_admin ||
+          employmentMetaByUserId[activePeer.id]?.is_manager,
+      )
+    : false;
   const scheduleSummary = useMemo(() => {
     if (!weekSchedule.length) {
       return t("employee.messages.menu.forward.schedule.emptySummary");
@@ -2197,194 +2201,41 @@ export default function EmployeeMessagingPage() {
     return weekSchedule
       .map((slot) => `• ${slot.day} ${slot.time} – ${slot.title}`)
       .join("\n");
-  }, [weekSchedule, t]);
-
-  const scheduleCardPayload = useMemo<ScheduleCardPayload>(() => ({
-    type: "scheduleCard",
-    weekKey: scheduleWeekKey,
-    weekLabel: scheduleWeekLabel,
-    summary: scheduleSummary,
-    slots: weekSchedule,
-  }), [scheduleWeekKey, scheduleWeekLabel, scheduleSummary, weekSchedule]);
-  const scheduleReminderIdentifier = `schedule:${scheduleWeekKey}`;
+  }, [t, weekSchedule]);
+  const scheduleCardPayload = useMemo<ScheduleCardPayload>(() => {
+    const weekStart = startOfWeek(new Date());
+    const weekLabel = t("employee.messages.scheduleCard.weekLabel", {
+      date: new Intl.DateTimeFormat(locale, {
+        month: "short",
+        day: "numeric",
+      }).format(weekStart),
+    });
+    return {
+      type: "scheduleCard",
+      weekKey: weekStart.toISOString().slice(0, 10),
+      weekLabel,
+      summary: scheduleSummary,
+      slots: weekSchedule.slice(0, 10),
+    };
+  }, [locale, scheduleSummary, t, weekSchedule]);
+  const scheduleReminderIdentifier = scheduleCardPayload.weekKey;
   const scheduleReminderQuota = getReminderUsageInfo(
     "schedule",
     scheduleReminderIdentifier,
   );
-
-  const unaddedContacts = useMemo(() => {
-    const existingIds = new Set(conversations.map((conv) => conv.peer.id));
-    return contacts.filter((profile) => !existingIds.has(profile.id));
-  }, [contacts, conversations]);
-
   const addContactResults = useMemo(() => {
-    const query = addContactSearch.trim().toLowerCase();
-    if (!query) return unaddedContacts;
-    return unaddedContacts.filter((profile) => {
-      const haystack = `${profileDisplayName(profile, "")} ${profile.email ?? ""}`.toLowerCase();
-      return haystack.includes(query);
+    const normalizedQuery = addContactSearch.trim().toLowerCase();
+    return contacts.filter((profile) => {
+      if (!normalizedQuery) {
+        return true;
+      }
+      const name = (
+        profileDisplayName(profile, "") ?? ""
+      ).toLowerCase();
+      const email = profile.email?.toLowerCase() ?? "";
+      return name.includes(normalizedQuery) || email.includes(normalizedQuery);
     });
-  }, [unaddedContacts, addContactSearch]);
-
-  const groupDraftSelectionCount = useMemo(() => {
-    return Object.values(groupDraftMembers).filter(Boolean).length;
-  }, [groupDraftMembers]);
-
-  const profileById = useMemo(() => {
-    const map = new Map<UUID, Profile>();
-    contacts.forEach((profile) => {
-      map.set(profile.id, profile);
-    });
-
-    if (selfProfile) {
-      map.set(selfProfile.id, selfProfile);
-    } else if (currentUserId && !map.has(currentUserId)) {
-      map.set(currentUserId, {
-        id: currentUserId,
-        display_name: t("employee.messages.youLabel"),
-        full_name: t("employee.messages.youLabel"),
-        email: null,
-        photo_url: null,
-        profile_title: null,
-      });
-    }
-
-    return map;
-  }, [contacts, currentUserId, selfProfile, t]);
-
-  const ScheduleCardBlock = ({
-    payload,
-    showModifyButton = false,
-    variant = "bubble",
-    onModify,
-  }: {
-    payload: ScheduleCardPayload;
-    showModifyButton?: boolean;
-    variant?: "bubble" | "preview";
-    onModify?: () => void;
-  }) => {
-    const listWrapperClass =
-      variant === "preview"
-        ? "border border-border bg-white text-foreground shadow-sm dark:bg-slate-900"
-        : "border border-border/60 bg-card text-foreground shadow-sm";
-    const containerClass =
-      variant === "preview"
-        ? "space-y-3 text-foreground"
-        : "space-y-3 text-foreground";
-    const modifyButtonClass =
-      variant === "preview"
-        ? "mt-2 flex w-full items-center justify-center"
-        : "inline-flex items-center justify-center";
-    return (
-      <div className={containerClass}>
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-semibold">
-              {t("employee.messages.scheduleCard.title")}
-            </p>
-            <p className="text-[11px] text-primary/80">
-              {payload.weekLabel}
-            </p>
-          </div>
-          <CalendarDays className="h-5 w-5 text-primary" />
-        </div>
-        <div className={`rounded-lg px-3 py-2 text-xs ${listWrapperClass}`}>
-          {payload.slots?.length ? (
-            <ul className="space-y-2">
-              {payload.slots.map((slot, idx) => (
-                <li
-                  key={`${slot.day}-${idx}`}
-                  className="flex items-start justify-between gap-3"
-                >
-                  <span className="font-semibold">{slot.day}</span>
-                  <span className="text-right text-muted-foreground">
-                    {slot.time} · {slot.title}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-muted-foreground">
-              {t("employee.messages.scheduleCard.empty")}
-            </p>
-          )}
-        </div>
-        {!payload.slots?.length && (
-          <p className="text-[11px] text-muted-foreground">
-            {payload.summary}
-          </p>
-        )}
-        {showModifyButton && onModify && (
-          <button
-            type="button"
-            onClick={onModify}
-            className={`rounded-full border border-primary/40 px-3 py-1 text-[11px] font-semibold text-primary hover:bg-primary/10 ${modifyButtonClass}`}
-          >
-            {t("employee.messages.scheduleCard.modifyButton")}
-          </button>
-        )}
-      </div>
-    );
-  };
-
-  const ForwardCardBlock = ({
-    payload,
-    statusOverride,
-  }: {
-    payload: ForwardCardPayload;
-    statusOverride?: string;
-  }) => {
-    const typeLabel =
-      payload.requestType === "timeOff"
-        ? t("employee.messages.forwardCard.type.timeOff")
-        : t("employee.messages.forwardCard.type.availability");
-    const resolvedStatus = statusOverride ?? payload.status ?? "pending";
-    const statusLabel = getStatusLabel(resolvedStatus);
-    return (
-      <div className="space-y-2 rounded-lg border border-border/60 bg-card px-3 py-2 text-xs shadow-sm">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-semibold">
-              {t("employee.messages.forwardCard.title")}
-            </p>
-            <p className="text-[11px] text-muted-foreground">{typeLabel}</p>
-          </div>
-          <Share2 className="h-4 w-4 text-primary" />
-        </div>
-        <dl className="space-y-1">
-          <div className="flex items-start justify-between gap-3">
-            <dt className="text-muted-foreground">
-              {t("employee.messages.forwardCard.rangeLabel")}
-            </dt>
-            <dd className="text-right font-semibold">
-              {payload.rangeLabel}
-            </dd>
-          </div>
-          <div className="flex items-start justify-between gap-3">
-            <dt className="text-muted-foreground">
-              {t("employee.messages.forwardCard.statusLabel")}
-            </dt>
-            <dd className="text-right text-foreground">
-              {statusLabel}
-            </dd>
-          </div>
-          {payload.reason ? (
-            <div className="flex flex-col gap-1">
-              <dt className="text-muted-foreground">
-                {t("employee.messages.forwardCard.reasonLabel")}
-              </dt>
-              <dd className="whitespace-pre-line text-foreground">
-                {payload.reason}
-              </dd>
-            </div>
-          ) : null}
-        </dl>
-        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-          {t("employee.messages.forwardCard.forwardedLabel")}
-        </p>
-      </div>
-    );
-  };
+  }, [addContactSearch, contacts]);
 
   async function sendMessageContent(
     rawContent: string,
@@ -2437,7 +2288,7 @@ export default function EmployeeMessagingPage() {
   ) {
     if (!currentUserId || !activePeer) return null;
 
-    const tempId = `temp-dm-${Date.now().toString(36)}`;
+    const tempId = getTempMessageId() ?? generateUuid();
     const optimisticMessage: ConversationMessage = {
       id: tempId,
       sender_id: currentUserId,
@@ -2537,7 +2388,7 @@ export default function EmployeeMessagingPage() {
   ) {
     if (!currentUserId || !activeGroup) return null;
 
-    const tempId = `temp-group-${Date.now().toString(36)}`;
+    const tempId = generateUuid();
     const optimisticMessage: ConversationMessage = {
       id: tempId,
       sender_id: currentUserId,
@@ -2694,12 +2545,16 @@ export default function EmployeeMessagingPage() {
       return sortConversationsByName([...prev, { peer, lastMessage: null }]);
     });
     setActivePeer(peer);
+    setInfoPanelMode(null);
+    setMobileView("chat");
   }
 
   function handleSelectConversation(peer: Profile) {
     setIsActionMenuOpen(false);
     setActiveGroup(null);
     setActivePeer(peer);
+    setInfoPanelMode(null);
+    setMobileView("chat");
   }
 
   function handleSelectGroup(group: GroupChat) {
@@ -2708,6 +2563,8 @@ export default function EmployeeMessagingPage() {
     setIsAddContactOpen(false);
     setAddContactSearch("");
     setIsActionMenuOpen(false);
+    setInfoPanelMode(null);
+    setMobileView("chat");
   }
 
   function toggleGroupDraftMember(userId: UUID) {
@@ -3183,6 +3040,129 @@ export default function EmployeeMessagingPage() {
     setScheduleModalState(null);
   }
 
+  const ScheduleCardBlock = ({
+    payload,
+    showModifyButton = false,
+    variant = "bubble",
+    onModify,
+  }: {
+    payload: ScheduleCardPayload;
+    showModifyButton?: boolean;
+    variant?: "bubble" | "preview";
+    onModify?: () => void;
+  }) => {
+    const wrapperClass =
+      variant === "preview"
+        ? "border border-border bg-white text-foreground shadow-sm dark:bg-slate-900"
+        : "border border-border/60 bg-card text-foreground shadow-sm";
+    const showModifyCta = showModifyButton && typeof onModify === "function";
+    return (
+      <div className="space-y-3 text-foreground">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold">
+              {t("employee.messages.scheduleCard.title")}
+            </p>
+            <p className="text-[11px] text-primary/80">{payload.weekLabel}</p>
+          </div>
+          <CalendarDays className="h-5 w-5 text-primary" />
+        </div>
+        <div className={cn("rounded-lg px-3 py-2 text-xs", wrapperClass)}>
+          {payload.slots?.length ? (
+            <ul className="space-y-2">
+              {payload.slots.map((slot, index) => (
+                <li
+                  key={`${slot.day}-${index}`}
+                  className="flex items-start justify-between gap-3"
+                >
+                  <span className="font-semibold">{slot.day}</span>
+                  <span className="text-right text-muted-foreground">
+                    {slot.time} · {slot.title}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-muted-foreground">
+              {t("employee.messages.scheduleCard.empty")}
+            </p>
+          )}
+        </div>
+        {!payload.slots?.length && (
+          <p className="text-[11px] text-muted-foreground whitespace-pre-line">
+            {payload.summary}
+          </p>
+        )}
+        {showModifyCta ? (
+          <button
+            type="button"
+            onClick={onModify}
+            className={cn(
+              "rounded-full border border-primary/40 px-3 py-1 text-[11px] font-semibold text-primary hover:bg-primary/10",
+              variant === "preview"
+                ? "mt-2 flex w-full items-center justify-center"
+                : "inline-flex items-center justify-center",
+            )}
+          >
+            {t("employee.messages.scheduleCard.modifyButton")}
+          </button>
+        ) : null}
+      </div>
+    );
+  };
+
+  const ForwardCardBlock = ({
+    payload,
+    statusOverride,
+  }: {
+    payload: ForwardCardPayload;
+    statusOverride?: string | null;
+  }) => {
+    const typeLabel =
+      payload.requestType === "timeOff"
+        ? t("employee.messages.forwardCard.type.timeOff")
+        : t("employee.messages.forwardCard.type.availability");
+    const statusLabel = getStatusLabel(statusOverride ?? payload.status ?? "pending");
+    return (
+      <div className="space-y-2 rounded-lg border border-border/60 bg-card px-3 py-2 text-xs shadow-sm">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-semibold">
+              {t("employee.messages.forwardCard.title")}
+            </p>
+            <p className="text-[11px] text-muted-foreground">{typeLabel}</p>
+          </div>
+          <Share2 className="h-4 w-4 text-primary" />
+        </div>
+        <dl className="space-y-1">
+          <div className="flex items-start justify-between gap-3">
+            <dt className="text-muted-foreground">
+              {t("employee.messages.forwardCard.rangeLabel")}
+            </dt>
+            <dd className="text-right font-semibold">{payload.rangeLabel}</dd>
+          </div>
+          <div className="flex items-start justify-between gap-3">
+            <dt className="text-muted-foreground">
+              {t("employee.messages.forwardCard.statusLabel")}
+            </dt>
+            <dd className="text-right text-foreground">{statusLabel}</dd>
+          </div>
+          {payload.reason ? (
+            <div className="flex flex-col gap-1">
+              <dt className="text-muted-foreground">
+                {t("employee.messages.forwardCard.reasonLabel")}
+              </dt>
+              <dd className="whitespace-pre-line text-foreground">{payload.reason}</dd>
+            </div>
+          ) : null}
+        </dl>
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+          {t("employee.messages.forwardCard.forwardedLabel")}
+        </p>
+      </div>
+    );
+  };
+
   function handleForwardTimeOff(request: TimeOffRequestSummary) {
     if (!activePeer) return;
     const range = formatTimeOffRange(request.start_ts, request.end_ts, locale);
@@ -3411,10 +3391,43 @@ export default function EmployeeMessagingPage() {
     );
   }
 
+  const showBackButton = isMobileLayout && mobileView === "chat";
+  const layoutShellClassName = cn(
+    "flex w-full bg-background overflow-hidden",
+    isMobileLayout
+      ? "min-h-screen flex-col"
+      : "h-[calc(100vh-4rem)] min-h-[600px] gap-4 lg:gap-12",
+  );
+  const sidebarClassName = cn(
+    "flex flex-col bg-card/60 backdrop-blur-sm",
+    isMobileLayout
+      ? "w-full border-b border-border/60"
+      : "w-64 shrink-0 border-r border-border/60",
+    isMobileLayout && mobileView === "chat" && "hidden",
+  );
+  const chatPanelClassName = cn(
+    "flex min-h-0 min-w-0 flex-1 flex-col bg-background",
+    isMobileLayout && mobileView === "list" && "hidden",
+  );
+  const showPeerInfo = infoPanelMode === "peer" && Boolean(activePeer);
+  const showGroupInfo = infoPanelMode === "group" && Boolean(activeGroup);
+  const closeInfoPanel = () => setInfoPanelMode(null);
+  const infoPanelTitle = showPeerInfo
+    ? activePeerDisplayName ?? t("employee.messages.unknown")
+    : showGroupInfo
+      ? activeGroup?.name ?? t("employee.messages.groups.detailsTitle")
+      : "";
+  const infoPanelSubtitle = showPeerInfo
+    ? t("employee.messages.conversation.title")
+    : showGroupInfo
+      ? t("employee.messages.groups.detailsTitle")
+      : "";
+
   return (
-    <div className="flex h-[calc(100vh-4rem)] min-h-[600px] w-full bg-background gap-4 overflow-hidden lg:gap-12">
-      {/* Left sidebar */}
-      <aside className="relative flex w-64 flex-col border-r bg-card/60 backdrop-blur-sm">
+    <div className={layoutShellClassName}>
+      <div className="flex h-full flex-1 overflow-hidden">
+        {/* Left sidebar */}
+        <aside className={sidebarClassName}>
         <div className="flex items-center gap-2 border-b px-4 py-3">
           <div className="relative">
             <MessageCircle className="h-5 w-5 text-primary" />
@@ -3474,7 +3487,7 @@ export default function EmployeeMessagingPage() {
                   />
                   <div className="mt-2 max-h-56 overflow-y-auto">
                     {addContactResults.length ? (
-                      <ul className="space-y-1">
+                      <ul className="max-h-[40vh] space-y-1 overflow-y-auto pr-1">
                         {addContactResults.map((profile) => (
                           <li key={profile.id}>
                             <button
@@ -3737,35 +3750,233 @@ export default function EmployeeMessagingPage() {
         </div>
       </aside>
 
-      {/* Main chat panel */}
-      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between border-b px-4 py-3">
-          <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold">{headerTitle}</h2>
-            {headerSubtitle ? (
-              <p className="truncate text-xs text-muted-foreground">
-                {headerSubtitle}
-              </p>
+      {(showPeerInfo || showGroupInfo) && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 px-4 py-6 sm:items-center"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeInfoPanel();
+            }
+          }}
+        >
+          <div className="w-full max-w-md rounded-2xl border border-border/70 bg-card p-5 text-sm shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-foreground">
+                  {infoPanelTitle}
+                </h2>
+                {infoPanelSubtitle ? (
+                  <p className="text-xs text-muted-foreground">
+                    {infoPanelSubtitle}
+                  </p>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={closeInfoPanel}
+                aria-label={t("shared.buttons.close")}
+                className="rounded-full border border-border/60 p-2 text-muted-foreground transition hover:bg-muted"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {infoPanelMode === "peer" && activePeer ? (
+              <div className="mt-4 space-y-4">
+                <div className="flex items-center gap-3">
+                  <AvatarCircle
+                    profile={activePeer}
+                    sizeClass="h-14 w-14"
+                    className="text-base font-semibold"
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate text-base font-semibold">
+                      {activePeerDisplayName ?? t("employee.messages.unknown")}
+                    </p>
+                    <p className="break-words text-xs text-muted-foreground">
+                      {activePeer.email ?? t("employee.messages.unknownEmail")}
+                    </p>
+                  </div>
+                </div>
+                <div className="space-y-2 text-xs text-muted-foreground">
+                  <p>
+                    {t("employee.messages.conversation.role", {
+                      role:
+                        activePeerRole ??
+                        t("employee.messages.conversation.roleFallback"),
+                    })}
+                  </p>
+                  <p>
+                    {t("employee.messages.conversation.location", {
+                      location:
+                        activePeerLocation ??
+                        t("employee.messages.conversation.locationFallback"),
+                    })}
+                  </p>
+                  <p className="leading-snug text-foreground">
+                    {activePeerSummary ?? t("employee.messages.conversation.bio")}
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={handleTogglePeerMute}
+                    disabled={peerMuteBusy}
+                    className="w-full rounded-lg border border-border/70 bg-background px-3 py-2 text-left font-semibold transition hover:border-primary/40 hover:bg-primary/5 disabled:opacity-60"
+                  >
+                    {activePeerMuted
+                      ? t("employee.messages.preferences.unsilenceButton")
+                      : t("employee.messages.preferences.silenceButton")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleTogglePeerBlock}
+                    disabled={peerBlockBusy}
+                    className="w-full rounded-lg border border-rose-200 bg-rose-50/60 px-3 py-2 text-left font-semibold text-rose-700 transition hover:border-rose-300 disabled:opacity-60"
+                  >
+                    {activePeerBlockedByMe
+                      ? t("employee.messages.preferences.unblockButton")
+                      : t("employee.messages.preferences.blockButton")}
+                  </button>
+                  {activePeerBlocked && (
+                    <p className="text-[11px] text-amber-600">
+                      {activePeerBlockedByMe
+                        ? t("employee.messages.preferences.blockedByYouNotice", {
+                            name: resolvedPeerName,
+                          })
+                        : t("employee.messages.preferences.blockedYouNotice", {
+                            name: resolvedPeerName,
+                          })}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ) : null}
+
+            {infoPanelMode === "group" && activeGroup ? (
+              <div className="mt-4 space-y-3 text-xs text-muted-foreground">
+                <p className="text-sm font-semibold text-foreground">
+                  {t("employee.messages.groups.detailsMembers", {
+                    count: activeGroup.memberIds.length,
+                  })}
+                </p>
+                <ul className="space-y-1">
+                  {activeGroup.memberIds.map((memberId) => {
+                    const profile = profileById.get(memberId);
+                    const label =
+                      memberId === currentUserId
+                        ? t("employee.messages.youLabel")
+                        : profileDisplayName(
+                            profile,
+                            t("employee.messages.groups.unknownMember"),
+                          ) || t("employee.messages.groups.unknownMember");
+                    return (
+                      <li key={memberId} className="flex items-center justify-between gap-2 rounded-md border border-border/40 bg-card/50 px-2 py-1.5">
+                        <span className="truncate text-foreground">{label}</span>
+                        {memberId === currentUserId ? (
+                          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                            {t("shared.labels.you")}
+                          </span>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+                <div className="space-y-2 text-sm">
+                  <button
+                    type="button"
+                    onClick={handleLeaveGroup}
+                    disabled={groupLeaveBusy}
+                    className="w-full rounded-lg border border-border/70 bg-background px-3 py-2 text-left font-semibold transition hover:border-primary/40 hover:bg-primary/5 disabled:opacity-60"
+                  >
+                    {t("employee.messages.groups.actions.leave")}
+                  </button>
+                  {activeGroupCreatedByCurrentUser && (
+                    <button
+                      type="button"
+                      onClick={handleDeleteGroup}
+                      disabled={groupDeleteBusy}
+                      className="w-full rounded-lg border border-rose-200 bg-rose-50/60 px-3 py-2 text-left font-semibold text-rose-700 transition hover:border-rose-300 disabled:opacity-60"
+                    >
+                      {t("employee.messages.groups.actions.delete")}
+                    </button>
+                  )}
+                </div>
+              </div>
             ) : null}
           </div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="h-2 w-2 rounded-full bg-emerald-500" />
-            <span>{t("employee.messages.status.online")}</span>
-          </div>
-        </header>
+        </div>
+      )}
 
-        <div
-          ref={messageContainerRef}
-          className="flex-1 min-h-0 overflow-y-auto bg-muted/40 px-4 py-3"
-          onScroll={handleMessageScroll}
-        >
-          {!activePeer && !activeGroup ? (
-            <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted-foreground">
-              <MessageCircle className="mb-2 h-8 w-8 text-muted-foreground" />
-              <p>{t("employee.messages.selectPrompt")}</p>
+      {/* Main chat panel */}
+      <main className={chatPanelClassName}>
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <header className="sticky top-0 z-20 flex items-center justify-between border-b bg-background/95 px-3 py-1.5 text-sm shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:px-4 sm:py-2">
+            <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
+              {showBackButton ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeInfoPanel();
+                    setMobileView("list");
+                  }}
+                  className="rounded-full border border-border/60 p-1.5 text-muted-foreground transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  aria-label={t("shared.buttons.back")}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+              ) : null}
+              {(activePeer || activeGroup) && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setInfoPanelMode(activePeer ? "peer" : "group")
+                  }
+                  className="rounded-full border border-border/60 p-1 text-muted-foreground transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  aria-label={activePeer
+                    ? t("employee.messages.conversation.title")
+                    : t("employee.messages.groupsHeading")}
+                >
+                  {activePeer ? (
+                    <AvatarCircle
+                      profile={activePeer}
+                      sizeClass="h-9 w-9 sm:h-10 sm:w-10"
+                      className="text-sm font-semibold"
+                    />
+                  ) : (
+                    <div className="flex h-10 w-10 items-center justify-center">
+                      <Users className="h-5 w-5" />
+                    </div>
+                  )}
+                </button>
+              )}
+              <div className="min-w-0 leading-tight">
+                <h2 className="truncate text-[13px] font-semibold">{headerTitle}</h2>
+                {headerSubtitle ? (
+                  <p className="truncate text-[11px] text-muted-foreground">
+                    {headerSubtitle}
+                  </p>
+                ) : null}
+              </div>
             </div>
-          ) : (
-            <div className="flex h-full flex-col gap-2">
+            <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              <span>{t("employee.messages.status.online")}</span>
+            </div>
+          </header>
+
+          <div
+            ref={messageContainerRef}
+            className="flex-1 min-h-0 overflow-y-auto bg-muted/40 px-4 py-3"
+            onScroll={handleMessageScroll}
+          >
+            {!activePeer && !activeGroup ? (
+              <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted-foreground">
+                <MessageCircle className="mb-2 h-8 w-8 text-muted-foreground" />
+                <p>{t("employee.messages.selectPrompt")}</p>
+              </div>
+            ) : (
+              <div className="flex h-full flex-col gap-2">
               {!initialMessagesLoaded && (
                 <ConversationSkeleton
                   rows={4}
@@ -3918,19 +4129,22 @@ export default function EmployeeMessagingPage() {
 
               <div ref={messageEndRef} />
             </div>
-          )}
-        </div>
+            )}
+          </div>
 
-        <footer className="border-t bg-background/80 px-4 py-3">
+        <footer className="border-t bg-background/80 px-3 pt-2 pb-[calc(env(safe-area-inset-bottom)+0.15rem)] sm:px-4 sm:pt-3 sm:pb-[calc(env(safe-area-inset-bottom)+0.5rem)]">
           <div ref={actionMenuAnchorRef} className="relative">
             {pendingAttachment && (
               <div className="mb-2 flex items-center gap-3 rounded-lg border border-border/70 bg-muted/40 px-3 py-2 text-xs">
                 {pendingAttachment.previewUrl ? (
-                  <div className="h-16 w-16 overflow-hidden rounded-md border border-border/60 bg-background">
-                    <img
+                  <div className="relative h-16 w-16 overflow-hidden rounded-md border border-border/60 bg-background">
+                    <Image
                       src={pendingAttachment.previewUrl}
                       alt={pendingAttachment.file.name}
-                      className="h-full w-full object-cover"
+                      fill
+                      unoptimized
+                      sizes="64px"
+                      className="object-cover"
                     />
                   </div>
                 ) : null}
@@ -3955,7 +4169,7 @@ export default function EmployeeMessagingPage() {
 
             <form
               onSubmit={handleSend}
-              className="flex items-end gap-2 rounded-xl border border-gray-200 bg-white dark:bg-slate-800 px-3 py-3 shadow-sm"
+              className="flex items-end gap-2 rounded-xl border border-gray-200 bg-white dark:bg-slate-800 px-3 py-1.5 sm:py-2.5 shadow-sm"
             >
               <textarea
                 ref={textareaRef}
@@ -4391,6 +4605,7 @@ export default function EmployeeMessagingPage() {
             )}
           </div>
         </footer>
+        </div>
       </main>
 
       {/* Right column */}
@@ -4663,7 +4878,9 @@ export default function EmployeeMessagingPage() {
           </div>
         </div>
       </aside>
-      {scheduleModalState && (
+    </div>
+
+    {scheduleModalState && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
           <div className="relative flex h-[80vh] w-full max-w-5xl flex-col rounded-2xl bg-card p-4 shadow-2xl">
             <div className="flex items-start justify-between gap-4 border-b border-border/60 pb-3">
@@ -4718,3 +4935,44 @@ export default function EmployeeMessagingPage() {
     </div>
   );
 }
+function getTempMessageId(): UUID | null {
+  return getNativeUuid();
+}
+
+function generateUuid(): UUID {
+  const native = getNativeUuid();
+  if (native) {
+    return native;
+  }
+
+  const fallback = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
+    /[xy]/g,
+    (char) => {
+      const rand = (Math.random() * 16) | 0;
+      const value = char === "x" ? rand : (rand & 0x3) | 0x8;
+      return value.toString(16);
+    },
+  );
+
+  return fallback as UUID;
+}
+
+function getNativeUuid(): UUID | null {
+  const cryptoObj = resolveCrypto();
+  if (cryptoObj?.randomUUID) {
+    return cryptoObj.randomUUID() as UUID;
+  }
+  return null;
+}
+
+type CryptoLike = {
+  randomUUID?: () => string;
+};
+
+function resolveCrypto(): CryptoLike | undefined {
+  if (typeof globalThis === "undefined") {
+    return undefined;
+  }
+  return (globalThis as { crypto?: CryptoLike }).crypto;
+}
+

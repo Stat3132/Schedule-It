@@ -64,11 +64,19 @@ function dispatchUnreadCountsEvent(
   type: "dm" | "group",
   counts: UnreadCounts,
 ) {
-  window.dispatchEvent(
-    new CustomEvent(`${UNREAD_EVENT}:${type}-counts`, {
-      detail: { scope, counts },
-    }),
-  );
+  // dispatch asynchronously so listeners don't run synchronously during
+  // another component's render (prevents setState-from-render errors)
+  setTimeout(() => {
+    try {
+      window.dispatchEvent(
+        new CustomEvent(`${UNREAD_EVENT}:${type}-counts`, {
+          detail: { scope, counts },
+        }),
+      );
+    } catch {
+      // swallow; best-effort
+    }
+  }, 0);
 }
 
 export function loadReadCounts(scope: UnreadScope, type: "dm" | "group") {
@@ -83,9 +91,16 @@ export function saveReadCounts(
 ) {
   if (typeof window === "undefined") return;
   safeSetItem(STORAGE_KEYS[scope][type], JSON.stringify(counts));
-  window.dispatchEvent(
-    new CustomEvent(`${UNREAD_EVENT}:reads`, { detail: { scope } }),
-  );
+  // dispatch asynchronously to avoid synchronous listener updates during render
+  setTimeout(() => {
+    try {
+      window.dispatchEvent(
+        new CustomEvent(`${UNREAD_EVENT}:reads`, { detail: { scope } }),
+      );
+    } catch {
+      // ignore
+    }
+  }, 0);
 }
 
 export function loadUnreadCounts(scope: UnreadScope, type: "dm" | "group") {
@@ -100,6 +115,7 @@ export function saveUnreadCounts(
 ) {
   if (typeof window === "undefined") return;
   safeSetItem(getUnreadCountsKey(scope, type), JSON.stringify(counts));
+  // use the async dispatcher above
   dispatchUnreadCountsEvent(scope, type, counts);
 }
 
@@ -153,9 +169,16 @@ export function saveUnreadFlag(scope: UnreadScope, hasUnread: boolean) {
   if (prev !== next) {
     safeSetItem(key, next);
   }
-  window.dispatchEvent(
-    new CustomEvent(UNREAD_EVENT, { detail: { scope, hasUnread } }),
-  );
+  // dispatch asynchronously so any listeners update outside render
+  setTimeout(() => {
+    try {
+      window.dispatchEvent(
+        new CustomEvent(UNREAD_EVENT, { detail: { scope, hasUnread } }),
+      );
+    } catch {
+      // ignore
+    }
+  }, 0);
 }
 
 export function subscribeToUnreadFlag(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import Cropper, { type Area, type MediaSize } from "react-easy-crop";
 import NextImage from "next/image";
 import "react-easy-crop/react-easy-crop.css";
@@ -10,7 +10,7 @@ import { useI18n } from "@/lib/i18n";
 
 const PROFILE_PHOTO_BUCKET =
   process.env.NEXT_PUBLIC_SUPABASE_PROFILE_BUCKET ?? "profile-photos";
-const MAX_PROFILE_PHOTO_BYTES = 4 * 1024 * 1024; // 4 MB
+const MAX_PROFILE_PHOTO_BYTES = 10 * 1024 * 1024; // 10 MB
 const CROPPED_OUTPUT_SIZE = 640;
 const CROPPED_MIME_TYPE = "image/jpeg";
 const CROPPED_FILE_EXT = "jpg";
@@ -52,6 +52,40 @@ export default function ProfileEditorCard({ isDark = false }: ProfileEditorCardP
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const profileCustomizedColumnSupportedRef = useRef(true);
+
+  const uploadProfilePhotoBlob = useCallback(
+    async (blob: Blob, extension: string, mimeType: string) => {
+      if (!userId) {
+        throw new Error("Missing user id");
+      }
+
+      const safeExt = extension || CROPPED_FILE_EXT;
+      const filePath = `${userId}/${Date.now()}.${safeExt}`;
+      const uploadResult = await supabase.storage
+        .from(PROFILE_PHOTO_BUCKET)
+        .upload(filePath, blob, {
+          cacheControl: "3600",
+          upsert: true,
+          contentType: mimeType,
+        });
+
+      if (uploadResult.error) {
+          throw uploadResult.error;
+      }
+
+      const { data: publicUrlData } = supabase.storage
+        .from(PROFILE_PHOTO_BUCKET)
+        .getPublicUrl(filePath);
+
+      if (!publicUrlData?.publicUrl) {
+        throw new Error("Unable to publish profile photo URL");
+      }
+
+      return publicUrlData.publicUrl;
+    },
+    [supabase, userId],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -152,6 +186,28 @@ export default function ProfileEditorCard({ isDark = false }: ProfileEditorCardP
       return;
     }
 
+    if (isGifFile(file)) {
+      setUploadingPhoto(true);
+      setErrorMessage(null);
+      try {
+        const extension = getFileExtension(file.name, "gif");
+        const publicUrl = await uploadProfilePhotoBlob(
+          file,
+          extension,
+          file.type || "image/gif",
+        );
+        setPhotoUrl(publicUrl);
+        setStatusMessage(null);
+      } catch (error) {
+        console.error("[ProfileEditorCard] gif upload failed", error);
+        setErrorMessage(t("settings.profile.photoError"));
+      } finally {
+        setUploadingPhoto(false);
+        event.target.value = "";
+      }
+      return;
+    }
+
     try {
       const reader = new FileReader();
       const dataUrlPromise = new Promise<string>((resolve, reject) => {
@@ -198,17 +254,32 @@ export default function ProfileEditorCard({ isDark = false }: ProfileEditorCardP
     setErrorMessage(null);
 
     try {
-      const payload = {
+      const payload: Record<string, unknown> = {
         id: userId,
         display_name: trimmedDisplayName,
         profile_title: trimmedDescription || null,
         photo_url: photoUrl ?? null,
-        profile_customized: true,
       };
 
-      const { error } = await supabase
+      if (profileCustomizedColumnSupportedRef.current) {
+        payload.profile_customized = true;
+      }
+
+      let { error } = await supabase
         .from("profiles")
         .upsert(payload, { onConflict: "id" });
+
+      if (
+        error &&
+        profileCustomizedColumnSupportedRef.current &&
+        isMissingProfileCustomizedColumn(error)
+      ) {
+        profileCustomizedColumnSupportedRef.current = false;
+        delete payload.profile_customized;
+        ({ error } = await supabase
+          .from("profiles")
+          .upsert(payload, { onConflict: "id" }));
+      }
 
       if (error) {
         throw error;
@@ -257,29 +328,12 @@ export default function ProfileEditorCard({ isDark = false }: ProfileEditorCardP
         CROPPED_OUTPUT_SIZE,
         CROPPED_MIME_TYPE,
       );
-      const filePath = `${userId}/${Date.now()}.${CROPPED_FILE_EXT}`;
-
-      const uploadResult = await supabase.storage
-        .from(PROFILE_PHOTO_BUCKET)
-        .upload(filePath, blob, {
-          cacheControl: "3600",
-          upsert: true,
-          contentType: CROPPED_MIME_TYPE,
-        });
-
-      if (uploadResult.error) {
-        throw uploadResult.error;
-      }
-
-      const { data: publicUrlData } = supabase.storage
-        .from(PROFILE_PHOTO_BUCKET)
-        .getPublicUrl(filePath);
-
-      if (!publicUrlData?.publicUrl) {
-        throw new Error("Unable to publish profile photo URL");
-      }
-
-      setPhotoUrl(publicUrlData.publicUrl);
+      const publicUrl = await uploadProfilePhotoBlob(
+        blob,
+        CROPPED_FILE_EXT,
+        CROPPED_MIME_TYPE,
+      );
+      setPhotoUrl(publicUrl);
       setCropModalOpen(false);
       setCropImageSrc(null);
       setCroppedAreaPixels(null);
@@ -363,6 +417,7 @@ export default function ProfileEditorCard({ isDark = false }: ProfileEditorCardP
                     sizes="112px"
                     className="object-cover"
                     priority={false}
+                    unoptimized={isGifUrl(photoUrl)}
                   />
                 ) : (
                   <div className={`flex h-full w-full flex-col items-center justify-center text-xs ${mutedTextClass}`}>
@@ -502,8 +557,8 @@ export default function ProfileEditorCard({ isDark = false }: ProfileEditorCardP
             <p className={`mt-2 text-sm ${mutedTextClass}`}>
               {t("settings.profile.cropper.guide")}
             </p>
-            <div className="mt-3 h-80 w-full overflow-hidden rounded-xl bg-black/60">
-              <div className="relative h-full w-full">
+            <div className="mt-3 flex w-full justify-center">
+              <div className="relative aspect-square w-full max-w-[480px] overflow-hidden rounded-2xl bg-black/70">
                 <Cropper
                   image={cropImageSrc}
                   crop={crop}
@@ -517,7 +572,7 @@ export default function ProfileEditorCard({ isDark = false }: ProfileEditorCardP
                   showGrid
                 />
                 <div
-                  className="pointer-events-none absolute inset-10 rounded-2xl border-2 border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.55)]"
+                  className="pointer-events-none absolute inset-4 rounded-2xl border-2 border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.6)]"
                   aria-hidden="true"
                 />
               </div>
@@ -625,4 +680,30 @@ function createImage(src: string) {
     image.setAttribute("crossOrigin", "anonymous");
     image.src = src;
   });
+}
+
+function isMissingProfileCustomizedColumn(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const { message } = error as { message?: string };
+  return typeof message === "string" && message.toLowerCase().includes("profile_customized");
+}
+
+function isGifFile(file: File) {
+  const type = file.type.toLowerCase();
+  return type === "image/gif" || file.name.toLowerCase().endsWith(".gif");
+}
+
+function getFileExtension(fileName: string, fallback: string) {
+  const rawExt = fileName.split(".").pop();
+  const normalized = rawExt?.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return normalized && normalized.length > 0 ? normalized : fallback;
+}
+
+function isGifUrl(url: string | null) {
+  if (!url) return false;
+  const normalized = url.toLowerCase();
+  return normalized.includes(".gif");
 }

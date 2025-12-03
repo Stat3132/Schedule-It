@@ -13,6 +13,7 @@ import type { PostgrestError } from "@supabase/supabase-js";
 import {
   CalendarDays,
   Check,
+  ChevronLeft,
   Cog,
   Loader2,
   MessageCircle,
@@ -180,6 +181,8 @@ type GroupMessageRow = {
 type ConversationMessage =
   | (MessageRow & { kind: "dm" })
   | (GroupMessageRow & { kind: "group" });
+
+type MobileMessagingView = "list" | "chat";
 
 type AttachmentDraft = {
   id: string;
@@ -417,6 +420,9 @@ export default function EmployerMessagingPage() {
   const [preferenceMenuOpen, setPreferenceMenuOpen] = useState<"peer" | "group" | null>(null);
   const peerPreferenceMenuRef = useRef<HTMLDivElement | null>(null);
   const groupPreferenceMenuRef = useRef<HTMLDivElement | null>(null);
+  const [isMobileLayout, setIsMobileLayout] = useState(false);
+  const [mobileView, setMobileView] = useState<MobileMessagingView>("list");
+  const [infoPanelMode, setInfoPanelMode] = useState<"peer" | "group" | null>(null);
   const [incomingCounts, setIncomingCounts] = useState<Record<string, number>>(() =>
     loadUnreadCounts(EMPLOYER_SCOPE, "dm"),
   );
@@ -479,7 +485,54 @@ export default function EmployerMessagingPage() {
 
   useEffect(() => {
     setPreferenceMenuOpen(null);
+    setIsActionMenuOpen(false);
   }, [activePeer?.id, activeGroup?.id]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mediaQuery = window.matchMedia("(max-width: 1023px)");
+    const applyLayoutSideEffects = (matches: boolean) => {
+      setInfoPanelMode(null);
+      if (matches) {
+        setMobileView("chat");
+      }
+    };
+    const handleChange = (event: MediaQueryListEvent) => {
+      setIsMobileLayout(event.matches);
+      applyLayoutSideEffects(event.matches);
+    };
+    const initialMatches = mediaQuery.matches;
+    setIsMobileLayout(initialMatches);
+    applyLayoutSideEffects(initialMatches);
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleChange);
+    } else {
+      mediaQuery.addListener(handleChange);
+    }
+    return () => {
+      if (typeof mediaQuery.removeEventListener === "function") {
+        mediaQuery.removeEventListener("change", handleChange);
+      } else {
+        mediaQuery.removeListener(handleChange);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileLayout) return;
+    if (!activePeer && !activeGroup) {
+      setMobileView("list");
+    }
+  }, [activeGroup, activePeer, isMobileLayout]);
+
+  useEffect(() => {
+    if (infoPanelMode === "peer" && !activePeer) {
+      setInfoPanelMode(null);
+    }
+    if (infoPanelMode === "group" && !activeGroup) {
+      setInfoPanelMode(null);
+    }
+  }, [activeGroup, activePeer, infoPanelMode]);
 
   useEffect(() => {
     function handleOutsideClick(event: MouseEvent) {
@@ -2593,6 +2646,7 @@ export default function EmployerMessagingPage() {
   function handleSelectContact(peer: Profile) {
     setIsAddContactOpen(false);
     setAddContactSearch("");
+    setIsActionMenuOpen(false);
     setActiveGroup(null);
     setConversations((prev) => {
       const exists = prev.some((conv) => conv.peer.id === peer.id);
@@ -2602,12 +2656,20 @@ export default function EmployerMessagingPage() {
       return sortConversationsByName([...prev, { peer, lastMessage: null }]);
     });
     setActivePeer(peer);
+    setInfoPanelMode(null);
+    if (isMobileLayout) {
+      setMobileView("chat");
+    }
   }
 
   function handleSelectConversation(peer: Profile) {
     setIsActionMenuOpen(false);
     setActiveGroup(null);
     setActivePeer(peer);
+    setInfoPanelMode(null);
+    if (isMobileLayout) {
+      setMobileView("chat");
+    }
   }
 
   function handleSelectGroup(group: GroupChat) {
@@ -2616,6 +2678,10 @@ export default function EmployerMessagingPage() {
     setIsAddContactOpen(false);
     setAddContactSearch("");
     setIsActionMenuOpen(false);
+    setInfoPanelMode(null);
+    if (isMobileLayout) {
+      setMobileView("chat");
+    }
   }
 
   function toggleGroupDraftMember(userId: UUID) {
@@ -2626,6 +2692,7 @@ export default function EmployerMessagingPage() {
   }
 
   function toggleGroupBuilder() {
+    setInfoPanelMode(null);
     setIsGroupBuilderOpen((prev) => {
       if (prev) {
         setGroupDraftMembers({});
@@ -3232,11 +3299,37 @@ export default function EmployerMessagingPage() {
     );
   }
 
+  const showBackButton = isMobileLayout && mobileView === "chat";
+  const sidebarClassName = [
+    "relative flex flex-col border-r bg-card/60 backdrop-blur-sm transition-transform duration-300 ease-in-out",
+    isMobileLayout ? "absolute inset-0 z-30 w-full" : "lg:static lg:w-64",
+    isMobileLayout && mobileView === "chat" ? "-translate-x-full" : "translate-x-0",
+  ].join(" ");
+  const chatPanelClassName = [
+    "relative flex min-h-0 min-w-0 flex-1 flex-col transition-transform duration-300 ease-in-out",
+    isMobileLayout ? "absolute inset-0 z-20 w-full bg-background" : "lg:static",
+    isMobileLayout && mobileView === "list" ? "translate-x-full" : "translate-x-0",
+  ].join(" ");
+  const showPeerInfo = infoPanelMode === "peer" && Boolean(activePeer);
+  const showGroupInfo = infoPanelMode === "group" && Boolean(activeGroup);
+  const closeInfoPanel = () => setInfoPanelMode(null);
+  const infoPanelTitle = showPeerInfo
+    ? activePeerResolvedName || activePeer?.email || t("employee.messages.conversationFallback")
+    : showGroupInfo
+      ? activeGroup?.name || t("employee.messages.groupsHeading")
+      : "";
+  const infoPanelSubtitle = showPeerInfo
+    ? t("employee.messages.conversation.title")
+    : showGroupInfo
+      ? t("employee.messages.groups.detailsTitle")
+      : "";
+
   return (
     <>
       <div className="flex h-[calc(100vh-4rem)] min-h-[600px] w-full bg-background gap-4 overflow-hidden lg:gap-12">
+      <div className="relative flex h-full flex-1 overflow-hidden">
       {/* Left sidebar */}
-      <aside className="relative flex w-64 flex-col border-r bg-card/60 backdrop-blur-sm">
+      <aside className={sidebarClassName}>
         <div className="flex items-center gap-2 border-b px-4 py-3">
           <div className="relative">
             <MessageCircle className="h-5 w-5 text-primary" />
@@ -3529,180 +3622,373 @@ export default function EmployerMessagingPage() {
           </div>
         </div>
       </aside>
+      {(showPeerInfo || showGroupInfo) && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 px-4 py-6 sm:items-center"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeInfoPanel();
+            }
+          }}
+        >
+          <div className="w-full max-w-md rounded-2xl border border-border/70 bg-card p-5 text-sm shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-foreground">{infoPanelTitle}</h2>
+                {infoPanelSubtitle ? (
+                  <p className="text-xs text-muted-foreground">{infoPanelSubtitle}</p>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={closeInfoPanel}
+                aria-label={t("shared.buttons.close")}
+                className="rounded-full border border-border/60 p-2 text-muted-foreground transition hover:bg-muted"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
 
-      {/* Main chat panel */}
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between border-b px-4 py-3">
-          <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold">{headerTitle}</h2>
-            {headerSubtitle ? (
-              <p className="truncate text-xs text-muted-foreground">{headerSubtitle}</p>
+            {infoPanelMode === "peer" && activePeer ? (
+              <div className="mt-4 space-y-4">
+                <div className="flex items-center gap-3">
+                  <AvatarCircle
+                    profile={activePeer}
+                    sizeClass="h-14 w-14"
+                    className="text-base font-semibold"
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate text-base font-semibold">
+                      {activePeerResolvedName || activePeer.email || "Conversation"}
+                    </p>
+                    <p className="break-words text-xs text-muted-foreground">
+                      {activePeer.email || "No email on file"}
+                    </p>
+                  </div>
+                </div>
+                <div className="space-y-2 text-xs text-muted-foreground">
+                  {activePeerRoleNames.length ? (
+                    <p>{`Roles: ${activePeerRoleNames.join(", ")}`}</p>
+                  ) : null}
+                  {activePeerLocationName ? (
+                    <p>{`Location: ${activePeerLocationName}`}</p>
+                  ) : null}
+                  <p className="leading-snug text-foreground">
+                    {activePeerBio ?? "Short bio or notes about this coworker can go here."}
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={handleTogglePeerMute}
+                    disabled={peerMuteBusy}
+                    className="w-full rounded-lg border border-border/70 bg-background px-3 py-2 text-left font-semibold transition hover:border-primary/40 hover:bg-primary/5 disabled:opacity-60"
+                  >
+                    {activePeerMuted
+                      ? t("employee.messages.preferences.unsilenceButton")
+                      : t("employee.messages.preferences.silenceButton")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleTogglePeerBlock}
+                    disabled={peerBlockBusy}
+                    className="w-full rounded-lg border border-rose-200 bg-rose-50/60 px-3 py-2 text-left font-semibold text-rose-700 transition hover:border-rose-300 disabled:opacity-60"
+                  >
+                    {activePeerBlockedByMe
+                      ? t("employee.messages.preferences.unblockButton")
+                      : t("employee.messages.preferences.blockButton")}
+                  </button>
+                  {activePeerBlocked && (
+                    <p className="text-[11px] text-amber-600">
+                      {activePeerBlockedByMe
+                        ? t("employee.messages.preferences.blockedByYouNotice", {
+                            name: resolvedPeerName,
+                          })
+                        : t("employee.messages.preferences.blockedYouNotice", {
+                            name: resolvedPeerName,
+                          })}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ) : null}
+
+            {infoPanelMode === "group" && activeGroup ? (
+              <div className="mt-4 space-y-3 text-xs text-muted-foreground">
+                <p className="text-sm font-semibold text-foreground">
+                  {t("employee.messages.groups.detailsMembers", {
+                    count: activeGroup.memberIds.length,
+                  })}
+                </p>
+                <ul className="max-h-[40vh] space-y-1 overflow-y-auto pr-1">
+                  {activeGroup.memberIds.map((memberId) => {
+                    const profile = profileById.get(memberId);
+                    const label =
+                      memberId === currentUserId
+                        ? t("employee.messages.youLabel")
+                        : profileDisplayName(
+                            profile,
+                            t("employee.messages.groups.unknownMember"),
+                          ) || t("employee.messages.groups.unknownMember");
+                    return (
+                      <li key={memberId} className="flex items-center justify-between gap-2 rounded-md border border-border/40 bg-card/50 px-2 py-1.5">
+                        <span className="truncate text-foreground">{label}</span>
+                        {memberId === currentUserId ? (
+                          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                            {t("shared.labels.you")}
+                          </span>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+                <div className="space-y-2 text-sm">
+                  <button
+                    type="button"
+                    onClick={handleToggleGroupMute}
+                    disabled={groupMuteBusy}
+                    className="w-full rounded-lg border border-border/70 bg-background px-3 py-2 text-left font-semibold transition hover:border-primary/40 hover:bg-primary/5 disabled:opacity-60"
+                  >
+                    {activeGroupMuted
+                      ? t("employee.messages.preferences.unsilenceGroupButton")
+                      : t("employee.messages.preferences.silenceGroupButton")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleLeaveGroup}
+                    disabled={groupLeaveBusy}
+                    className="w-full rounded-lg border border-border/70 bg-background px-3 py-2 text-left font-semibold transition hover:border-primary/40 hover:bg-primary/5 disabled:opacity-60"
+                  >
+                    {t("employee.messages.groups.actions.leave")}
+                  </button>
+                  {activeGroupCreatedByCurrentUser && (
+                    <button
+                      type="button"
+                      onClick={handleDeleteGroup}
+                      disabled={groupDeleteBusy}
+                      className="w-full rounded-lg border border-rose-200 bg-rose-50/60 px-3 py-2 text-left font-semibold text-rose-700 transition hover:border-rose-300 disabled:opacity-60"
+                    >
+                      {t("employee.messages.groups.actions.delete")}
+                    </button>
+                  )}
+                </div>
+              </div>
             ) : null}
           </div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="h-2 w-2 rounded-full bg-emerald-500" />
-            <span>Online</span>
-          </div>
-        </header>
+        </div>
+      )}
 
-        <div
-          ref={messageContainerRef}
-          className="flex-1 min-h-0 overflow-y-auto bg-muted/40 px-4 py-3"
-          onScroll={handleMessageScroll}
-        >
-          {!activePeer && !activeGroup && (
-            <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted-foreground">
-              <MessageCircle className="mb-2 h-8 w-8 text-muted-foreground" />
-              <p>Select a coworker or group on the left to start chatting.</p>
-            </div>
-          )}
-
-          {(activePeer || activeGroup) && (
-            <div className="flex h-full flex-col gap-2">
-              {!initialMessagesLoaded && (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  <span>Loading messages…</span>
-                </div>
-              )}
-
-              {initialMessagesLoaded && displayedMessages.length === 0 && (
-                <div className="mt-4 text-xs text-muted-foreground">
-                  {activeGroup
-                    ? "No messages yet. Kick things off for everyone."
-                    : "No messages yet. Say hi to start the conversation."}
-                </div>
-              )}
-
-              {activePeer && activePeerBlocked && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                  {activePeerBlockedByMe
-                    ? t("employee.messages.preferences.blockedByYouNotice", {
-                        name: resolvedPeerName,
-                      })
-                    : t("employee.messages.preferences.blockedYouNotice", {
-                        name: resolvedPeerName,
-                      })}
-                </div>
-              )}
-
-              {displayedMessages.map((msg) => {
-                const isMine = msg.sender_id === currentUserId;
-                const isGroupMessage = msg.kind === "group";
-                const senderProfile = profileById.get(msg.sender_id);
-                const senderLabel = !isMine && isGroupMessage
-                  ? profileDisplayName(senderProfile, senderProfile?.email ?? "Coworker") || "Coworker"
-                  : null;
-                const scheduleCard = parseScheduleCard(msg.content);
-                const forwardCard = parseForwardCard(msg.content);
-                const cardStatusOverride = forwardCard
-                  ? requestStatusOverrides[forwardCard.requestId] ??
-                    requestStatusMap[forwardCard.requestId]
-                  : undefined;
-                const bubbleToneClass = scheduleCard || forwardCard
-                  ? "bg-card text-foreground border border-border/60"
-                  : isMine
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-card";
-                const timeLabel = new Date(msg.created_at).toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                });
-                const statusLabel =
-                  isMine && msg.kind === "dm"
-                    ? msg.read_at
-                      ? t("employer.messages.status.read")
-                      : msg.delivered_at
-                        ? t("employer.messages.status.delivered")
-                        : t("employer.messages.status.sending")
-                    : null;
-                const metaRowClass = [
-                  "mt-1 flex items-center gap-2 text-[10px] text-muted-foreground/80",
-                  isMine ? "justify-end" : "justify-start",
-                ].join(" ");
-                return (
-                  <div
-                    key={`${msg.kind}-${msg.id}`}
-                    className={[
-                      "flex w-full items-end gap-2",
-                      isMine ? "justify-end" : "justify-start",
-                    ].join(" ")}
+      {}
+      <main className={chatPanelClassName}>
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div
+            ref={messageContainerRef}
+            className="flex-1 overflow-y-auto bg-muted/40"
+            onScroll={handleMessageScroll}
+          >
+            <header className="sticky top-0 z-20 flex items-center justify-between border-b bg-background/95 px-3 py-1.5 text-sm shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:px-4 sm:py-2">
+              <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
+                {showBackButton ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeInfoPanel();
+                      setMobileView("list");
+                    }}
+                    className="rounded-full border border-border/60 p-1.5 text-muted-foreground transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    aria-label={t("shared.buttons.back")}
                   >
-                    {!isMine && (
-                      <AvatarCircle profile={senderProfile ?? null} sizeClass="h-8 w-8 shrink-0" />
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                ) : null}
+                {(activePeer || activeGroup) && (
+                  <button
+                    type="button"
+                    onClick={() => setInfoPanelMode(activePeer ? "peer" : "group")}
+                    className="rounded-full border border-border/60 p-1 text-muted-foreground transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    aria-label={activePeer ? "Open profile" : "Open group"}
+                  >
+                    {activePeer ? (
+                      <AvatarCircle
+                        profile={activePeer}
+                        sizeClass="h-9 w-9 sm:h-10 sm:w-10"
+                        className="text-sm font-semibold"
+                      />
+                    ) : (
+                      <div className="flex h-10 w-10 items-center justify-center">
+                        <Users className="h-5 w-5" />
+                      </div>
                     )}
-                    <div
-                      className={[
-                        "max-w-[92%] rounded-2xl px-3 py-2 text-xs shadow-sm",
-                        isMine ? "rounded-br-sm" : "rounded-bl-sm",
-                        bubbleToneClass,
-                      ].join(" ")}
-                    >
-                      {senderLabel ? (
-                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                          {senderLabel}
-                        </p>
-                      ) : null}
-                      {msg.attachment_url ? (
-                        <AttachmentPreview
-                          url={msg.attachment_url}
-                          name={msg.attachment_name}
-                          mime={msg.attachment_mime ?? undefined}
-                          size={msg.attachment_size ?? undefined}
-                          downloadLabel={t(
-                            "employer.messages.attachments.download",
+                  </button>
+                )}
+                <div className="min-w-0 leading-tight">
+                  <h2 className="truncate text-[13px] font-semibold">{headerTitle}</h2>
+                  {headerSubtitle ? (
+                    <p className="truncate text-[11px] text-muted-foreground">{headerSubtitle}</p>
+                  ) : null}
+                </div>
+              </div>
+              <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                <span>Online</span>
+              </div>
+            </header>
+
+            <div className="px-3 py-3 sm:px-4">
+              {!activePeer && !activeGroup && (
+                <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted-foreground">
+                  <MessageCircle className="mb-2 h-8 w-8 text-muted-foreground" />
+                  <p>Select a coworker or group on the left to start chatting.</p>
+                </div>
+              )}
+
+              {(activePeer || activeGroup) && (
+                <div className="flex h-full flex-col gap-2">
+                  {!initialMessagesLoaded && (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      <span>Loading messages…</span>
+                    </div>
+                  )}
+
+                  {initialMessagesLoaded && displayedMessages.length === 0 && (
+                    <div className="mt-4 text-xs text-muted-foreground">
+                      {activeGroup
+                        ? "No messages yet. Kick things off for everyone."
+                        : "No messages yet. Say hi to start the conversation."}
+                    </div>
+                  )}
+
+                  {activePeer && activePeerBlocked && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                      {activePeerBlockedByMe
+                        ? t("employee.messages.preferences.blockedByYouNotice", {
+                            name: resolvedPeerName,
+                          })
+                        : t("employee.messages.preferences.blockedYouNotice", {
+                            name: resolvedPeerName,
+                          })}
+                    </div>
+                  )}
+
+                  {displayedMessages.map((msg) => {
+                    const isMine = msg.sender_id === currentUserId;
+                    const isGroupMessage = msg.kind === "group";
+                    const senderProfile = profileById.get(msg.sender_id);
+                    const senderLabel = !isMine && isGroupMessage
+                      ? profileDisplayName(senderProfile, senderProfile?.email ?? "Coworker") || "Coworker"
+                      : null;
+                    const scheduleCard = parseScheduleCard(msg.content);
+                    const forwardCard = parseForwardCard(msg.content);
+                    const cardStatusOverride = forwardCard
+                      ? requestStatusOverrides[forwardCard.requestId] ??
+                        requestStatusMap[forwardCard.requestId]
+                      : undefined;
+                    const bubbleToneClass = scheduleCard || forwardCard
+                      ? "bg-card text-foreground border border-border/60"
+                      : isMine
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-card";
+                    const timeLabel = new Date(msg.created_at).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    });
+                    const statusLabel =
+                      isMine && msg.kind === "dm"
+                        ? msg.read_at
+                          ? t("employer.messages.status.read")
+                          : msg.delivered_at
+                            ? t("employer.messages.status.delivered")
+                            : t("employer.messages.status.sending")
+                        : null;
+                    const metaRowClass = [
+                      "mt-1 flex items-center gap-2 text-[10px] text-muted-foreground/80",
+                      isMine ? "justify-end" : "justify-start",
+                    ].join(" ");
+                    return (
+                      <div
+                        key={`${msg.kind}-${msg.id}`}
+                        className={[
+                          "flex w-full items-end gap-2",
+                          isMine ? "justify-end" : "justify-start",
+                        ].join(" ")}
+                      >
+                        {!isMine && (
+                          <AvatarCircle profile={senderProfile ?? null} sizeClass="h-8 w-8 shrink-0" />
+                        )}
+                        <div
+                          className={[
+                            "max-w-[92%] rounded-2xl px-3 py-2 text-xs shadow-sm",
+                            isMine ? "rounded-br-sm" : "rounded-bl-sm",
+                            bubbleToneClass,
+                          ].join(" ")}
+                        >
+                          {senderLabel ? (
+                            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                              {senderLabel}
+                            </p>
+                          ) : null}
+                          {msg.attachment_url ? (
+                            <AttachmentPreview
+                              url={msg.attachment_url}
+                              name={msg.attachment_name}
+                              mime={msg.attachment_mime ?? undefined}
+                              size={msg.attachment_size ?? undefined}
+                              downloadLabel={t(
+                                "employer.messages.attachments.download",
+                              )}
+                            />
+                          ) : null}
+                          {scheduleCard ? (
+                            <ScheduleCardBlock
+                              payload={scheduleCard}
+                              onModify={() => handleScheduleModifyClick(scheduleCard)}
+                            />
+                          ) : forwardCard ? (
+                            <ForwardRequestCard
+                              payload={forwardCard}
+                              statusOverride={cardStatusOverride}
+                              onApprove={() => openForwardAction(forwardCard, "approve")}
+                              onDeny={() => openForwardAction(forwardCard, "deny")}
+                            />
+                          ) : (
+                            <p className="whitespace-pre-wrap break-words">
+                              {msg.content}
+                            </p>
                           )}
-                        />
-                      ) : null}
-                      {scheduleCard ? (
-                        <ScheduleCardBlock
-                          payload={scheduleCard}
-                          onModify={() => handleScheduleModifyClick(scheduleCard)}
-                        />
-                      ) : forwardCard ? (
-                        <ForwardRequestCard
-                          payload={forwardCard}
-                          statusOverride={cardStatusOverride}
-                          onApprove={() => openForwardAction(forwardCard, "approve")}
-                          onDeny={() => openForwardAction(forwardCard, "deny")}
-                        />
-                      ) : (
-                        <p className="whitespace-pre-wrap break-words">
-                          {msg.content}
-                        </p>
-                      )}
-                      <div className={metaRowClass}>
-                        {statusLabel ? (
-                          <span className="font-semibold">{statusLabel}</span>
-                        ) : null}
-                        <span>{timeLabel}</span>
+                          <div className={metaRowClass}>
+                            {statusLabel ? (
+                              <span className="font-semibold">{statusLabel}</span>
+                            ) : null}
+                            <span>{timeLabel}</span>
+                          </div>
+                        </div>
+                        {isMine && (
+                          <AvatarCircle profile={senderProfile ?? null} sizeClass="h-8 w-8 shrink-0" />
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {isPeerTyping && activePeer && (
+                    <div className="flex w-full justify-start">
+                      <div className="max-w-[65%] rounded-2xl rounded-bl-sm bg-card px-3 py-2 text-xs shadow-sm">
+                        <span className="inline-flex items-center gap-1 text-muted-foreground">
+                          <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:-0.2s]" />
+                          <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:-0.1s]" />
+                          <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce" />
+                        </span>
                       </div>
                     </div>
-                    {isMine && (
-                      <AvatarCircle profile={senderProfile ?? null} sizeClass="h-8 w-8 shrink-0" />
-                    )}
-                  </div>
-                );
-              })}
+                  )}
 
-              {isPeerTyping && activePeer && (
-                <div className="flex w-full justify-start">
-                  <div className="max-w-[65%] rounded-2xl rounded-bl-sm bg-card px-3 py-2 text-xs shadow-sm">
-                    <span className="inline-flex items-center gap-1 text-muted-foreground">
-                      <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:-0.2s]" />
-                      <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:-0.1s]" />
-                      <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce" />
-                    </span>
-                  </div>
+                  <div ref={messageEndRef} />
                 </div>
               )}
-
-              <div ref={messageEndRef} />
             </div>
-          )}
-        </div>
+          </div>
 
-        <footer className="border-t bg-background/80 px-4 py-3">
+          <footer className="border-t bg-background/80 px-3 pt-2 pb-[calc(env(safe-area-inset-bottom)+0.15rem)] sm:px-4 sm:pt-3 sm:pb-[calc(env(safe-area-inset-bottom)+0.5rem)]">
           {pendingAttachment && (
             <div className="mb-2 flex items-center gap-3 rounded-lg border border-border/70 bg-muted/40 px-3 py-2 text-xs">
               {pendingAttachment.previewUrl ? (
@@ -3735,7 +4021,7 @@ export default function EmployerMessagingPage() {
 
           <form
             onSubmit={handleSend}
-            className="flex items-end gap-2 rounded-xl border border-gray-200 bg-white dark:bg-slate-800 px-3 py-3 shadow-sm"
+            className="flex items-end gap-2 rounded-xl border border-gray-200 bg-white dark:bg-slate-800 px-3 py-1.5 sm:py-2.5 shadow-sm"
           >
             <textarea
               className="max-h-32 min-h-[40px] flex-1 resize-none bg-white dark:bg-slate-900 text-sm outline-none placeholder:text-xs placeholder:text-muted-foreground border border-gray-200 dark:border-slate-700 rounded-md px-3 py-2"
@@ -3779,7 +4065,9 @@ export default function EmployerMessagingPage() {
             <p className="mt-2 text-xs text-destructive">{attachmentError}</p>
           )}
         </footer>
+      </div>
       </main>
+      </div>
 
       {/* Right column */}
       <aside className="hidden lg:flex lg:flex-col lg:w-64 border-l bg-card/40 px-4 py-4">

@@ -169,6 +169,26 @@ function normalizeAvailabilityPattern(raw: unknown): AvailabilityPattern {
   return out as AvailabilityPattern;
 }
 
+function describeCellStatus(cell: DayCell): string | null {
+  const parts: string[] = [];
+  if (cell.timeOffStatus) {
+    parts.push(
+      cell.timeOffStatus === "pending"
+        ? "Time off requested (pending)"
+        : "Time off approved",
+    );
+  }
+  if (cell.unavailable) {
+    parts.push("Marked unavailable");
+  }
+  if (cell.isDropPending) {
+    parts.push("Drop requested (pending review)");
+  } else if (cell.isPickedUp) {
+    parts.push("Picked up shift");
+  }
+  return parts.length ? parts.join(" • ") : null;
+}
+
 /* ---------- Component ---------- */
 export default function EmployerHomePage() {
   const supabase = useRef(createClientComponentClient()).current;
@@ -815,172 +835,204 @@ export default function EmployerHomePage() {
 
   /* ---------- Main content ---------- */
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold text-foreground">Weekly Schedule</h1>
-        <p className="text-foreground/70 mt-1">
-          {bizName} · {selectedLoc === "ALL" ? "All locations" : "One location"}
-        </p>
-        <p className="text-foreground/70">{weekLabel}</p>
-        {errorMsg && <p className="text-sm text-red-600 dark:text-red-400 mt-2">{errorMsg}</p>}
-      </div>
-
-      {/* Scope controls */}
-      <div className="mb-6 flex flex-wrap gap-3 items-center">
-          <div className="space-y-1">
-          <div className="text-xs font-medium text-foreground/60 uppercase tracking-wide">
-            Business
-          </div>
-          <select
-            className="border rounded-md px-2 py-1 text-sm bg-background text-foreground"
-            value={selectedBiz ?? ""}
-            onChange={(e) => setSelectedBiz(e.target.value || null)}
-          >
-            {businesses.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name ?? b.id}
-              </option>
-            ))}
-          </select>
+    <div className="min-h-screen bg-muted/50 pb-12 overflow-x-hidden">
+      <main className="w-full max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div className="mb-6 text-center sm:text-left">
+          <h1 className="text-3xl font-bold text-foreground">Weekly Schedule</h1>
+          <p className="text-foreground/70 mt-1">
+            {bizName} · {selectedLoc === "ALL" ? "All locations" : "One location"}
+          </p>
+          <p className="text-sm text-foreground/60">{weekLabel}</p>
+          {errorMsg && (
+            <p className="text-sm text-red-600 dark:text-red-400 mt-2">
+              {errorMsg}
+            </p>
+          )}
         </div>
 
-          <div className="space-y-1">
-          <div className="text-xs font-medium text-foreground/60 uppercase tracking-wide">
-            Location
-          </div>
-          <select
-            className="border rounded-md px-2 py-1 text-sm bg-background text-foreground"
-            value={selectedLoc}
-            onChange={(e) =>
-              setSelectedLoc((e.target.value as string) || "ALL")
-            }
-            disabled={!selectedBiz}
-          >
-            <option value="ALL">All locations</option>
-            {locations.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {/* Full-width schedule card */}
-      <div className="bg-background rounded-xl shadow-sm border border-border w-full">
-        {loading ? (
-          <div className="p-6">Loading…</div>
-        ) : (
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-border bg-background">
-                <th className="px-6 py-4 text-left">
-                  <div className="text-sm font-semibold text-foreground">
-                    Staff Member
-                  </div>
-                  <div className="text-xs text-foreground/60">
-                    {selectedLoc === "ALL"
-                      ? "Business scope"
-                      : "Business + Location scope"}
-                  </div>
-                </th>
-                {days.map((d) => (
-                  <th
-                    key={d.label}
-                    className="px-3 py-4 text-center min-w-[110px]"
-                  >
-                    <div className="text-sm font-semibold text-foreground">
-                      {d.label}
-                    </div>
-                    <div className="text-xs text-foreground/60 mt-1">
-                      {d.date}
-                    </div>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-
-            <tbody>
-              {grid.map((row) => (
-                <tr
-                  key={row.userId}
-                  className="border-b border-border hover:bg-background/50"
-                >
-                  <td className="px-6 py-4">
-                    <div className="text-sm font-semibold text-foreground">
-                      {row.name || row.userId}
-                    </div>
-                  </td>
-                  {row.byDay.map((cell, idx) => (
-                    <td key={idx} className="px-3 py-4 text-center">
-                        {cell.start ? (
-                        <div className="border rounded-lg p-2 border-border bg-background">
-                          <div className="text-xs font-semibold text-foreground">
-                            {cell.start}
-                          </div>
-                          <div className="text-xs text-foreground">{cell.end}</div>
-                          {(cell.timeOffStatus ||
-                            cell.unavailable ||
-                            cell.isDropPending ||
-                            cell.isPickedUp) && (
-                            <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
-                              {(() => {
-                                const parts: string[] = [];
-                                if (cell.timeOffStatus) {
-                                  parts.push(
-                                    cell.timeOffStatus === "pending"
-                                      ? "Time off requested (pending)"
-                                      : "Time off approved",
-                                  );
-                                }
-                                if (cell.unavailable) {
-                                  parts.push("Marked unavailable");
-                                }
-                                if (cell.isDropPending) {
-                                  parts.push("Drop requested (pending review)");
-                                } else if (cell.isPickedUp) {
-                                  parts.push("Picked up shift");
-                                }
-                                return parts.join(" • ");
-                              })()}
-                            </div>
-                          )}
-                        </div>
-                      ) : cell.timeOffStatus ? (
-                        <div className="border border-amber-200 bg-amber-50 rounded-lg p-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-900 dark:text-amber-200">
-                          {cell.timeOffStatus === "pending"
-                            ? "Time off requested (pending)"
-                            : "Time off approved"}
-                        </div>
-                      ) : cell.unavailable ? (
-                        <div className="border border-border bg-background rounded-lg p-2 text-xs text-foreground/70">
-                          Unavailable
-                        </div>
-                      ) : (
-                        <div className="text-xs text-foreground/60 py-2">Off</div>
-                      )}
-                    </td>
-                  ))}
-                </tr>
+        {/* Scope controls */}
+        <div className="mb-6 flex flex-col sm:flex-row sm:flex-wrap gap-4 items-stretch sm:items-end w-full max-w-3xl mx-auto">
+          <div className="flex-1 min-w-[220px] space-y-1">
+            <div className="text-xs font-medium text-foreground/60 uppercase tracking-wide">
+              Business
+            </div>
+            <select
+              className="border rounded-lg px-3 py-2 text-sm bg-background text-foreground w-full"
+              value={selectedBiz ?? ""}
+              onChange={(e) => setSelectedBiz(e.target.value || null)}
+            >
+              {businesses.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name ?? b.id}
+                </option>
               ))}
+            </select>
+          </div>
 
-              {grid.length === 0 && (
-                <tr>
-                  <td
-                    className="px-6 py-8 text-sm text-foreground/60"
-                    colSpan={1 + days.length}
-                  >
+          <div className="flex-1 min-w-[220px] space-y-1">
+            <div className="text-xs font-medium text-foreground/60 uppercase tracking-wide">
+              Location
+            </div>
+            <select
+              className="border rounded-lg px-3 py-2 text-sm bg-background text-foreground w-full"
+              value={selectedLoc}
+              onChange={(e) => setSelectedLoc((e.target.value as string) || "ALL")}
+              disabled={!selectedBiz}
+            >
+              <option value="ALL">All locations</option>
+              {locations.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Full-width schedule card */}
+        <div className="bg-background rounded-xl shadow-sm border border-border w-full">
+          <div className="flex flex-col gap-1 border-b border-border px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-foreground">Staffing overview</p>
+              <p className="text-xs text-muted-foreground">
+                {selectedLoc === "ALL" ? "Business scope" : "Business + Location scope"}
+              </p>
+            </div>
+            <div className="text-xs text-muted-foreground sm:text-right">{weekLabel}</div>
+          </div>
+          {loading ? (
+            <div className="p-6 text-sm text-muted-foreground text-center">Loading…</div>
+          ) : (
+            <>
+              <div className="hidden sm:block overflow-x-auto">
+                <table className="w-full min-w-[720px]">
+                  <thead>
+                    <tr className="border-b border-border bg-background">
+                      <th className="px-6 py-4 text-left align-bottom">
+                        <div className="text-sm font-semibold text-foreground">Staff Member</div>
+                        <div className="text-xs text-foreground/60">
+                          {selectedLoc === "ALL" ? "Business scope" : "Business + Location scope"}
+                        </div>
+                      </th>
+                      {days.map((d) => (
+                        <th key={d.label} className="px-3 py-4 text-center min-w-[110px]">
+                          <div className="text-sm font-semibold text-foreground">{d.label}</div>
+                          <div className="text-xs text-foreground/60 mt-1">{d.date}</div>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {grid.map((row) => (
+                      <tr key={row.userId} className="border-b border-border hover:bg-muted/40">
+                        <td className="px-6 py-4">
+                          <div className="text-sm font-semibold text-foreground">{row.name || row.userId}</div>
+                        </td>
+                        {row.byDay.map((cell, idx) => {
+                          const status = describeCellStatus(cell);
+                          return (
+                            <td key={idx} className="px-3 py-4 text-center align-top">
+                              {cell.start ? (
+                                <div className="border rounded-lg p-2 border-border bg-background">
+                                  <div className="text-xs font-semibold text-foreground">{cell.start}</div>
+                                  <div className="text-xs text-foreground">{cell.end}</div>
+                                  {status && (
+                                    <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">{status}</div>
+                                  )}
+                                </div>
+                              ) : cell.timeOffStatus ? (
+                                <div className="border border-amber-200 bg-amber-50 rounded-lg p-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-900 dark:text-amber-200">
+                                  {cell.timeOffStatus === "pending"
+                                    ? "Time off requested (pending)"
+                                    : "Time off approved"}
+                                </div>
+                              ) : cell.unavailable ? (
+                                <div className="border border-border bg-background rounded-lg p-2 text-xs text-foreground/70">
+                                  Unavailable
+                                </div>
+                              ) : (
+                                <div className="text-xs text-foreground/60 py-2">Off</div>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+
+                    {grid.length === 0 && (
+                      <tr>
+                        <td className="px-6 py-8 text-sm text-foreground/60" colSpan={1 + days.length}>
+                          No employees or no shifts for this week and scope.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="sm:hidden">
+                {grid.length === 0 ? (
+                  <div className="px-4 py-6 text-sm text-foreground/60 text-center">
                     No employees or no shifts for this week and scope.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        )}
-      </div>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-border">
+                    {grid.map((row) => (
+                      <div key={row.userId} className="py-3">
+                        <div className="px-4">
+                          <div className="text-base font-semibold text-foreground">{row.name || row.userId}</div>
+                          <p className="text-xs text-muted-foreground">
+                            {selectedLoc === "ALL" ? "Business scope" : "Business + Location scope"}
+                          </p>
+                        </div>
+                        <div className="mt-3 divide-y divide-border">
+                          {row.byDay.map((cell, idx) => {
+                            const dayMeta = days[idx];
+                            const status = describeCellStatus(cell);
+                            return (
+                              <div key={`${row.userId}-${idx}`} className="flex items-start justify-between gap-4 px-4 py-3">
+                                <div>
+                                  <div className="text-sm font-semibold text-foreground">{dayMeta?.label ?? DAY_KEYS[idx]}</div>
+                                  <div className="text-xs text-muted-foreground">{dayMeta?.date ?? ""}</div>
+                                </div>
+                                <div className="text-right text-xs text-foreground max-w-[55%]">
+                                  {cell.start ? (
+                                    <>
+                                      <div className="font-semibold text-foreground">{cell.start}</div>
+                                      <div className="text-foreground/70">{cell.end}</div>
+                                    </>
+                                  ) : cell.timeOffStatus ? (
+                                    <div className="text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+                                      {cell.timeOffStatus === "pending"
+                                        ? "Time off requested"
+                                        : "Time off approved"}
+                                    </div>
+                                  ) : cell.unavailable ? (
+                                    <div className="text-foreground/70">Unavailable</div>
+                                  ) : (
+                                    <div className="text-foreground/60">Off</div>
+                                  )}
+                                  {status && (
+                                    <div className="mt-1 text-[11px] text-muted-foreground">{status}</div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </main>
 
       {/* Announcement popup (initial only) */}
-        {announcementToShow && (
+      {announcementToShow && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 dark:bg-black/60">
           <div className="bg-background rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
             <div className="flex items-start justify-between gap-3">

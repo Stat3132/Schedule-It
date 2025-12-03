@@ -6,6 +6,7 @@ import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { createAnnouncement } from "../../../lib/announcements";
 import { useI18n } from "../../../lib/i18n";
 import type { User } from "@supabase/supabase-js";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 /* ---------- Helpers ---------- */
 
@@ -129,6 +130,7 @@ export default function EmployeeSchedulePage() {
   const [myDropped, setMyDropped] = useState<MyDroppedAssignment[]>([]);
   const [myPickupRequests, setMyPickupRequests] = useState<MyPickupRequest[]>([]);
   const [weekShifts, setWeekShifts] = useState<WeekShift[]>([]);
+  const [mobileDayPointer, setMobileDayPointer] = useState(0);
 
   const [pickupModalOpen, setPickupModalOpen] = useState(false);
   const [selectedAssignment, setSelectedAssignment] =
@@ -440,6 +442,78 @@ export default function EmployeeSchedulePage() {
 
   const myId = user?.id ?? null;
 
+  const dayShifts = useMemo<WeekShift[][]>(() => {
+    if (!myId) return weekDays.map(() => []);
+    return weekDays.map((day) => {
+      const matches = weekShifts
+        .filter((s) => {
+          const hasMe = s.assignments.some(
+            (a) => getAssignmentUserId(a) === myId,
+          );
+          if (!hasMe) return false;
+          return toYmd(s.start_ts) === day.ymd;
+        })
+        .sort(
+          (a, b) =>
+            new Date(a.start_ts).getTime() - new Date(b.start_ts).getTime(),
+        );
+      return matches;
+    });
+  }, [weekDays, weekShifts, myId]);
+
+  const mobileOrderedDayIndices = useMemo(() => {
+    if (weekDays.length === 0) return [] as number[];
+    const meta = weekDays.map((_, idx) => {
+      const shifts = dayShifts[idx] ?? [];
+      const earliest = shifts.length
+        ? new Date(shifts[0].start_ts).getTime()
+        : Number.POSITIVE_INFINITY;
+      return { idx, earliest };
+    });
+    meta.sort((a, b) => {
+      if (a.earliest === b.earliest) return a.idx - b.idx;
+      return a.earliest - b.earliest;
+    });
+    return meta.map((m) => m.idx);
+  }, [dayShifts, weekDays]);
+
+  const mobileOrderKey = mobileOrderedDayIndices.join("-");
+
+  useEffect(() => {
+    setMobileDayPointer(0);
+  }, [mobileOrderKey]);
+
+  const dayOrderLookup = useMemo(() => {
+    const lookup: Record<number, number> = {};
+    mobileOrderedDayIndices.forEach((dayIdx, order) => {
+      lookup[dayIdx] = order;
+    });
+    return lookup;
+  }, [mobileOrderedDayIndices]);
+
+  const totalMobileDays = mobileOrderedDayIndices.length || weekDays.length;
+  const currentDayIndex =
+    mobileOrderedDayIndices[mobileDayPointer] ?? mobileOrderedDayIndices[0] ?? 0;
+  const currentDayMeta = weekDays[currentDayIndex];
+  const currentDayShifts = dayShifts[currentDayIndex] ?? [];
+
+  const goToNextMobileDay = () => {
+    if (!totalMobileDays) return;
+    setMobileDayPointer((prev) => (prev + 1) % totalMobileDays);
+  };
+
+  const goToPrevMobileDay = () => {
+    if (!totalMobileDays) return;
+    setMobileDayPointer((prev) =>
+      (prev - 1 + totalMobileDays) % totalMobileDays,
+    );
+  };
+
+  const handleSelectMobileDay = (indexedDay: number) => {
+    const orderPos = dayOrderLookup[indexedDay];
+    if (orderPos !== undefined) setMobileDayPointer(orderPos);
+  };
+
   const weekRangeLabel = useMemo(() => {
     if (weekDays.length === 0) return "";
     const first = weekDays[0]?.dateLabel;
@@ -494,6 +568,9 @@ export default function EmployeeSchedulePage() {
     return undefined;
   })();
 
+  const currentUserDisplayName =
+    userFullName ?? user?.email ?? t("shared.labels.you");
+
   /* ---------- JSX ---------- */
 
   return (
@@ -502,9 +579,6 @@ export default function EmployeeSchedulePage() {
         <section className="border border-border rounded-2xl bg-card shadow-sm p-5 space-y-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <p className="text-xs uppercase tracking-wide text-foreground/50">
-                {t("employee.schedule.labels.mySchedule")}
-              </p>
               <h1 className="text-2xl font-semibold text-foreground">
                 {t("employee.schedule.title")}
               </h1>
@@ -565,9 +639,6 @@ export default function EmployeeSchedulePage() {
             <section className="border border-border rounded-2xl bg-card shadow-sm p-5 space-y-4">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-xs uppercase tracking-wide text-foreground/50">
-                    {t("employee.schedule.sections.availableDrops")}
-                  </p>
                   <h2 className="text-lg font-semibold text-foreground">
                     {t("employee.schedule.sections.availableDropsTitle")}
                   </h2>
@@ -645,14 +716,9 @@ export default function EmployeeSchedulePage() {
 
             <section className="grid gap-6 md:grid-cols-2">
               <div className="border border-border rounded-2xl bg-card shadow-sm p-5 space-y-3">
-                <div>
-                  <p className="text-xs uppercase tracking-wide text-foreground/50">
-                    {t("employee.schedule.sections.myDropped")}
-                  </p>
-                  <h3 className="text-lg font-semibold text-foreground">
-                    {t("employee.schedule.sections.myDroppedTitle")}
-                  </h3>
-                </div>
+                <h3 className="text-lg font-semibold text-foreground">
+                  {t("employee.schedule.sections.myDroppedTitle")}
+                </h3>
                 {myDropped.length === 0 ? (
                   <p className="text-sm text-foreground/60">
                     {t("employee.schedule.sections.myDroppedEmpty")}
@@ -686,14 +752,9 @@ export default function EmployeeSchedulePage() {
               </div>
 
               <div className="border border-border rounded-2xl bg-card shadow-sm p-5 space-y-3">
-                <div>
-                  <p className="text-xs uppercase tracking-wide text-foreground/50">
-                    {t("employee.schedule.sections.myPickupRequests")}
-                  </p>
-                  <h3 className="text-lg font-semibold text-foreground">
-                    {t("employee.schedule.sections.myPickupRequestsTitle")}
-                  </h3>
-                </div>
+                <h3 className="text-lg font-semibold text-foreground">
+                  {t("employee.schedule.sections.myPickupRequestsTitle")}
+                </h3>
                 {myPickupRequests.length === 0 ? (
                   <p className="text-sm text-foreground/60">
                     {t("employee.schedule.sections.myPickupRequestsEmpty")}
@@ -746,9 +807,6 @@ export default function EmployeeSchedulePage() {
             <section className="border border-border rounded-2xl bg-card shadow-sm p-5 space-y-4">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-xs uppercase tracking-wide text-foreground/50">
-                    {t("employee.schedule.sections.weeklySchedule")}
-                  </p>
                   <h2 className="text-lg font-semibold text-foreground">
                     {t("employee.schedule.sections.weeklyScheduleTitle")}
                   </h2>
@@ -768,97 +826,212 @@ export default function EmployeeSchedulePage() {
                   {t("employee.schedule.sections.scheduleEmpty")}
                 </p>
               ) : (
-                <div className="rounded-2xl border border-border bg-background shadow-sm overflow-x-auto">
-                  <div className="min-w-[720px]">
-                    <div className="grid grid-cols-[minmax(220px,0.9fr)_repeat(7,minmax(90px,1fr))] border-b border-border bg-border text-xs font-semibold text-foreground/70 rounded-t-2xl">
-                      <div className="px-4 py-2 flex items-center justify-between">
-                        <span>{t("employee.schedule.columns.employee")}</span>
-                        <span className="text-[11px] text-foreground/60">
-                          {t("employee.schedule.columns.role")}
-                        </span>
-                      </div>
-                      {weekDays.map((d) => (
-                        <div
-                          key={d.ymd}
-                          className="px-3 py-2 border-l border-border text-left"
-                        >
-                          <span className="text-[11px] font-semibold text-foreground">
-                            {d.label}
-                          </span>
-                          <span className="block text-[11px] text-foreground/70">
-                            {d.dateLabel}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="grid grid-cols-[minmax(220px,0.9fr)_repeat(7,minmax(90px,1fr))] text-xs">
-                      <div className="px-4 py-3 flex flex-col justify-center gap-0.5">
-                        <span className="text-sm font-semibold text-foreground">
-                          {userFullName ?? user?.email ?? t("shared.labels.you")}
-                        </span>
-                        <span className="text-[11px] text-foreground/60">
-                          {t("employee.schedule.labels.mySchedule")}
-                        </span>
-                        <span className="text-[11px] text-foreground/60">
-                          {primaryRoleName ??
-                            t("employee.schedule.labels.unassignedRole")}
-                        </span>
-                      </div>
-
-                      {weekDays.map((day) => {
-                        const shiftsForDay = weekShifts.filter((s) => {
-                          const hasMe = s.assignments.some((a) => getAssignmentUserId(a) === myId);
-                          if (!hasMe) return false;
-                          return toYmd(s.start_ts) === day.ymd;
-                        });
-
-                        if (shiftsForDay.length === 0) {
-                          return (
-                            <div
-                              key={day.ymd}
-                              className="px-3 py-3 border-t border-l border-border text-xs text-foreground/60"
-                            >
-                              <div className="rounded-lg border border-dashed border-border/70 bg-background px-3 py-2 text-center">
-                                {t("employee.schedule.labels.noShift")}
-                              </div>
-                            </div>
-                          );
-                        }
-
-                        return (
-                          <div
-                            key={day.ymd}
-                            className="px-3 py-3 border-t border-l border-border text-xs space-y-2"
-                          >
-                            {shiftsForDay.map((s) => (
-                              <div
-                                key={s.id}
-                                className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-blue-900 shadow-sm dark:border-blue-900 dark:bg-blue-950/60 dark:text-blue-100"
+                <>
+                  <div className="space-y-4 md:hidden">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={goToPrevMobileDay}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-foreground disabled:opacity-40"
+                        aria-label={t("shared.buttons.back")}
+                        disabled={!totalMobileDays}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
+                      <div className="flex-1 overflow-x-auto">
+                        <div className="flex min-w-max items-center justify-center gap-2 px-1 text-xs">
+                          {weekDays.map((day, idx) => {
+                            const isActive = idx === currentDayIndex;
+                            const hasShift = (dayShifts[idx]?.length ?? 0) > 0;
+                            return (
+                              <button
+                                type="button"
+                                key={day.ymd}
+                                onClick={() => handleSelectMobileDay(idx)}
+                                className={`rounded-full border px-2.5 py-1 font-medium transition ${
+                                  isActive
+                                    ? "border-primary bg-primary/10 text-primary"
+                                    : "border-border text-foreground/70"
+                                } ${
+                                  hasShift && !isActive
+                                    ? "shadow-sm"
+                                    : ""
+                                }`}
                               >
-                                <p className="text-sm font-semibold">
-                                  {formatTimeRange(s.start_ts, s.end_ts, locale)}
-                                </p>
-                                <p className="text-[11px] uppercase tracking-wide text-blue-900/70 dark:text-blue-200">
-                                  {s.role?.name ??
-                                    t("employee.schedule.labels.shiftFallback")}
-                                </p>
-                                <p className="text-[11px] text-blue-900/70 dark:text-blue-200/80">
-                                  {s.location?.name ??
-                                    t("employee.schedule.labels.noLocation")}
-                                </p>
-                              </div>
-                            ))}
+                                {day.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={goToNextMobileDay}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-foreground disabled:opacity-40"
+                        aria-label="Next day"
+                        disabled={!totalMobileDays}
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                    <div className="text-center text-[11px] font-medium text-foreground/60">
+                      {totalMobileDays > 0
+                        ? `${mobileDayPointer + 1} / ${totalMobileDays}`
+                        : ""}
+                    </div>
+                    <div className="rounded-2xl border border-border bg-background/90 px-4 py-4 shadow-sm">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-foreground">
+                            {currentDayMeta?.label}
+                          </p>
+                          <p className="text-xs text-foreground/60">
+                            {currentDayMeta?.dateLabel}
+                          </p>
+                        </div>
+                        <span className="text-[11px] font-medium text-foreground/70">
+                          {currentDayShifts.length}
+                          {" "}
+                          {currentDayShifts.length === 1
+                            ? t("employee.schedule.labels.shiftFallback")
+                            : t("employee.schedule.labels.count", {
+                                count: currentDayShifts.length,
+                              })}
+                        </span>
+                      </div>
+                      <div className="mt-4 space-y-3">
+                        {currentDayShifts.length === 0 ? (
+                          <div className="rounded-xl border border-dashed border-border/70 bg-muted/30 px-3 py-4 text-center text-xs text-foreground/60">
+                            {t("employee.schedule.labels.noShift")}
                           </div>
-                        );
-                      })}
+                        ) : (
+                          currentDayShifts.map((shift) => (
+                            <div
+                              key={shift.id}
+                              className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-3 text-blue-900 shadow-sm dark:border-blue-900 dark:bg-blue-950/60 dark:text-blue-100"
+                            >
+                              <p className="text-xs font-semibold uppercase tracking-wide text-blue-900/70 dark:text-blue-200">
+                                {currentUserDisplayName}
+                              </p>
+                              <p className="text-sm font-semibold">
+                                {formatTimeRange(shift.start_ts, shift.end_ts, locale)}
+                              </p>
+                              <p className="text-xs font-medium text-blue-900/80 dark:text-blue-200">
+                                {shift.role?.name ??
+                                  t("employee.schedule.labels.shiftFallback")}
+                              </p>
+                              <p className="text-[11px] text-blue-900/70 dark:text-blue-200/80">
+                                {shift.location?.name ??
+                                  t("employee.schedule.labels.noLocation")}
+                              </p>
+                            </div>
+                          ))
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
+
+                  <div className="hidden rounded-2xl border border-border bg-background shadow-sm overflow-hidden md:block">
+                    <div className="overflow-x-auto">
+                      <div className="min-w-[720px]">
+                        <div className="grid grid-cols-[minmax(220px,0.9fr)_minmax(150px,0.6fr)_repeat(7,minmax(90px,1fr))] border-b border-border bg-border text-xs font-semibold text-foreground/70 rounded-t-2xl">
+                          <div className="px-4 py-2">
+                            <span>{t("employee.schedule.columns.employee")}</span>
+                          </div>
+                          <div className="px-4 py-2 border-l border-border">
+                            <span>{t("employee.schedule.columns.role")}</span>
+                          </div>
+                          {weekDays.map((d) => (
+                            <div
+                              key={d.ymd}
+                              className="px-3 py-2 border-l border-border text-left"
+                            >
+                              <span className="text-[11px] font-semibold text-foreground">
+                                {d.label}
+                              </span>
+                              <span className="block text-[11px] text-foreground/70">
+                                {d.dateLabel}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="grid grid-cols-[minmax(220px,0.9fr)_minmax(150px,0.6fr)_repeat(7,minmax(90px,1fr))] text-xs">
+                          <div className="px-4 py-3 flex flex-col justify-center gap-0.5">
+                            <span className="text-sm font-semibold text-foreground">
+                              {userFullName ?? user?.email ?? t("shared.labels.you")}
+                            </span>
+                            <span className="text-[11px] text-foreground/60">
+                              {t("employee.schedule.labels.mySchedule")}
+                            </span>
+                          </div>
+
+                          <div className="px-4 py-3 border-l border-border flex flex-col justify-center gap-0.5">
+                            <span className="text-sm font-semibold text-foreground">
+                              {primaryRoleName ??
+                                t("employee.schedule.labels.unassignedRole")}
+                            </span>
+                            <span className="text-[11px] text-foreground/60">
+                              {t("employee.schedule.labels.totalHours")}: {Number.isNaN(Number(totalScheduledHours))
+                                ? "0.0"
+                                : totalScheduledHours}
+                            </span>
+                          </div>
+
+                          {weekDays.map((day, idx) => {
+                            const shiftsForDay = dayShifts[idx] ?? [];
+
+                            if (shiftsForDay.length === 0) {
+                              return (
+                                <div
+                                  key={day.ymd}
+                                  className="px-3 py-3 border-t border-l border-border text-xs text-foreground/60"
+                                >
+                                  <div className="rounded-lg border border-dashed border-border/70 bg-background px-3 py-2 text-center">
+                                    {t("employee.schedule.labels.noShift")}
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            return (
+                              <div
+                                key={day.ymd}
+                                className="px-3 py-3 border-t border-l border-border text-xs space-y-2"
+                              >
+                                {shiftsForDay.map((s) => (
+                                  <div
+                                    key={s.id}
+                                    className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-blue-900 shadow-sm dark:border-blue-900 dark:bg-blue-950/60 dark:text-blue-100"
+                                  >
+                                    <p className="text-sm font-semibold">
+                                      {formatTimeRange(s.start_ts, s.end_ts, locale)}
+                                    </p>
+                                    <p className="text-[11px] uppercase tracking-wide text-blue-900/70 dark:text-blue-200">
+                                      {s.role?.name ??
+                                        t("employee.schedule.labels.shiftFallback")}
+                                    </p>
+                                    <p className="text-[11px] text-blue-900/70 dark:text-blue-200/80">
+                                      {s.location?.name ??
+                                        t("employee.schedule.labels.noLocation")}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
               )}
+              
             </section>
           </>
+          
         )}
+
 
         {pickupModalOpen && selectedAssignment && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
