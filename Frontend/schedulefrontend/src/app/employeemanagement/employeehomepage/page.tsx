@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import NextImage from "next/image";
 import Cropper, { type Area, type MediaSize } from "react-easy-crop";
 import "react-easy-crop/react-easy-crop.css";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { supabase, type Announcement, type DayOfWeek, type AvailabilityStatus } from "../../../lib/supabase";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AttachmentPreview } from "../../../components/messages/AttachmentPreview";
@@ -29,13 +28,7 @@ import {
   isGifFile,
   isGifUrl,
 } from "../../../lib/profileMedia";
-import router from "next/router";
 
-const locale: string | undefined = undefined;
-const shiftFallbackLabel = "Shift";
-const weekPrefix = "Week of";
-const typicalShiftLabel = "Typical shift";
-const typicalWeekSuffix = "Typical week";
 
 type WeeklyPattern = Record<DayOfWeek, AvailabilityStatus>;
 const DAY_KEYS: DayOfWeek[] = [
@@ -224,6 +217,14 @@ function normalizePattern(raw: unknown): WeeklyPattern {
 }
 
 export default function EmployeeHome() {
+  const { t, locale } = useI18n();
+  const router = useRouter();
+
+  const shiftFallbackLabel = t("employee.home.labels.shiftFallback");
+  const weekPrefix = t("employee.home.week.prefix");
+  const typicalShiftLabel = t("employee.home.labels.typicalShift");
+  const typicalWeekSuffix = t("employee.home.week.typicalSuffix");
+
   const [announcementToShow, setAnnouncementToShow] = useState<{
     announcement: Announcement;
     senderName: string;
@@ -2155,12 +2156,3 @@ async function hasPendingAccess(
     return false;
   }
 }
-
-
-function t(key: string, _opts?: Record<string, unknown>): string {
-  // Minimal i18n stub used in this file for compile-time typing;
-  // in production this should be replaced by the real translator from useI18n.
-  return String(key);
-}
-// getCroppedBlob is provided by ../../../lib/profileMedia and is imported at the top of this file;
-// the local duplicate implementations were removed to avoid the import/name conflict.
