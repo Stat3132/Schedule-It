@@ -1,6 +1,6 @@
 "use client";
 
-import React, { JSX, useEffect, useMemo, useState } from "react";
+import React, { JSX, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { X } from "lucide-react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
@@ -314,6 +314,10 @@ export default function CreateSchedulePage(): JSX.Element {
   const [settingsWeekStart, setSettingsWeekStart] = useState<number>(0);
 
   const [previewMode, setPreviewMode] = useState<PreviewMode>("byDay");
+  const [toast, setToast] = useState<{ id: number; message: string; tone: "success" | "error" } | null>(null);
+  const [toastVisible, setToastVisible] = useState(false);
+  const toastHideRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastRemoveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /* ---------- Week days for active week ---------- */
   const DAYS: DayMeta[] = useMemo(() => {
@@ -367,6 +371,13 @@ export default function CreateSchedulePage(): JSX.Element {
     setWeekOffset(0);
   }, [activeBusinessId]);
 
+  useEffect(() => {
+    return () => {
+      if (toastHideRef.current) clearTimeout(toastHideRef.current);
+      if (toastRemoveRef.current) clearTimeout(toastRemoveRef.current);
+    };
+  }, []);
+
   const handleLocationChange = (locationId: string) => {
     setActiveLocationId(locationId);
     if (typeof window !== "undefined") {
@@ -375,6 +386,38 @@ export default function CreateSchedulePage(): JSX.Element {
       const newList = [locationId, ...storedLocs.filter((id) => id !== locationId)];
       localStorage.setItem("activeLocationIds", JSON.stringify(newList));
     }
+  };
+
+  const dismissToast = () => {
+    if (toastHideRef.current) {
+      clearTimeout(toastHideRef.current);
+      toastHideRef.current = null;
+    }
+    if (toastRemoveRef.current) {
+      clearTimeout(toastRemoveRef.current);
+      toastRemoveRef.current = null;
+    }
+    setToastVisible(false);
+    toastRemoveRef.current = setTimeout(() => {
+      setToast(null);
+      toastRemoveRef.current = null;
+    }, 250);
+  };
+
+  const showToast = (message: string, tone: "success" | "error" = "success") => {
+    if (toastHideRef.current) {
+      clearTimeout(toastHideRef.current);
+      toastHideRef.current = null;
+    }
+    if (toastRemoveRef.current) {
+      clearTimeout(toastRemoveRef.current);
+      toastRemoveRef.current = null;
+    }
+    setToast({ id: Date.now(), message, tone });
+    setToastVisible(true);
+    toastHideRef.current = setTimeout(() => {
+      dismissToast();
+    }, 3500);
   };
 
   /* ---------- Load user + business + location + employees + time off + availability + existing schedule ---------- */
@@ -1081,15 +1124,17 @@ export default function CreateSchedulePage(): JSX.Element {
           .insert(assignments);
         if (asErr) {
           console.error("assignment error", asErr);
-          alert("Shifts created but assignments failed. See console.");
+          showToast("Shifts created but assignments failed. See console.", "error");
         }
       }
 
       if (targetStatus === "draft") {
-        alert("Draft schedule saved. You can come back to publish it later.");
+        showToast("Draft schedule saved. You can come back to publish it later.");
       } else {
-        alert("Schedule published.");
-        router.replace("/employermanagement/employerhomepage");
+        showToast("Schedule published.");
+        setTimeout(() => {
+          router.replace("/employermanagement/employerhomepage");
+        }, 600);
       }
 
       setScheduleStatus(targetStatus);
@@ -1219,6 +1264,32 @@ export default function CreateSchedulePage(): JSX.Element {
   /* ---------- Render ---------- */
   return (
     <div className="min-h-screen bg-background">
+
+      {toast && (
+        <div
+          className={`pointer-events-none fixed left-1/2 top-4 z-50 w-full max-w-lg -translate-x-1/2 px-4 transform transition-all duration-300 ${
+            toastVisible ? "translate-y-0 opacity-100" : "-translate-y-4 opacity-0"
+          }`}
+          aria-live="polite"
+        >
+          <div
+            className={`pointer-events-auto flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-sm font-semibold shadow-lg ${
+              toast.tone === "success"
+                ? "border-emerald-200 bg-emerald-500 text-white"
+                : "border-rose-200 bg-rose-500 text-white"
+            }`}
+          >
+            <span>{toast.message}</span>
+            <button
+              type="button"
+              className="rounded-full border border-white/40 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide transition hover:bg-white/20"
+              onClick={dismissToast}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="max-w-6xl mx-auto px-4 pt-6 pb-10 space-y-6">
         {/* Header */}

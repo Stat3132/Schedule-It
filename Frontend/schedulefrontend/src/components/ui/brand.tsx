@@ -37,21 +37,27 @@ export default function Brand() {
   const pathname = usePathname() ?? "/";
   const isEmployeeRoute = pathname.startsWith("/employeemanagement");
   const isEmployerRoute = pathname.startsWith("/employermanagement");
+  const isSignupRoute = pathname.startsWith("/signup");
+  const isEmployerOnboardingRoute = pathname.startsWith("/employeronboarding");
 
   let href = "/";
   if (pathname.startsWith("/employermanagement"))
     href = "/employermanagement/employerhomepage";
 
-  if (isEmployeeRoute || isEmployerRoute) {
+  if (isEmployeeRoute || isEmployerRoute || isEmployerOnboardingRoute) {
     return null;
   }
+
+  const mobilePositionClasses = isSignupRoute
+    ? "relative mx-auto mt-6"
+    : "fixed left-1/2 top-6 z-50 -translate-x-1/2";
 
   return (
     <>
       <Link
         href={href}
         aria-label="Schedule-It"
-        className="fixed left-1/2 top-6 z-50 flex -translate-x-1/2 flex-col items-center gap-2 text-center transition-all duration-200 md:hidden"
+        className={`${mobilePositionClasses} flex flex-col items-center gap-2 text-center transition-all duration-200 md:hidden`}
       >
         <Wordmark isDesktop={false} />
       </Link>

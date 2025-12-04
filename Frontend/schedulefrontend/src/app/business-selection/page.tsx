@@ -431,22 +431,22 @@ function BusinessSelectionInner() {
           </div>
         )}
 
-        <div className="bg-card rounded-3xl shadow-2xl border border-border overflow-hidden">
+        <div className="bg-card rounded-3xl shadow-2xl border border-border overflow-visible">
           {/* Header */}
-          <div className="bg-primary px-8 py-10 text-center text-primary-foreground">
-            <div className="flex justify-center mb-6">
-              <div className="bg-white/15 p-4 rounded-2xl backdrop-blur-sm shadow-lg">
-                <Building2 className="w-12 h-12" />
+          <div className="bg-primary px-6 py-8 text-center text-primary-foreground sm:px-8 sm:py-10">
+            <div className="flex justify-center mb-5 sm:mb-6">
+              <div className="bg-white/15 p-3 rounded-2xl backdrop-blur-sm shadow-lg sm:p-4">
+                <Building2 className="w-10 h-10 sm:w-12 sm:h-12" />
               </div>
             </div>
-          <h1 className="text-4xl font-bold tracking-tight">Find Your Business</h1>
-            <p className="text-primary-foreground/80 mt-3 text-lg">
+          <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Find Your Business</h1>
+            <p className="text-primary-foreground/80 mt-2 text-base sm:mt-3 sm:text-lg">
               Search for your registered corporation
             </p>
           </div>
 
           {/* Body */}
-          <div className="px-8 py-10">
+          <div className="px-5 py-8 sm:px-8 sm:py-10">
             <div className="relative">
               <label
                 htmlFor="businessSearch"
@@ -481,7 +481,7 @@ function BusinessSelectionInner() {
 
               {/* Search Results */}
               {searchResults.length > 0 && (
-                <div className="absolute z-10 w-full mt-2 bg-background border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
+                <div className="mt-3 w-full bg-background border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
                   {searchResults.map((b) => (
                     <button
                       key={b.id}
@@ -522,7 +522,7 @@ function BusinessSelectionInner() {
 
               {/* Selected Business */}
               {selectedBusiness && (
-                <div className="mt-6 rounded-2xl border border-green-200 bg-gradient-to-br from-green-50 via-white to-green-100/60 p-8 shadow-lg">
+                <div className="mt-6 rounded-2xl border border-green-200 bg-gradient-to-br from-green-50 via-white to-green-100/60 p-5 shadow-lg sm:p-8">
                   <div className="flex flex-col gap-6 lg:flex-row">
                     <div className="flex-1 space-y-4">
                       <div className="flex items-start gap-4">
@@ -566,11 +566,11 @@ function BusinessSelectionInner() {
                         </p>
                       )}
 
-                      <div className="rounded-2xl border border-green-200 bg-white/60 p-5">
+                      <div className="rounded-2xl border border-green-200 bg-white/60 p-4 sm:p-5">
                         <h3 className="text-lg font-semibold mb-3">
                           Select one location
                         </h3>
-                        <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                        <div className="space-y-3 max-h-60 overflow-y-auto pr-1 sm:max-h-72">
                           {locLoading ? (
                             <div className="text-sm text-muted-foreground">
                               Loading locations…
@@ -613,7 +613,7 @@ function BusinessSelectionInner() {
                       </div>
                     </div>
 
-                    <div className="w-full lg:max-w-sm rounded-2xl border border-green-200 bg-white p-6 shadow-md space-y-4">
+                    <div className="w-full lg:max-w-sm rounded-2xl border border-green-200 bg-white p-5 shadow-md space-y-4">
                       <h3 className="text-lg font-semibold">Next steps</h3>
                       <p className="text-sm text-muted-foreground">
                         Confirm your selection or request access from the business managers.

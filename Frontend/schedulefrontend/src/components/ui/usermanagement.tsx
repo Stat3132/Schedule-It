@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import type { PostgrestError } from "@supabase/supabase-js";
-import { Check, X, ChevronDown, Loader2, UserX } from "lucide-react";
+import { Check, X, Loader2, UserX } from "lucide-react";
 import Image from "next/image";
 
 type UUID = string;
@@ -51,6 +51,8 @@ type Employment = {
 type CoworkerProfile = {
   id: UUID;
   email: string | null;
+  first_name: string | null;
+  last_name: string | null;
   full_name: string | null;
   display_name: string | null;
   photo_url: string | null;
@@ -111,6 +113,7 @@ type JoinRequest = {
   message: string | null;
   status: "pending" | "approved" | "denied" | "canceled";
   created_at: string;
+  requester_profile?: CoworkerProfile | null;
 };
 
 type InviteResult = {
@@ -225,7 +228,7 @@ function profileInitials(profile: CoworkerProfile | null) {
 
 function formatDateShort(iso: string | null) {
   if (!iso) return null;
-  const [ymd] = iso.split("T");       
+  const [ymd] = iso.split("T");
   const [y, m, d] = ymd.split("-");
   const year = Number(y);
   const month = Number(m) - 1;
@@ -564,22 +567,40 @@ export default function UserManagement({ businessId }: Props) {
       const empUserIds = typedEmpRows.map(e => e.user_id);
 
       // join requests
+      const profileColumns = "id,email,first_name,last_name,full_name,display_name,photo_url";
       const { data: reqRows, error: reqErr } = await supabase
         .from("employee_join_request")
-        .select("id,business_id,requester_user_id,requested_role_id,requested_location_id,message,status,created_at")
-        .eq("business_id", businessId).eq("status","pending")
-        .order("created_at",{ ascending:false });
+        .select(
+          `
+            id,
+            business_id,
+            requester_user_id,
+            requested_role_id,
+            requested_location_id,
+            message,
+            status,
+            created_at,
+            requester_profile:profiles!employee_join_request_requester_user_id_fkey (${profileColumns})
+          `
+        )
+        .eq("business_id", businessId)
+        .eq("status", "pending")
+        .order("created_at", { ascending: false });
       if (reqErr) throw reqErr;
 
       const reqUserIds = (reqRows ?? []).map(r => r.requester_user_id);
       const rosterUserIds = typedEmpRows.map(e => e.user_id);
-      const userIds = [...new Set([...empUserIds, ...reqUserIds, ...rosterUserIds])];
+      const userIds = [
+        ...new Set(
+          [...empUserIds, ...reqUserIds, ...rosterUserIds].filter((id): id is UUID => Boolean(id))
+        ),
+      ];
 
       const profilesById = new Map<string, CoworkerProfile>();
       if (userIds.length) {
         const { data: profRows, error: profErr } = await supabase
           .from("profiles")
-          .select("id,email,full_name,display_name,photo_url")
+          .select(profileColumns)
           .in("id", userIds);
         if (profErr) throw profErr;
         for (const p of (profRows ?? []) as CoworkerProfile[]) {
@@ -683,8 +704,35 @@ export default function UserManagement({ businessId }: Props) {
       });
 
       setJoinRequests(
-        (reqRows ?? []).map(r => ({ ...r, profile: profilesById.get(r.requester_user_id) ?? null }))
+        (reqRows ?? []).map(r => {
+          // Supabase relationship is often typed as an array
+          const rawRequesterProfile = (r as unknown as {
+            requester_profile?: CoworkerProfile | CoworkerProfile[] | null;
+          }).requester_profile as CoworkerProfile | CoworkerProfile[] | null | undefined;
+
+          const requesterProfile = Array.isArray(rawRequesterProfile)
+            ? rawRequesterProfile[0] ?? null
+            : rawRequesterProfile ?? null;
+
+          const profile =
+            requesterProfile ?? profilesById.get(r.requester_user_id as UUID) ?? null;
+
+          const result: JoinRequest & { profile: CoworkerProfile | null } = {
+            id: r.id as UUID,
+            business_id: r.business_id as UUID,
+            requester_user_id: r.requester_user_id as UUID,
+            requested_role_id: (r.requested_role_id as UUID | null) ?? null,
+            requested_location_id: (r.requested_location_id as UUID | null) ?? null,
+            message: r.message as string | null,
+            status: r.status as JoinRequest["status"],
+            created_at: r.created_at as string,
+            profile,
+          };
+
+          return result;
+        })
       );
+
       if (!userIds.length) {
         setAvailabilityByUser({});
       }
@@ -1268,15 +1316,15 @@ export default function UserManagement({ businessId }: Props) {
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-3 auto-rows-fr">
             {/* Pending invites */}
             <section className="bg-background border border-border rounded-xl shadow-sm overflow-hidden xl:col-span-1 flex flex-col">
-                <div className="px-4 py-3 border-b font-medium">Pending invites</div>
-                <ul className="divide-y flex-1">
-                  {invites.length === 0 && <li className="px-4 py-6 text-sm text-foreground/60">No pending invites.</li>}
+              <div className="px-4 py-3 border-b font-medium">Pending invites</div>
+              <ul className="divide-y flex-1">
+                {invites.length === 0 && <li className="px-4 py-6 text-sm text-foreground/60">No pending invites.</li>}
                 {invites.map(inv => (
                   <li key={inv.id} className="p-4">
                     <div className="flex items-center justify-between">
                       <div>
                         <div className="font-medium">{inv.email}</div>
-                          <div className="text-xs text-foreground/60">
+                        <div className="text-xs text-foreground/60">
                           Role: {roles.find(r => r.id === inv.role_id)?.name ?? "—"} ·{" "}
                           Location: {locations.find(l => l.id === inv.location_id)?.name ?? "—"}
                         </div>
@@ -1330,16 +1378,16 @@ export default function UserManagement({ businessId }: Props) {
                             Status: {emp.status} · Roles: {pendingRoleNames} · Primary: {locations.find(l => l.id === emp.location_id)?.name ?? "—"}
                           </div>
                         </div>
-                      <button
-                        className="px-3 py-1 rounded-md bg-emerald-600 text-white text-sm disabled:opacity-50 dark:bg-emerald-500 dark:hover:bg-emerald-600"
-                        onClick={() => openAcceptForEmployment(emp)}
-                        disabled={disabledUI}
-                        title={disabledUI ? "Business must be verified" : "Activate"}
-                      >
-                        <span className="inline-flex items-center gap-1">
-                          <Check className="w-4 h-4" /> Activate
-                        </span>
-                      </button>
+                        <button
+                          className="px-3 py-1 rounded-md bg-emerald-600 text-white text-sm disabled:opacity-50 dark:bg-emerald-500 dark:hover:bg-emerald-600"
+                          onClick={() => openAcceptForEmployment(emp)}
+                          disabled={disabledUI}
+                          title={disabledUI ? "Business must be verified" : "Activate"}
+                        >
+                          <span className="inline-flex items-center gap-1">
+                            <Check className="w-4 h-4" /> Activate
+                          </span>
+                        </button>
                       </div>
                     </li>
                   );
@@ -1353,10 +1401,13 @@ export default function UserManagement({ businessId }: Props) {
               <ul className="divide-y flex-1">
                 {joinRequests.length === 0 && <li className="px-4 py-6 text-sm text-foreground/60">No pending requests.</li>}
                 {joinRequests.map(req => {
-                  const fullName = req.profile?.full_name || "Name unavailable";
+                  const concatenatedName = [req.profile?.first_name, req.profile?.last_name]
+                    .filter(Boolean)
+                    .join(" ")
+                    .trim();
+                  const fullName = concatenatedName || req.profile?.full_name || req.profile?.display_name || "Name unavailable";
                   const email = req.profile?.email || "No email on file";
                   const userId = req.requester_user_id;
-                  const requestedRole = roles.find(r => r.id === req.requested_role_id)?.name ?? "Any role";
                   const requestedLocation = locations.find(l => l.id === req.requested_location_id)?.name ?? "Any location";
                   return (
                     <li key={req.id} className="p-4">
@@ -1391,11 +1442,7 @@ export default function UserManagement({ businessId }: Props) {
                             </button>
                           </div>
                         </div>
-                        <div className="grid gap-3 text-xs text-foreground/70 sm:grid-cols-2">
-                          <div className="rounded-lg border border-border bg-background/40 p-3">
-                            <p className="text-foreground/60 uppercase text-[11px] tracking-wide">Requested role</p>
-                            <p className="text-sm text-foreground mt-1">{requestedRole}</p>
-                          </div>
+                        <div className="grid gap-3 text-xs text-foreground/70 sm:grid-cols-1">
                           <div className="rounded-lg border border-border bg-background/40 p-3">
                             <p className="text-foreground/60 uppercase text-[11px] tracking-wide">Requested location</p>
                             <p className="text-sm text-foreground mt-1">{requestedLocation}</p>
@@ -1448,298 +1495,298 @@ export default function UserManagement({ businessId }: Props) {
             <>
               <div className="space-y-6">
                 {pagedRoster.map(row => {
-                const draft = rosterDrafts[row.id] ?? buildRosterDraft(row);
-                const saving = !!rosterSaving[row.id];
-                const canEdit = verified && row.status !== "terminated";
-                const hasChanges = canEdit && rosterRowHasChanges(row, draft);
-                const statusBadge = STATUS_BADGE[row.status] || "bg-muted text-foreground";
-                const avatarUrl = row.profile?.photo_url || null;
-                const avatarAlt = row.profile?.display_name || row.profile?.full_name || row.profile?.email || "Employee avatar";
-                const availability = availabilityByUser[row.user_id];
-                const availabilityFrom = availability ? formatDisplayDate(availability.effectiveFrom) : null;
-                const availabilityTo = availability?.effectiveTo ? formatDisplayDate(availability.effectiveTo) : null;
+                  const draft = rosterDrafts[row.id] ?? buildRosterDraft(row);
+                  const saving = !!rosterSaving[row.id];
+                  const canEdit = verified && row.status !== "terminated";
+                  const hasChanges = canEdit && rosterRowHasChanges(row, draft);
+                  const statusBadge = STATUS_BADGE[row.status] || "bg-muted text-foreground";
+                  const avatarUrl = row.profile?.photo_url || null;
+                  const avatarAlt = row.profile?.display_name || row.profile?.full_name || row.profile?.email || "Employee avatar";
+                  const availability = availabilityByUser[row.user_id];
+                  const availabilityFrom = availability ? formatDisplayDate(availability.effectiveFrom) : null;
+                  const availabilityTo = availability?.effectiveTo ? formatDisplayDate(availability.effectiveTo) : null;
 
-                return (
-                  <div
-                    key={row.id}
-                    className="rounded-2xl border border-border bg-card/50 p-6 shadow-sm space-y-6"
-                  >
-                    <div className="grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)]">
-                      <div className="flex gap-4 w-full">
-                        <div className="relative h-16 w-16 rounded-full border border-border bg-foreground/10 text-foreground flex items-center justify-center font-semibold overflow-hidden shrink-0">
-                          {avatarUrl ? (
-                            <Image
-                              src={avatarUrl}
-                              alt={`${avatarAlt} profile photo`}
-                              fill
-                              sizes="64px"
-                              className="object-cover"
-                            />
-                          ) : (
-                            profileInitials(row.profile)
-                          )}
-                        </div>
-                        <div className="flex-1 space-y-3">
-                          <div className="space-y-2">
-                            <div>
-                              <label className="text-xs uppercase tracking-wide text-foreground/60">Full name</label>
-                              <input
-                                className="mt-1 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
-                                value={draft.fullName}
-                                onChange={e => updateRosterDraft(row, d => ({ ...d, fullName: e.target.value }))}
-                                disabled={!canEdit}
+                  return (
+                    <div
+                      key={row.id}
+                      className="rounded-2xl border border-border bg-card/50 p-6 shadow-sm space-y-6"
+                    >
+                      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)]">
+                        <div className="flex gap-4 w-full">
+                          <div className="relative h-16 w-16 rounded-full border border-border bg-foreground/10 text-foreground flex items-center justify-center font-semibold overflow-hidden shrink-0">
+                            {avatarUrl ? (
+                              <Image
+                                src={avatarUrl}
+                                alt={`${avatarAlt} profile photo`}
+                                fill
+                                sizes="64px"
+                                className="object-cover"
                               />
-                            </div>
-                            <div>
-                              <label className="text-xs uppercase tracking-wide text-foreground/60">Display name</label>
-                              <input
-                                className="mt-1 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
-                                value={draft.displayName}
-                                onChange={e => updateRosterDraft(row, d => ({ ...d, displayName: e.target.value }))}
-                                disabled={!canEdit}
-                              />
-                            </div>
-                          </div>
-                          <div className="space-y-1 text-sm">
-                            <p className="text-foreground/70">{row.profile?.email ?? "No email on file"}</p>
-                            <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium capitalize ${statusBadge}`}>
-                              {row.status}
-                            </span>
-                            {row.roleIds.length > 0 && (
-                              <p className="text-xs text-foreground/70">
-                                Roles: {row.roleIds
-                                  .map(rid => roleNameById.get(rid) ?? "")
-                                  .filter(Boolean)
-                                  .join(", ") || "—"}
-                              </p>
+                            ) : (
+                              profileInitials(row.profile)
                             )}
                           </div>
-                        </div>
-                      </div>
-                      <div className="space-y-4">
-                        <div>
-                          <label className="text-sm text-foreground">Primary role</label>
-                          <select
-                            className="mt-2 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
-                            value={draft.primaryRoleId}
-                            onChange={e =>
-                              updateRosterDraft(row, d => {
-                                const nextPrimary = e.target.value as UUID | "";
-                                const alreadyIncluded = nextPrimary ? d.roleIds.includes(nextPrimary) : false;
-                                return {
-                                  ...d,
-                                  primaryRoleId: nextPrimary,
-                                  roleIds: nextPrimary && !alreadyIncluded ? [...d.roleIds, nextPrimary] : d.roleIds,
-                                };
-                              })
-                            }
-                            disabled={!canEdit}
-                          >
-                            <option value="">No role</option>
-                            {roles.map(role => (
-                              <option key={role.id} value={role.id}>
-                                {role.name}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="text-sm text-foreground">All roles</label>
-                          <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                            {roles.map(role => {
-                              const checked = draft.roleIds.includes(role.id);
-                              return (
-                                <label key={role.id} className="inline-flex items-center gap-2">
-                                  <input
-                                    type="checkbox"
-                                    className="accent-primary"
-                                    checked={checked}
-                                    onChange={() => toggleRosterRole(row, role.id)}
-                                    disabled={!canEdit}
-                                  />
-                                  <span>{role.name}</span>
-                                </label>
-                              );
-                            })}
-                          </div>
-                          <p className="mt-1 text-xs text-foreground/60">
-                            Select every role this teammate can cover; the primary role drives scheduling defaults.
-                          </p>
-                        </div>
-                      </div>
-                      <div className="space-y-4">
-                        <div>
-                          <label className="text-sm text-foreground">Primary location</label>
-                          <select
-                            className="mt-2 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
-                            value={draft.primaryLocationId}
-                            onChange={e => updateRosterDraft(row, d => ({ ...d, primaryLocationId: e.target.value as UUID | "" }))}
-                            disabled={!canEdit}
-                          >
-                            <option value="">None</option>
-                            {locations.map(loc => (
-                              <option key={loc.id} value={loc.id}>
-                                {loc.name}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="text-sm text-foreground">Allowed locations</label>
-                          <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                            {locations.map(loc => {
-                              const checked = draft.allowedLocations.includes(loc.id);
-                              return (
-                                <label key={loc.id} className="inline-flex items-center gap-2">
-                                  <input
-                                    type="checkbox"
-                                    className="accent-primary"
-                                    checked={checked}
-                                    onChange={() => toggleAllowedLocation(row, loc.id)}
-                                    disabled={!canEdit}
-                                  />
-                                  <span>{loc.name}</span>
-                                </label>
-                              );
-                            })}
+                          <div className="flex-1 space-y-3">
+                            <div className="space-y-2">
+                              <div>
+                                <label className="text-xs uppercase tracking-wide text-foreground/60">Full name</label>
+                                <input
+                                  className="mt-1 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
+                                  value={draft.fullName}
+                                  onChange={e => updateRosterDraft(row, d => ({ ...d, fullName: e.target.value }))}
+                                  disabled={!canEdit}
+                                />
+                              </div>
+                              <div>
+                                <label className="text-xs uppercase tracking-wide text-foreground/60">Display name</label>
+                                <input
+                                  className="mt-1 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
+                                  value={draft.displayName}
+                                  onChange={e => updateRosterDraft(row, d => ({ ...d, displayName: e.target.value }))}
+                                  disabled={!canEdit}
+                                />
+                              </div>
+                            </div>
+                            <div className="space-y-1 text-sm">
+                              <p className="text-foreground/70">{row.profile?.email ?? "No email on file"}</p>
+                              <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium capitalize ${statusBadge}`}>
+                                {row.status}
+                              </span>
+                              {row.roleIds.length > 0 && (
+                                <p className="text-xs text-foreground/70">
+                                  Roles: {row.roleIds
+                                    .map(rid => roleNameById.get(rid) ?? "")
+                                    .filter(Boolean)
+                                    .join(", ") || "—"}
+                                </p>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    </div>
-
-                    <div className="grid gap-6 lg:grid-cols-2">
-                      <div className="space-y-4">
-                        <div>
-                          <label className="text-sm text-foreground">Hourly wage</label>
-                          <div className="mt-2 flex items-center gap-2">
-                            <span className="text-sm text-foreground/60">$</span>
-                            <input
-                              type="text"
-                              inputMode="decimal"
-                              pattern="\\d*(\\.\\d{0,2})?"
-                              className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
-                              value={draft.payRate}
-                              placeholder="0.00"
+                        <div className="space-y-4">
+                          <div>
+                            <label className="text-sm text-foreground">Primary role</label>
+                            <select
+                              className="mt-2 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
+                              value={draft.primaryRoleId}
                               onChange={e =>
-                                updateRosterDraft(row, d => ({ ...d, payRate: sanitizePayRateInput(e.target.value) }))
+                                updateRosterDraft(row, d => {
+                                  const nextPrimary = e.target.value as UUID | "";
+                                  const alreadyIncluded = nextPrimary ? d.roleIds.includes(nextPrimary) : false;
+                                  return {
+                                    ...d,
+                                    primaryRoleId: nextPrimary,
+                                    roleIds: nextPrimary && !alreadyIncluded ? [...d.roleIds, nextPrimary] : d.roleIds,
+                                  };
+                                })
                               }
-                              onBlur={() =>
-                                updateRosterDraft(row, d => ({ ...d, payRate: formatPayRateString(d.payRate) }))
-                              }
+                              disabled={!canEdit}
+                            >
+                              <option value="">No role</option>
+                              {roles.map(role => (
+                                <option key={role.id} value={role.id}>
+                                  {role.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-sm text-foreground">All roles</label>
+                            <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                              {roles.map(role => {
+                                const checked = draft.roleIds.includes(role.id);
+                                return (
+                                  <label key={role.id} className="inline-flex items-center gap-2">
+                                    <input
+                                      type="checkbox"
+                                      className="accent-primary"
+                                      checked={checked}
+                                      onChange={() => toggleRosterRole(row, role.id)}
+                                      disabled={!canEdit}
+                                    />
+                                    <span>{role.name}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                            <p className="mt-1 text-xs text-foreground/60">
+                              Select every role this teammate can cover; the primary role drives scheduling defaults.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="space-y-4">
+                          <div>
+                            <label className="text-sm text-foreground">Primary location</label>
+                            <select
+                              className="mt-2 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
+                              value={draft.primaryLocationId}
+                              onChange={e => updateRosterDraft(row, d => ({ ...d, primaryLocationId: e.target.value as UUID | "" }))}
+                              disabled={!canEdit}
+                            >
+                              <option value="">None</option>
+                              {locations.map(loc => (
+                                <option key={loc.id} value={loc.id}>
+                                  {loc.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-sm text-foreground">Allowed locations</label>
+                            <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                              {locations.map(loc => {
+                                const checked = draft.allowedLocations.includes(loc.id);
+                                return (
+                                  <label key={loc.id} className="inline-flex items-center gap-2">
+                                    <input
+                                      type="checkbox"
+                                      className="accent-primary"
+                                      checked={checked}
+                                      onChange={() => toggleAllowedLocation(row, loc.id)}
+                                      disabled={!canEdit}
+                                    />
+                                    <span>{loc.name}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-6 lg:grid-cols-2">
+                        <div className="space-y-4">
+                          <div>
+                            <label className="text-sm text-foreground">Hourly wage</label>
+                            <div className="mt-2 flex items-center gap-2">
+                              <span className="text-sm text-foreground/60">$</span>
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                pattern="\\d*(\\.\\d{0,2})?"
+                                className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
+                                value={draft.payRate}
+                                placeholder="0.00"
+                                onChange={e =>
+                                  updateRosterDraft(row, d => ({ ...d, payRate: sanitizePayRateInput(e.target.value) }))
+                                }
+                                onBlur={() =>
+                                  updateRosterDraft(row, d => ({ ...d, payRate: formatPayRateString(d.payRate) }))
+                                }
+                                disabled={!canEdit}
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="text-sm text-foreground">Hire date</label>
+                            <input
+                              type="date"
+                              className="mt-2 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
+                              value={draft.hireDate}
+                              onChange={e => updateRosterDraft(row, d => ({ ...d, hireDate: e.target.value }))}
                               disabled={!canEdit}
                             />
                           </div>
                         </div>
-                        <div>
-                          <label className="text-sm text-foreground">Hire date</label>
-                          <input
-                            type="date"
-                            className="mt-2 w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm"
-                            value={draft.hireDate}
-                            onChange={e => updateRosterDraft(row, d => ({ ...d, hireDate: e.target.value }))}
-                            disabled={!canEdit}
-                          />
-                        </div>
-                      </div>
-                      <div className="space-y-4">
-                        <div className="flex flex-col gap-2">
-                          <label className="text-sm text-foreground">Leadership permissions</label>
-                          <div className="flex flex-wrap gap-4 text-sm">
-                            <label className="inline-flex items-center gap-2">
-                              <input
-                                type="checkbox"
-                                className="accent-primary"
-                                checked={draft.isManager}
-                                onChange={e => updateRosterDraft(row, d => ({ ...d, isManager: e.target.checked }))}
-                                disabled={!canEdit}
-                              />
-                              Manager
-                            </label>
-                            <label className="inline-flex items-center gap-2">
-                              <input
-                                type="checkbox"
-                                className="accent-primary"
-                                checked={draft.isAdmin}
-                                onChange={e => updateRosterDraft(row, d => ({ ...d, isAdmin: e.target.checked }))}
-                                disabled={!canEdit}
-                              />
-                              Admin
-                            </label>
-                          </div>
-                        </div>
-                        <div className="rounded-xl border border-border bg-background/40 p-4">
-                          <div className="flex items-center justify-between text-sm font-medium text-foreground">
-                            <span>Current availability</span>
-                            <span className="text-xs text-foreground/60">
-                              {availability.isFuture ? "Pending" : "Active"}
-                            </span>
-                          </div>
-                          {availability ? (
-                            <div className="mt-3 space-y-2">
-                              <div className="grid grid-cols-2 gap-1 text-[11px] sm:grid-cols-3">
-                                {AVAILABILITY_DAY_ORDER.map(({ key, label }) => {
-                                  const status = availability.pattern[key];
-                                  return (
-                                    <span
-                                      key={key}
-                                      className={`inline-flex items-center justify-between rounded-md px-2 py-1 ${AVAILABILITY_BADGE[status]}`}
-                                    >
-                                      <span className="font-semibold">{label}</span>
-                                      <span>{AVAILABILITY_STATUS_LABEL[status]}</span>
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                              <p className="text-[11px] text-foreground/60">
-                                Effective {availabilityFrom ?? "Unknown"}
-                                {availabilityTo ? ` - ${availabilityTo}` : ""}
-                              </p>
+                        <div className="space-y-4">
+                          <div className="flex flex-col gap-2">
+                            <label className="text-sm text-foreground">Leadership permissions</label>
+                            <div className="flex flex-wrap gap-4 text-sm">
+                              <label className="inline-flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  className="accent-primary"
+                                  checked={draft.isManager}
+                                  onChange={e => updateRosterDraft(row, d => ({ ...d, isManager: e.target.checked }))}
+                                  disabled={!canEdit}
+                                />
+                                Manager
+                              </label>
+                              <label className="inline-flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  className="accent-primary"
+                                  checked={draft.isAdmin}
+                                  onChange={e => updateRosterDraft(row, d => ({ ...d, isAdmin: e.target.checked }))}
+                                  disabled={!canEdit}
+                                />
+                                Admin
+                              </label>
                             </div>
-                          ) : (
-                            <p className="mt-2 text-xs text-foreground/60">No approved availability on file.</p>
+                          </div>
+                          <div className="rounded-xl border border-border bg-background/40 p-4">
+                            <div className="flex items-center justify-between text-sm font-medium text-foreground">
+                              <span>Current availability</span>
+                              <span className="text-xs text-foreground/60">
+                                {availability.isFuture ? "Pending" : "Active"}
+                              </span>
+                            </div>
+                            {availability ? (
+                              <div className="mt-3 space-y-2">
+                                <div className="grid grid-cols-2 gap-1 text-[11px] sm:grid-cols-3">
+                                  {AVAILABILITY_DAY_ORDER.map(({ key, label }) => {
+                                    const status = availability.pattern[key];
+                                    return (
+                                      <span
+                                        key={key}
+                                        className={`inline-flex items-center justify-between rounded-md px-2 py-1 ${AVAILABILITY_BADGE[status]}`}
+                                      >
+                                        <span className="font-semibold">{label}</span>
+                                        <span>{AVAILABILITY_STATUS_LABEL[status]}</span>
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                                <p className="text-[11px] text-foreground/60">
+                                  Effective {availabilityFrom ?? "Unknown"}
+                                  {availabilityTo ? ` - ${availabilityTo}` : ""}
+                                </p>
+                              </div>
+                            ) : (
+                              <p className="mt-2 text-xs text-foreground/60">No approved availability on file.</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-3 border-t border-border pt-4 md:flex-row md:items-center md:justify-between">
+                        <div className="text-xs text-foreground/70">
+                          Last updated fields reflect saved employment data. Remember to save after making adjustments.
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50"
+                            onClick={() => saveRosterRow(row)}
+                            disabled={!hasChanges || saving}
+                          >
+                            {saving ? (
+                              <>
+                                <Loader2 className="h-4 w-4 animate-spin" /> Saving
+                              </>
+                            ) : (
+                              <>Save</>
+                            )}
+                          </button>
+                          <button
+                            className="inline-flex items-center gap-2 rounded-md border border-border px-4 py-2 text-sm"
+                            onClick={() => updateRosterDraft(row, () => buildRosterDraft(row))}
+                            disabled={!hasChanges || saving}
+                          >
+                            Reset
+                          </button>
+                          {row.status !== "terminated" && row.user_id !== currentUserId && (
+                            <button
+                              className="inline-flex items-center gap-2 rounded-md bg-rose-600 px-4 py-2 text-sm text-white disabled:opacity-50"
+                              onClick={() => openTerminate(row)}
+                              disabled={disabledUI || saving}
+                            >
+                              <UserX className="h-4 w-4" /> Terminate
+                            </button>
                           )}
                         </div>
                       </div>
                     </div>
-
-                    <div className="flex flex-col gap-3 border-t border-border pt-4 md:flex-row md:items-center md:justify-between">
-                      <div className="text-xs text-foreground/70">
-                        Last updated fields reflect saved employment data. Remember to save after making adjustments.
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50"
-                          onClick={() => saveRosterRow(row)}
-                          disabled={!hasChanges || saving}
-                        >
-                          {saving ? (
-                            <>
-                              <Loader2 className="h-4 w-4 animate-spin" /> Saving
-                            </>
-                          ) : (
-                            <>Save</>
-                          )}
-                        </button>
-                        <button
-                          className="inline-flex items-center gap-2 rounded-md border border-border px-4 py-2 text-sm"
-                          onClick={() => updateRosterDraft(row, () => buildRosterDraft(row))}
-                          disabled={!hasChanges || saving}
-                        >
-                          Reset
-                        </button>
-                        {row.status !== "terminated" && row.user_id !== currentUserId && (
-                          <button
-                            className="inline-flex items-center gap-2 rounded-md bg-rose-600 px-4 py-2 text-sm text-white disabled:opacity-50"
-                            onClick={() => openTerminate(row)}
-                            disabled={disabledUI || saving}
-                          >
-                            <UserX className="h-4 w-4" /> Terminate
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
+                  );
                 })}
               </div>
               {totalPages > 1 && (
@@ -1767,119 +1814,139 @@ export default function UserManagement({ businessId }: Props) {
           )}
         </section>
 
-        {/* Inline accept panel */}
+        {/* Accept modal */}
         {openTarget && (
-          <div className="mt-6 bg-background border border-border rounded-xl shadow-sm overflow-hidden">
-            <button
-              className="w-full flex items-center justify-between px-4 py-3 border-b"
-              onClick={() => setOpenTarget(openTarget ? null : openTarget)}
-            >
-              <div className="font-medium">
-                {openTarget.kind === "invite" && `Accept invite: ${openTarget.invite.email}`} 
-                {openTarget.kind === "employment" &&
-                  `Activate: ${openTarget.employment.profile?.full_name || openTarget.employment.profile?.email || openTarget.employment.user_id}`}
-                {openTarget.kind === "request" &&
-                  `Approve request: ${openTarget.request.profile?.full_name || openTarget.request.profile?.email || openTarget.request.requester_user_id}`}
-              </div>
-              <ChevronDown className="w-4 h-4" />
-            </button>
-
-            <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm mb-1 text-foreground">Primary role</label>
-                <select
-                  value={formPrimaryRoleId}
-                  onChange={e => handlePrimaryRoleChange(e.target.value as UUID | "")}
-                  className="w-full border border-border rounded-md px-3 py-2 bg-transparent text-foreground"
-                >
-                  <option value="">No role</option>
-                  {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                </select>
-              </div>
-
-              <div className="md:col-span-2">
-                <label className="block text-sm mb-1 text-foreground">All roles</label>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
-                  {roles.map(role => {
-                    const checked = formRoleIds.includes(role.id);
-                    return (
-                      <label key={role.id} className="inline-flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          className="accent-primary"
-                          checked={checked}
-                          onChange={() => toggleFormRole(role.id)}
-                        />
-                        <span>{role.name}</span>
-                      </label>
-                    );
-                  })}
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-background/80 px-4">
+            <div className="w-full max-w-3xl rounded-xl border border-border bg-background shadow-xl">
+              <div className="flex items-start justify-between border-b border-border px-5 py-4">
+                <div className="font-semibold text-lg">
+                  {openTarget.kind === "invite" && `Accept invite: ${openTarget.invite.email}`}
+                  {openTarget.kind === "employment" &&
+                    `Activate: ${openTarget.employment.profile?.full_name || openTarget.employment.profile?.email || openTarget.employment.user_id}`}
+                  {openTarget.kind === "request" &&
+                    `Approve request: ${openTarget.request.profile?.full_name || openTarget.request.profile?.email || openTarget.request.requester_user_id}`}
                 </div>
-                <p className="text-xs text-foreground/60 mt-1">
-                  Choose every role this person should be eligible for. The primary role drives scheduling defaults.
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-sm mb-1 text-foreground">Primary location</label>
-                <select
-                  value={formPrimaryLocId}
-                  onChange={e => setFormPrimaryLocId(e.target.value as UUID | "")}
-                  className="w-full border border-border rounded-md px-3 py-2 bg-transparent text-foreground"
-                >
-                  <option value="">None</option>
-                  {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-                </select>
-              </div>
-
-              <div className="md:col-span-2">
-                <label className="block text-sm mb-1 text-foreground">Allowed locations</label>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                  {locations.map(l => {
-                    const checked = formAllowedLocs.includes(l.id);
-                    return (
-                      <label key={l.id} className="inline-flex items-center gap-2 text-sm text-foreground">
-                        <input
-                          type="checkbox"
-                          className="accent-primary"
-                          checked={checked}
-                          onChange={() =>
-                            setFormAllowedLocs(prev => checked ? prev.filter(x => x !== l.id) : [...prev, l.id])
-                          }
-                        />
-                        <span>{l.name}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-                <p className="text-xs text-foreground/60 mt-1">
-                  Stored in <code>employment.permissions.locations_allowed</code>.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-6">
-                <label className="inline-flex items-center gap-2 text-sm text-foreground">
-                  <input type="checkbox" className="accent-primary" checked={formIsMgr} onChange={e => setFormIsMgr(e.target.checked)} />
-                  Manager
-                </label>
-                <label className="inline-flex items-center gap-2 text-sm text-foreground">
-                  <input type="checkbox" className="accent-primary" checked={formIsAdmin} onChange={e => setFormIsAdmin(e.target.checked)} />
-                  Admin
-                </label>
-              </div>
-
-              <div className="md:col-span-2 flex gap-2">
                 <button
-                  className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm disabled:opacity-50"
-                  onClick={acceptSave}
-                  disabled={!verified}
-                  title={verified ? "Save" : "Business must be verified"}
+                  type="button"
+                  className="rounded-md border border-border/70 p-1 text-foreground hover:bg-background/70"
+                  onClick={resetPanel}
+                  aria-label="Close approval dialog"
                 >
-                  Save
+                  <X className="h-4 w-4" />
                 </button>
-                <button className="px-4 py-2 rounded-md border border-border text-sm text-foreground" onClick={resetPanel}>
-                  Cancel
-                </button>
+              </div>
+
+              <div className="p-6">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div>
+                    <label className="block text-sm mb-1 text-foreground">Primary role</label>
+                    <select
+                      value={formPrimaryRoleId}
+                      onChange={e => handlePrimaryRoleChange(e.target.value as UUID | "")}
+                      className="w-full border border-border rounded-md px-3 py-2 bg-transparent text-foreground"
+                    >
+                      <option value="">No role</option>
+                      {roles.map(r => (
+                        <option key={r.id} value={r.id}>
+                          {r.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block text-sm mb-1 text-foreground">All roles</label>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
+                      {roles.map(role => {
+                        const checked = formRoleIds.includes(role.id);
+                        return (
+                          <label key={role.id} className="inline-flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              className="accent-primary"
+                              checked={checked}
+                              onChange={() => toggleFormRole(role.id)}
+                            />
+                            <span>{role.name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <p className="text-xs text-foreground/60 mt-1">
+                      Choose every role this person should be eligible for. The primary role drives scheduling defaults.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm mb-1 text-foreground">Primary location</label>
+                    <select
+                      value={formPrimaryLocId}
+                      onChange={e => setFormPrimaryLocId(e.target.value as UUID | "")}
+                      className="w-full border border-border rounded-md px-3 py-2 bg-transparent text-foreground"
+                    >
+                      <option value="">None</option>
+                      {locations.map(l => (
+                        <option key={l.id} value={l.id}>
+                          {l.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block text-sm mb-1 text-foreground">Allowed locations</label>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                      {locations.map(l => {
+                        const checked = formAllowedLocs.includes(l.id);
+                        return (
+                          <label key={l.id} className="inline-flex items-center gap-2 text-sm text-foreground">
+                            <input
+                              type="checkbox"
+                              className="accent-primary"
+                              checked={checked}
+                              onChange={() =>
+                                setFormAllowedLocs(prev => (checked ? prev.filter(x => x !== l.id) : [...prev, l.id]))
+                              }
+                            />
+                            <span>{l.name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <p className="text-xs text-foreground/60 mt-1">
+                      Stored in <code>employment.permissions.locations_allowed</code>.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-6">
+                    <label className="inline-flex items-center gap-2 text-sm text-foreground">
+                      <input type="checkbox" className="accent-primary" checked={formIsMgr} onChange={e => setFormIsMgr(e.target.checked)} />
+                      Manager
+                    </label>
+                    <label className="inline-flex items-center gap-2 text-sm text-foreground">
+                      <input type="checkbox" className="accent-primary" checked={formIsAdmin} onChange={e => setFormIsAdmin(e.target.checked)} />
+                      Admin
+                    </label>
+                  </div>
+                </div>
+
+                <div className="mt-6 flex flex-col gap-3 md:flex-row md:justify-end">
+                  <button
+                    className="rounded-md border border-border px-4 py-2 text-sm"
+                    onClick={resetPanel}
+                    type="button"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
+                    onClick={acceptSave}
+                    disabled={!verified}
+                    title={verified ? "Save" : "Business must be verified"}
+                  >
+                    Save
+                  </button>
+                </div>
               </div>
             </div>
           </div>

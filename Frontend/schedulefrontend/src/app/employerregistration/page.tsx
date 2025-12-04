@@ -139,8 +139,35 @@ import {
       return;
     }
 
+    const { data: business, error: businessError } = await supabase
+      .from('business')
+      .select('id, verification_status')
+      .eq('owner_user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (businessError && businessError.code !== 'PGRST116') {
+      console.error('Business lookup failed:', businessError);
+      setMessage({ type: 'error', text: 'Unable to load your business record. Please try again.' });
+      setLoading(false);
+      return;
+    }
+
+    if (!business) {
+      setLoading(false);
+      router.push('/employeronboarding/userinfo');
+      return;
+    }
+
+    if (business.verification_status !== 'verified') {
+      setLoading(false);
+      router.push(`/employeronboarding/businessDocumentation/${business.id}?from=login`);
+      return;
+    }
+
     setLoading(false);
-    router.push('/employermanagement/employerhomepage');
+    router.push(`/employeronboarding/locationandroleinfo/${business.id}`);
   }
 
     return (

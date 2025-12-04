@@ -98,13 +98,9 @@ export default function EmployeeBusinessGate({
           <p className="text-sm text-foreground/70">
             {t("employee.schedule.gate.body")}
           </p>
-          <button
-            type="button"
-            className="w-full rounded-xl bg-primary px-4 py-2 text-base font-semibold text-primary-foreground shadow-md hover:bg-primary/90"
-            onClick={() => router.push("/business-selection")}
-          >
+          <p className="text-xs text-muted-foreground">
             {t("employee.schedule.gate.cta")}
-          </button>
+          </p>
         </div>
       </div>
     );

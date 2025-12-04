@@ -97,6 +97,11 @@
   "employee.nav.mobilePlaceholder": "Select a page",
   "branding.tagline": "Schedule it your way!",
 
+  "employee.home.emptyWeek.title": "You're all caught up",
+  "employee.home.emptyWeek.body": "No shifts or requests are waiting on you this week. Peek at the full schedule or send your manager a quick note if you want more hours.",
+  "employee.home.emptyWeek.primaryAction": "Browse entire schedule",
+  "employee.home.emptyWeek.secondaryAction": "Message a manager",
+
   "employee.schedule.title": "Entire schedule",
   "employee.schedule.subtitle": "See dropped shifts, pickup requests, and this week's coverage.",
   "employee.schedule.errors.noEmployment": "Active employment not found. Please contact your manager.",
@@ -104,7 +109,7 @@
   "employee.schedule.errors.pickup": "Failed to submit pickup request.",
   "employee.schedule.gate.heading": "You're not in a business yet",
   "employee.schedule.gate.body": "Accept an invite or request access from your manager to unlock your schedule, requests, and shift tools.",
-  "employee.schedule.gate.cta": "Go to business selection",
+  "employee.schedule.gate.cta": "A manager must verify you before you can continue.",
   "employee.guard.errors.generic": "We couldn't verify your business membership right now.",
   "employee.guard.buttons.retry": "Retry",
   "employee.schedule.pickup.announcementTitle": "{name} requested to pick up a shift",

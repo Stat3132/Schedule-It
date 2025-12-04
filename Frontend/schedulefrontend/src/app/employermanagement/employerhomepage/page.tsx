@@ -1,10 +1,32 @@
 // app/employermanagement/employerhomepage/page.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  ChangeEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import NextImage from "next/image";
+import Cropper, { type Area, type MediaSize } from "react-easy-crop";
+import "react-easy-crop/react-easy-crop.css";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import type { Announcement } from "../../../lib/supabase";
 import { AttachmentPreview } from "../../../components/messages/AttachmentPreview";
+import {
+  CROPPED_FILE_EXT,
+  CROPPED_MIME_TYPE,
+  CROPPED_OUTPUT_SIZE,
+  MAX_PROFILE_PHOTO_BYTES,
+  PRESET_AVATARS,
+  PROFILE_PHOTO_BUCKET,
+  getCroppedBlob,
+  getFileExtension,
+  isGifFile,
+  isGifUrl,
+} from "../../../lib/profileMedia";
 import {
   normalizeAnnouncementRow,
   markAnnouncementsAsRead,
@@ -193,6 +215,28 @@ function describeCellStatus(cell: DayCell): string | null {
 export default function EmployerHomePage() {
   const supabase = useRef(createClientComponentClient()).current;
 
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [profileNeedsSetup, setProfileNeedsSetup] = useState(false);
+  const [profileDisplayName, setProfileDisplayName] = useState("");
+  const [profileDescription, setProfileDescription] = useState("");
+  const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null);
+  const [selectedPresetAvatarId, setSelectedPresetAvatarId] =
+    useState<string | null>(null);
+  const [profilePhotoUploading, setProfilePhotoUploading] = useState(false);
+  const profileUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const [profileCropModalOpen, setProfileCropModalOpen] = useState(false);
+  const [profileCropImageSrc, setProfileCropImageSrc] = useState<string | null>(
+    null,
+  );
+  const [profileCrop, setProfileCrop] = useState({ x: 0, y: 0 });
+  const [profileCropZoom, setProfileCropZoom] = useState(1);
+  const [profileCroppedAreaPixels, setProfileCroppedAreaPixels] =
+    useState<Area | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [profileSubmitting, setProfileSubmitting] = useState(false);
+
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -209,6 +253,309 @@ export default function EmployerHomePage() {
   const [weekLabel, setWeekLabel] = useState("");
   const [days, setDays] = useState<{ label: string; date: string }[]>([]);
   const [grid, setGrid] = useState<GridRow[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      setProfileError(null);
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (cancelled) return;
+
+      setCurrentUserId(user?.id ?? null);
+
+      if (!user) {
+        setProfileNeedsSetup(false);
+        setProfileModalOpen(false);
+        return;
+      }
+
+      const metadata = (user.user_metadata ?? {}) as Record<string, unknown>;
+      const metadataProfileDone = Boolean(metadata.profile_customized);
+      const metadataDescription =
+        typeof metadata.profile_title === "string"
+          ? (metadata.profile_title as string)
+          : "";
+
+      let profileNamePrefill = "";
+      let profilePhotoPrefill: string | null = null;
+      let profileDescriptionPrefill = metadataDescription;
+
+      try {
+        const { data: profileRow } = await supabase
+          .from("profiles")
+          .select("display_name,photo_url,profile_title")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        profileNamePrefill = (profileRow?.display_name as string | null) ?? "";
+        profilePhotoPrefill = (profileRow?.photo_url as string | null) ?? null;
+        profileDescriptionPrefill =
+          (profileRow?.profile_title as string | null) ?? metadataDescription;
+      } catch (profileErr) {
+        console.error("[EmployerHome] profile prefill error", profileErr);
+      }
+
+      if (cancelled) return;
+
+      const fallbackAvatar = PRESET_AVATARS[0];
+      const nextPhoto = profilePhotoPrefill ?? fallbackAvatar.url;
+      const presetMatch = profilePhotoPrefill
+        ? PRESET_AVATARS.find((avatar) => avatar.url === profilePhotoPrefill)
+        : fallbackAvatar;
+
+      setProfileDisplayName(profileNamePrefill);
+      setProfileDescription(profileDescriptionPrefill ?? "");
+      setProfilePhotoUrl(nextPhoto);
+      setSelectedPresetAvatarId(presetMatch ? presetMatch.id : null);
+
+      const needsProfileSetup =
+        !metadataProfileDone ||
+        profileNamePrefill.trim().length === 0 ||
+        !profilePhotoPrefill;
+
+      setProfileNeedsSetup(needsProfileSetup);
+      setProfileModalOpen(needsProfileSetup);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase]);
+
+  const handleSelectPresetAvatar = (avatarId: string, avatarUrl: string) => {
+    setSelectedPresetAvatarId(avatarId);
+    setProfilePhotoUrl(avatarUrl);
+    setProfileError(null);
+  };
+
+  const handleResetPhotoSelection = () => {
+    setSelectedPresetAvatarId(null);
+    setProfilePhotoUrl(null);
+    setProfileError(null);
+  };
+
+  const uploadProfilePhotoBlob = useCallback(
+    async (blob: Blob, extension: string, mimeType: string) => {
+      if (!currentUserId) {
+        throw new Error("Missing user id");
+      }
+
+      const safeExt = extension || CROPPED_FILE_EXT;
+      const filePath = `${currentUserId}/${Date.now()}.${safeExt}`;
+
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from(PROFILE_PHOTO_BUCKET)
+        .upload(filePath, blob, {
+          cacheControl: "3600",
+          upsert: true,
+          contentType: mimeType,
+        });
+
+      if (uploadError) {
+        throw uploadError;
+      }
+
+      const { data: publicUrlData } = supabase.storage
+        .from(PROFILE_PHOTO_BUCKET)
+        .getPublicUrl(filePath);
+
+      if (!publicUrlData?.publicUrl) {
+        throw new Error("Unable to publish profile photo URL");
+      }
+
+      return publicUrlData.publicUrl;
+    },
+    [currentUserId, supabase],
+  );
+
+  const handleProfilePhotoUpload = async (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    if (!currentUserId) return;
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > MAX_PROFILE_PHOTO_BYTES) {
+      setProfileError("Please choose an image under 10MB.");
+      event.target.value = "";
+      return;
+    }
+
+    if (isGifFile(file)) {
+      setProfilePhotoUploading(true);
+      setProfileError(null);
+      try {
+        const extension = getFileExtension(file.name, "gif");
+        const publicUrl = await uploadProfilePhotoBlob(
+          file,
+          extension,
+          file.type || "image/gif",
+        );
+        setProfilePhotoUrl(publicUrl);
+        setSelectedPresetAvatarId(null);
+      } catch (error) {
+        console.error("[EmployerHome] gif upload failed", error);
+        const message =
+          error instanceof Error
+            ? error.message
+            : "We could not upload that file. Please try again.";
+        setProfileError(message);
+      } finally {
+        setProfilePhotoUploading(false);
+        event.target.value = "";
+      }
+      return;
+    }
+
+    try {
+      const reader = new FileReader();
+      const dataUrlPromise = new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+      });
+      reader.readAsDataURL(file);
+      const dataUrl = await dataUrlPromise;
+      setProfileCropImageSrc(dataUrl);
+      setProfileCrop({ x: 0, y: 0 });
+      setProfileCropZoom(1);
+      setProfileCroppedAreaPixels(null);
+      setProfileCropModalOpen(true);
+      setSelectedPresetAvatarId(null);
+      setProfileError(null);
+    } catch (error) {
+      console.error("[EmployerHome] profile photo read failed", error);
+      const message =
+        error instanceof Error
+          ? error.message
+          : "We could not read that file. Please try again.";
+      setProfileError(message);
+    } finally {
+      event.target.value = "";
+    }
+  };
+
+  const handleProfileCropMediaLoaded = (media: MediaSize) => {
+    setProfileCroppedAreaPixels({
+      x: 0,
+      y: 0,
+      width: media.width,
+      height: media.height,
+    });
+  };
+
+  const handleProfileCropCancel = () => {
+    setProfileCropModalOpen(false);
+    setProfileCropImageSrc(null);
+    setProfileCroppedAreaPixels(null);
+    setProfileCrop({ x: 0, y: 0 });
+    setProfileCropZoom(1);
+    if (profileUploadInputRef.current) {
+      profileUploadInputRef.current.value = "";
+    }
+  };
+
+  const handleProfileCropApply = async () => {
+    if (!profileCropImageSrc || !profileCroppedAreaPixels) {
+      setProfileError("Please select an image to crop.");
+      return;
+    }
+
+    setProfilePhotoUploading(true);
+    setProfileError(null);
+
+    try {
+      const blob = await getCroppedBlob(
+        profileCropImageSrc,
+        profileCroppedAreaPixels,
+        CROPPED_OUTPUT_SIZE,
+        CROPPED_MIME_TYPE,
+      );
+      const publicUrl = await uploadProfilePhotoBlob(
+        blob,
+        CROPPED_FILE_EXT,
+        CROPPED_MIME_TYPE,
+      );
+      setProfilePhotoUrl(publicUrl);
+      setProfileCropModalOpen(false);
+      setProfileCropImageSrc(null);
+      setProfileCroppedAreaPixels(null);
+      setProfileCrop({ x: 0, y: 0 });
+      setProfileCropZoom(1);
+    } catch (error) {
+      console.error("[EmployerHome] crop/upload failed", error);
+      const message =
+        error instanceof Error
+          ? error.message
+          : "We could not save that photo. Please try again.";
+      setProfileError(message);
+    } finally {
+      setProfilePhotoUploading(false);
+      if (profileUploadInputRef.current) {
+        profileUploadInputRef.current.value = "";
+      }
+    }
+  };
+
+  const handleCompleteProfileCustomization = async () => {
+    if (!currentUserId) return;
+    const trimmedName = profileDisplayName.trim();
+    if (!trimmedName) {
+      setProfileError("Please enter your display name.");
+      return;
+    }
+    const trimmedPhotoUrl = profilePhotoUrl?.trim();
+    if (!trimmedPhotoUrl) {
+      setProfileError("Please choose a profile photo.");
+      return;
+    }
+    const trimmedDescription = profileDescription.trim();
+
+    setProfileSubmitting(true);
+    setProfileError(null);
+    try {
+      const { error: profileErr } = await supabase
+        .from("profiles")
+        .upsert(
+          {
+            id: currentUserId,
+            display_name: trimmedName,
+            photo_url: trimmedPhotoUrl,
+            profile_title: trimmedDescription || null,
+          },
+          { onConflict: "id" },
+        );
+
+      if (profileErr) {
+        throw profileErr;
+      }
+
+      const { error: metadataErr } = await supabase.auth.updateUser({
+        data: {
+          profile_customized: true,
+          profile_title: trimmedDescription || null,
+        },
+      });
+
+      if (metadataErr) {
+        throw metadataErr;
+      }
+
+      setProfileNeedsSetup(false);
+      setProfileModalOpen(false);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Something went wrong while saving your profile.";
+      setProfileError(message);
+    } finally {
+      setProfileSubmitting(false);
+    }
+  };
 
   /* ---------- Seed selection from localStorage ---------- */
   useEffect(() => {

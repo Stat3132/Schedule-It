@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useState } from "react";
-import { User } from "lucide-react";
+import { ArrowLeft, User } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { Button } from "@/components/ui/button";
 
 export default function SignUpClient() {
   const router = useRouter();
@@ -105,7 +106,25 @@ export default function SignUpClient() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6">
+    <div className="relative min-h-screen flex items-center justify-center p-6">
+      <button
+        type="button"
+        aria-label="Go back"
+        onClick={() => router.back()}
+        className="absolute left-4 top-6 z-20 rounded-full border border-border bg-background/80 p-2 text-foreground shadow-sm backdrop-blur md:hidden"
+      >
+        <ArrowLeft className="h-5 w-5" />
+      </button>
+      <div className="fixed bottom-4 left-4 z-20 hidden md:block">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => router.back()}
+        >
+          Back
+        </Button>
+      </div>
       <div className="w-full max-w-2xl">
         <div className="bg-card rounded-2xl shadow-xl border border-border overflow-hidden">
           <div className="bg-primary px-8 py-10">
