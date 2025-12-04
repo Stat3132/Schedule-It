@@ -120,7 +120,7 @@ import {
 
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
-      .select('role')
+      .select('role,display_name,photo_url')
       .eq('id', userId)
       .single();
 
@@ -166,8 +166,34 @@ import {
       return;
     }
 
-    setLoading(false);
-    router.push(`/employeronboarding/locationandroleinfo/${business.id}`);
+    // If the owner has already completed onboarding (profile customized OR roles+locations exist),
+    // send them to the Employer homepage instead of re-entering location/role setup.
+    try {
+      const profRow = profile as { role?: string | null; display_name?: string | null; photo_url?: string | null } | null;
+      const profileCustomized = Boolean(profRow?.display_name || profRow?.photo_url);
+
+      const [{ data: existingRoles }, { data: existingLocs }] = await Promise.all([
+        supabase.from('role').select('id').eq('business_id', business.id).limit(1),
+        supabase.from('location').select('id').eq('business_id', business.id).limit(1),
+      ]);
+
+      const hasRoles = Array.isArray(existingRoles) && existingRoles.length > 0;
+      const hasLocs = Array.isArray(existingLocs) && existingLocs.length > 0;
+
+      setLoading(false);
+      if (profileCustomized || (hasRoles && hasLocs)) {
+        router.push('/employermanagement/employerhomepage');
+      } else {
+        router.push(`/employeronboarding/locationandroleinfo/${business.id}`);
+      }
+      return;
+    } catch (e) {
+      // fallback to onboarding location/role on any unexpected error
+      console.error('Onboarding redirect check failed:', e);
+      setLoading(false);
+      router.push(`/employeronboarding/locationandroleinfo/${business.id}`);
+      return;
+    }
   }
 
     return (

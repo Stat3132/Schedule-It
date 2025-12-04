@@ -491,19 +491,19 @@ export default function EmployerMessagingPage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const mediaQuery = window.matchMedia("(max-width: 1023px)");
-    const applyLayoutSideEffects = (matches: boolean) => {
-      setInfoPanelMode(null);
-      if (matches) {
-        setMobileView("chat");
-      }
-    };
     const handleChange = (event: MediaQueryListEvent) => {
       setIsMobileLayout(event.matches);
-      applyLayoutSideEffects(event.matches);
+      if (!event.matches) {
+        setMobileView("chat");
+      }
+      setInfoPanelMode(null);
     };
     const initialMatches = mediaQuery.matches;
     setIsMobileLayout(initialMatches);
-    applyLayoutSideEffects(initialMatches);
+    if (!initialMatches) {
+      setMobileView("chat");
+    }
+    setInfoPanelMode(null);
     if (typeof mediaQuery.addEventListener === "function") {
       mediaQuery.addEventListener("change", handleChange);
     } else {
@@ -3300,15 +3300,22 @@ export default function EmployerMessagingPage() {
   }
 
   const showBackButton = isMobileLayout && mobileView === "chat";
+  const layoutShellClassName = [
+    "flex w-full bg-background overflow-hidden",
+    isMobileLayout
+      ? "min-h-screen flex-col"
+      : "h-[calc(100vh-4rem)] min-h-[600px] gap-4 lg:gap-12",
+  ].join(" ");
   const sidebarClassName = [
-    "relative flex flex-col border-r bg-card/60 backdrop-blur-sm transition-transform duration-300 ease-in-out",
-    isMobileLayout ? "absolute inset-0 z-30 w-full" : "lg:static lg:w-64",
-    isMobileLayout && mobileView === "chat" ? "-translate-x-full" : "translate-x-0",
+    "flex flex-col bg-card/60 backdrop-blur-sm",
+    isMobileLayout
+      ? "w-full border-b border-border/60"
+      : "w-64 shrink-0 border-r border-border/60",
+    isMobileLayout && mobileView === "chat" ? "hidden" : "",
   ].join(" ");
   const chatPanelClassName = [
-    "relative flex min-h-0 min-w-0 flex-1 flex-col transition-transform duration-300 ease-in-out",
-    isMobileLayout ? "absolute inset-0 z-20 w-full bg-background" : "lg:static",
-    isMobileLayout && mobileView === "list" ? "translate-x-full" : "translate-x-0",
+    "flex min-h-0 min-w-0 flex-1 flex-col bg-background",
+    isMobileLayout && mobileView === "list" ? "hidden" : "",
   ].join(" ");
   const showPeerInfo = infoPanelMode === "peer" && Boolean(activePeer);
   const showGroupInfo = infoPanelMode === "group" && Boolean(activeGroup);
@@ -3326,10 +3333,10 @@ export default function EmployerMessagingPage() {
 
   return (
     <>
-      <div className="flex h-[calc(100vh-4rem)] min-h-[600px] w-full bg-background gap-4 overflow-hidden lg:gap-12">
-      <div className="relative flex h-full flex-1 overflow-hidden">
-      {/* Left sidebar */}
-      <aside className={sidebarClassName}>
+      <div className={layoutShellClassName}>
+        <div className="flex h-full flex-1 overflow-hidden">
+          {/* Left sidebar */}
+          <aside className={sidebarClassName}>
         <div className="flex items-center gap-2 border-b px-4 py-3">
           <div className="relative">
             <MessageCircle className="h-5 w-5 text-primary" />
@@ -3777,8 +3784,6 @@ export default function EmployerMessagingPage() {
           </div>
         </div>
       )}
-
-      {}
       <main className={chatPanelClassName}>
         <div className="flex min-h-0 flex-1 flex-col">
           <div
@@ -4067,10 +4072,10 @@ export default function EmployerMessagingPage() {
         </footer>
       </div>
       </main>
-      </div>
+    </div>
 
-      {/* Right column */}
-      <aside className="hidden lg:flex lg:flex-col lg:w-64 border-l bg-card/40 px-4 py-4">
+        {/* Right column */}
+        <aside className="hidden lg:flex lg:flex-col lg:w-64 border-l bg-card/40 px-4 py-4">
         <div className="space-y-4">
           <div>
             <h3 className="text-xs font-semibold text-muted-foreground">

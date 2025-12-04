@@ -339,7 +339,7 @@ export default function EmployerHomePage() {
   };
 
   const uploadProfilePhotoBlob = useCallback(
-    async (blob: Blob, extension: string, mimeType: string) => {
+    async (blob: Blob, extension: string, mimeType: string): Promise<string> => {
       if (!currentUserId) {
         throw new Error("Missing user id");
       }
@@ -347,7 +347,7 @@ export default function EmployerHomePage() {
       const safeExt = extension || CROPPED_FILE_EXT;
       const filePath = `${currentUserId}/${Date.now()}.${safeExt}`;
 
-      const { data: uploadData, error: uploadError } = await supabase.storage
+      const uploadResult = await supabase.storage
         .from(PROFILE_PHOTO_BUCKET)
         .upload(filePath, blob, {
           cacheControl: "3600",
@@ -355,19 +355,21 @@ export default function EmployerHomePage() {
           contentType: mimeType,
         });
 
-      if (uploadError) {
-        throw uploadError;
+      if (uploadResult.error) {
+        // propagate storage error so callers can handle it
+        throw uploadResult.error;
       }
 
       const { data: publicUrlData } = supabase.storage
         .from(PROFILE_PHOTO_BUCKET)
         .getPublicUrl(filePath);
 
-      if (!publicUrlData?.publicUrl) {
+      const publicUrl = publicUrlData?.publicUrl;
+      if (!publicUrl) {
         throw new Error("Unable to publish profile photo URL");
       }
 
-      return publicUrlData.publicUrl;
+      return publicUrl;
     },
     [currentUserId, supabase],
   );

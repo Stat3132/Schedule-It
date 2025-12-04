@@ -91,7 +91,27 @@ type ShiftAssignmentRow = {
 type LocationRowDb = {
   id: string;
   name: string;
+  opens_at?: string | null;
+  closes_at?: string | null;
+  hours_by_day?: LocationHoursByDayJson | null;
 };
+
+type LocationHoursEntry = {
+  opens_at?: string | null;
+  closes_at?: string | null;
+  closed?: boolean | null;
+};
+
+type LocationHoursByDayJson = Partial<Record<DayOfWeek, LocationHoursEntry>>;
+
+type NormalizedLocationHours = Record<
+  DayOfWeek,
+  {
+    open: string;
+    close: string;
+    closed: boolean;
+  }
+>;
 
 type RoleRowDb = {
   id: string;
@@ -217,6 +237,56 @@ function intersectWindow(
   return { start: fromMinutes(min), end: fromMinutes(max) };
 }
 
+function buildUniformLocationHours(
+  open: string,
+  close: string
+): NormalizedLocationHours {
+  return ALL_DAY_NAMES.reduce((acc, day) => {
+    acc[day] = { open, close, closed: false };
+    return acc;
+  }, {} as NormalizedLocationHours);
+}
+
+function normalizeLocationHours(
+  raw: unknown,
+  fallbackOpen: string,
+  fallbackClose: string
+): NormalizedLocationHours {
+  const normalized = buildUniformLocationHours(fallbackOpen, fallbackClose);
+
+  if (!raw || typeof raw !== "object") return normalized;
+
+  const typed = raw as LocationHoursByDayJson;
+  for (const day of ALL_DAY_NAMES) {
+    const entry = typed?.[day];
+    if (!entry) continue;
+    const open =
+      typeof entry.opens_at === "string" && entry.opens_at.trim().length > 0
+        ? entry.opens_at
+        : normalized[day].open;
+    const close =
+      typeof entry.closes_at === "string" && entry.closes_at.trim().length > 0
+        ? entry.closes_at
+        : normalized[day].close;
+    normalized[day] = {
+      open,
+      close,
+      closed: Boolean(entry.closed),
+    };
+  }
+
+  return normalized;
+}
+
+function dayIndexToKey(day: number): DayOfWeek {
+  const idx = ((day % 7) + 7) % 7;
+  return ALL_DAY_NAMES[idx];
+}
+
+function formatDayTitle(day: DayOfWeek) {
+  return day.charAt(0).toUpperCase() + day.slice(1);
+}
+
 /* ---------- Availability JSON helpers ---------- */
 
 function asWeeklyPattern(raw: unknown): WeeklyPatternPayload {
@@ -286,6 +356,9 @@ export default function CreateSchedulePage(): JSX.Element {
   const [locations, setLocations] = useState<LocationRowDb[]>([]);
   const [openHH, setOpenHH] = useState<string>("09:00");
   const [closeHH, setCloseHH] = useState<string>("17:00");
+  const [hoursByDay, setHoursByDay] = useState<NormalizedLocationHours>(() =>
+    buildUniformLocationHours("09:00", "17:00")
+  );
 
   const [drafts, setDrafts] = useState<ShiftDraft[]>([]);
   const [activeDay, setActiveDay] = useState<number | null>(null);
@@ -472,17 +545,21 @@ export default function CreateSchedulePage(): JSX.Element {
         if (activeLocationId) {
           const { data: loc, error: locErr } = await supabase
             .from("location")
-            .select("id,name,opens_at,closes_at")
+            .select("id,name,opens_at,closes_at,hours_by_day")
             .eq("id", activeLocationId)
             .maybeSingle();
 
           if (locErr) console.error("location load error", locErr);
 
           if (!cancelled) {
-            setLocationName(loc?.name ?? null);
-            setOpenHH((loc as { opens_at?: string | null } | null)?.opens_at ?? "09:00");
-            setCloseHH(
-              (loc as { closes_at?: string | null } | null)?.closes_at ?? "17:00"
+            const typedLoc = (loc as LocationRowDb | null) ?? null;
+            const nextOpen = typedLoc?.opens_at ?? "09:00";
+            const nextClose = typedLoc?.closes_at ?? "17:00";
+            setLocationName(typedLoc?.name ?? null);
+            setOpenHH(nextOpen);
+            setCloseHH(nextClose);
+            setHoursByDay(
+              normalizeLocationHours(typedLoc?.hours_by_day, nextOpen, nextClose)
             );
           }
         } else {
@@ -490,6 +567,7 @@ export default function CreateSchedulePage(): JSX.Element {
             setLocationName(null);
             setOpenHH("09:00");
             setCloseHH("17:00");
+            setHoursByDay(buildUniformLocationHours("09:00", "17:00"));
           }
         }
 
@@ -826,6 +904,21 @@ export default function CreateSchedulePage(): JSX.Element {
     return byDay[day] ?? null;
   };
 
+  const getLocationWindowForDay = (
+    day: number | null
+  ): { start: string; end: string } | null => {
+    if (day == null) return null;
+    const entry = hoursByDay[dayIndexToKey(day)];
+    if (!entry || entry.closed) return null;
+    return { start: entry.open, end: entry.close };
+  };
+
+  const isLocationClosedOnDay = (day: number | null) => {
+    if (day == null) return false;
+    const entry = hoursByDay[dayIndexToKey(day)];
+    return entry?.closed ?? false;
+  };
+
   const computeAllowedWindowForDay = (
     empId: string,
     day: number | null
@@ -833,17 +926,25 @@ export default function CreateSchedulePage(): JSX.Element {
     if (day == null) return null;
     if (isEmployeeOffOnDay(empId, day)) return null;
 
+    const locationWindow = getLocationWindowForDay(day);
+    if (!locationWindow) return null;
+
     const avail = getAvailabilityWindow(empId, day);
 
     if (!avail || avail.status === "available") {
-      return { start: openHH, end: closeHH };
+      return locationWindow;
     }
 
     if (avail.status === "unavailable") {
       return null;
     }
 
-    const window = intersectWindow(openHH, closeHH, avail.start, avail.end);
+    const window = intersectWindow(
+      locationWindow.start,
+      locationWindow.end,
+      avail.start,
+      avail.end
+    );
     return window;
   };
 
@@ -852,12 +953,15 @@ export default function CreateSchedulePage(): JSX.Element {
     const isOff = isEmployeeOffOnDay(empId, day);
     const availWindow = getAvailabilityWindow(empId, day);
     const allowedWindow = computeAllowedWindowForDay(empId, day);
+    const locationClosed = isLocationClosedOnDay(day);
     const isUnavailableByAvail = availWindow?.status === "unavailable";
     const isPartial = availWindow?.status === "partial";
-    const isBlocked = isOff || isUnavailableByAvail || !allowedWindow;
+    const isBlocked = isOff || isUnavailableByAvail || locationClosed || !allowedWindow;
 
     let label: string;
-    if (isOff) {
+    if (locationClosed) {
+      label = "Location closed";
+    } else if (isOff) {
       label = "Time off";
     } else if (isUnavailableByAvail) {
       label = "Unavailable";
@@ -1218,6 +1322,51 @@ export default function CreateSchedulePage(): JSX.Element {
     [drafts]
   );
   const totalScheduledHours = (totalScheduledMinutes / 60).toFixed(1);
+  const editingHoursWindow = editing ? getLocationWindowForDay(editing.day) : null;
+  const storeHoursSummary = useMemo(() => {
+    const entries = ALL_DAY_NAMES.map((day) => ({ day, entry: hoursByDay[day] }));
+    const firstOpen = entries.find((item) => item.entry && !item.entry.closed);
+
+    if (!firstOpen) {
+      return {
+        title: "Closed all week",
+        subtitle: "Update this location's hours before scheduling.",
+      };
+    }
+
+    const uniform = entries.every((item) => {
+      if (!item.entry) return false;
+      if (item.entry.closed) return false;
+      return (
+        item.entry.open === firstOpen.entry!.open &&
+        item.entry.close === firstOpen.entry!.close
+      );
+    });
+
+    if (uniform) {
+      return {
+        title: formatRange12(firstOpen.entry!.open, firstOpen.entry!.close),
+        subtitle: "Same hours every day",
+      };
+    }
+
+    const focusDayIdx = activeDay ?? weekStartDay ?? 0;
+    const focusKey = dayIndexToKey(focusDayIdx);
+    const focusEntry = hoursByDay[focusKey];
+    const focusLabel = formatDayTitle(focusKey);
+
+    if (!focusEntry || focusEntry.closed) {
+      return {
+        title: `${focusLabel}: Closed`,
+        subtitle: "Choose a different day or adjust location hours.",
+      };
+    }
+
+    return {
+      title: formatRange12(focusEntry.open, focusEntry.close),
+      subtitle: `${focusLabel} hours · other days vary`,
+    };
+  }, [hoursByDay, activeDay, weekStartDay]);
 
   if (contextError && !activeBusinessId) {
     return (
@@ -1346,9 +1495,9 @@ export default function CreateSchedulePage(): JSX.Element {
                   Store hours
                 </p>
                 <p className="text-lg font-semibold text-foreground">
-                  {formatTime12(openHH)} – {formatTime12(closeHH)}
+                  {storeHoursSummary.title}
                 </p>
-                <p className="text-xs text-foreground/60">Shifts must stay inside this range.</p>
+                <p className="text-xs text-foreground/60">{storeHoursSummary.subtitle}</p>
               </div>
             </div>
           </section>
@@ -2039,8 +2188,8 @@ export default function CreateSchedulePage(): JSX.Element {
                 <input
                   type="time"
                   value={startTime}
-                  min={openHH}
-                  max={closeHH}
+                  min={editingHoursWindow?.start ?? openHH}
+                  max={editingHoursWindow?.end ?? closeHH}
                   onChange={(e) => setStartTime(e.target.value)}
                   className="w-full px-3 py-2 border border-border rounded-lg focus:ring-2 focus:ring-blue-500 bg-background text-foreground"
                 />
@@ -2053,8 +2202,8 @@ export default function CreateSchedulePage(): JSX.Element {
                 <input
                   type="time"
                   value={endTime}
-                  min={openHH}
-                  max={closeHH}
+                  min={editingHoursWindow?.start ?? openHH}
+                  max={editingHoursWindow?.end ?? closeHH}
                   onChange={(e) => setEndTime(e.target.value)}
                   className="w-full px-3 py-2 border border-border rounded-lg focus:ring-2 focus:ring-blue-500 bg-background text-foreground"
                 />
@@ -2076,10 +2225,14 @@ export default function CreateSchedulePage(): JSX.Element {
               </div>
 
               <p className="text-xs text-foreground/70 pt-2">
-                Shifts are constrained to store hours ({formatTime12(openHH)}–
-                {formatTime12(closeHH)}) and the employee&apos;s approved
-                availability. Days with time off or &quot;unavailable&quot; cannot be
-                scheduled.
+                Shifts are constrained to location hours
+                {editingHoursWindow
+                  ? ` (${formatTime12(editingHoursWindow.start)}–${formatTime12(
+                      editingHoursWindow.end
+                    )})`
+                  : ` (${formatTime12(openHH)}–${formatTime12(closeHH)})`}
+                and the employee&apos;s approved availability. Days with time off or
+                &quot;unavailable&quot; cannot be scheduled.
               </p>
             </div>
           </div>
