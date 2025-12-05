@@ -606,6 +606,11 @@ export default function UserManagement({ businessId }: Props) {
         for (const p of (profRows ?? []) as CoworkerProfile[]) {
           profilesById.set(p.id, p);
         }
+
+        // Debugging logs
+        console.log("profilesById keys", Array.from(profilesById.keys()));
+        console.log("employment user_id", typedEmpRows.map(e => e.user_id));
+        console.log("joinRequests raw", reqRows);
       }
 
       const availabilitySummary: Record<string, AvailabilitySummary> = {};
@@ -1718,7 +1723,7 @@ export default function UserManagement({ businessId }: Props) {
                             <div className="flex items-center justify-between text-sm font-medium text-foreground">
                               <span>Current availability</span>
                               <span className="text-xs text-foreground/60">
-                                {availability.isFuture ? "Pending" : "Active"}
+                                {availability?.isFuture ? "Pending" : "Active"}
                               </span>
                             </div>
                             {availability ? (

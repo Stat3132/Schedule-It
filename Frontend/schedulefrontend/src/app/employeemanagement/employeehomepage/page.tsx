@@ -781,6 +781,15 @@ export default function EmployeeHome() {
         setProfileDescription(profileDescriptionPrefill ?? "");
       }
 
+      // DEBUG: log profile prompt decision values so we can trace why
+      // the profile modal may be suppressed in some environments.
+      try {
+        // eslint-disable-next-line no-console
+        console.debug("[EmployeeHome][DEBUG] metadataProfileDone:", metadataProfileDone, "profileNamePrefill:", profileNamePrefill, "profilePhotoPrefill:", profilePhotoPrefill);
+      } catch (e) {
+        // noop
+      }
+
       const shouldPromptProfile =
         !metadataProfileDone ||
         profileNamePrefill.trim().length === 0 ||
@@ -1405,7 +1414,19 @@ export default function EmployeeHome() {
               >
                 ‹
               </button>
-              <span className="text-xs text-muted-foreground">{weekLabel}</span>
+              {/* Desktop: show weekday names across the top. Mobile: keep week label. */}
+              <span className="hidden sm:inline text-xs text-muted-foreground">
+                {days && days.length
+                  ? days
+                      .map((d) =>
+                        d.date.toLocaleDateString(locale ?? undefined, {
+                          weekday: "long",
+                        }),
+                      )
+                      .join(" - ")
+                  : weekLabel}
+              </span>
+              <span className="sm:hidden text-xs text-muted-foreground">{weekLabel}</span>
               <button
                 type="button"
                 onClick={() => setWeekOffset((w) => w + 1)}
@@ -1433,7 +1454,11 @@ export default function EmployeeHome() {
                 >
                   <div className="text-center sm:text-left mb-2">
                     <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 text-base font-semibold text-foreground">
-                      <span>{weekLabel[bucket.dayIndex]}</span>
+                      <span>
+                        {bucket.date.toLocaleDateString(locale ?? undefined, {
+                          weekday: "long",
+                        })}
+                      </span>
                       {isToday && (
                         <span className="ml-2 inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
                           {t("employee.home.badges.today")}
