@@ -1,7 +1,7 @@
 import UserManagement from "@/components/ui/usermanagement";
 
-type PageProps = { params: { businessId: string } };
+type Props = { params: { businessId: string } };
 
-export default function Page({ params }: PageProps) {
+export default function Page({ params }: Props) {
   return <UserManagement businessId={params.businessId} />;
 }
