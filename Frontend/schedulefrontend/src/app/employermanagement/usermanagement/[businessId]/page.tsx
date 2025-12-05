@@ -1,8 +1,11 @@
 import UserManagement from "@/components/ui/usermanagement";
 
-type PageProps = { params?: Promise<{ businessId: string }> };
+type PageProps = {
+  params: {
+    businessId: string;
+  };
+};
 
-export default async function Page({ params }: PageProps) {
-  const resolvedParams = (await params) ?? { businessId: "" };
-  return <UserManagement businessId={resolvedParams.businessId} />;
+export default function Page({ params }: PageProps) {
+  return <UserManagement businessId={params.businessId} />;
 }
