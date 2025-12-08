@@ -5,6 +5,7 @@ import type {
   AnnouncementRecipient,
 } from "./supabase";
 
+
 export type AnnouncementRow = {
   id: string;
   title: string;
