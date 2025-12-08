@@ -20,6 +20,7 @@ export default function SignUpClient() {
     verifyPassword: "",
   });
 
+  // Default role you had before
   const roleAtSignup: "employee" | "employer" = "employee";
 
   const [loading, setLoading] = useState(false);
@@ -52,7 +53,7 @@ export default function SignUpClient() {
         inviteToken ? `?token=${encodeURIComponent(inviteToken)}` : ""
       }`;
 
-      // --- 1) Check if email already exists (server-side, service role) ---
+      // 1) Check if email already exists (service role)
       const checkResp = await fetch("/api/check-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -80,7 +81,7 @@ export default function SignUpClient() {
         return;
       }
 
-      // --- 2) Email is free → proceed to Supabase sign-up ---
+      // 2) Email is free → proceed to Supabase sign-up
       const origin = window.location.origin;
       const emailRedirectTo = `${origin}/auth/callback?next=${encodeURIComponent(
         nextPath
@@ -92,9 +93,12 @@ export default function SignUpClient() {
         options: {
           emailRedirectTo,
           data: {
+            // keep using these so your profile trigger keeps working
             first_name: formData.firstName,
             last_name: formData.lastName,
             role: roleAtSignup,
+            // NEW: gate your profile-creation screen off this flag
+            profile_customized: false,
           },
         },
       });
@@ -105,10 +109,13 @@ export default function SignUpClient() {
         console.error("SignUp error:", error);
         const rawMsg = (error as { message?: string })?.message ?? "";
         const normalized = rawMsg.toLowerCase();
-        const duplicate = normalized.includes("registered") || normalized.includes("already");
+        const duplicate =
+          normalized.includes("registered") || normalized.includes("already");
         setMessage({
           type: "error",
-          text: duplicate ? "Email is already in use." : rawMsg || "Unexpected error during sign up.",
+          text: duplicate
+            ? "Email is already in use."
+            : rawMsg || "Unexpected error during sign up.",
         });
         setLoading(false);
         return;

@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import NextImage from "next/image";
 import Cropper, { type Area, type MediaSize } from "react-easy-crop";
 import "react-easy-crop/react-easy-crop.css";
-import { supabase, type Announcement, type DayOfWeek, type AvailabilityStatus } from "../../../lib/supabase";
+import { type Announcement, type DayOfWeek, type AvailabilityStatus } from "../../../lib/supabase";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AttachmentPreview } from "../../../components/messages/AttachmentPreview";
 import {
@@ -217,6 +218,7 @@ function normalizePattern(raw: unknown): WeeklyPattern {
 }
 
 export default function EmployeeHome() {
+  const supabase = createClientComponentClient<SupabaseClient>();
   const { t, locale } = useI18n();
   const router = useRouter();
 
@@ -350,7 +352,7 @@ export default function EmployeeHome() {
             )
             : false;
 
-        if (!hasRoleTargets && !hasRecipientTargets) return true; // broadcast
+        if (!hasRoleTargets && !hasRecipientTargets) return false;
         if (matchesRole) return true;
         if (matchesRecipient) return true;
         return false;
@@ -711,9 +713,11 @@ export default function EmployeeHome() {
   };
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
+  console.log("[EmployeeHome][DEBUG] useEffect started");
+  let cancelled = false;
+  (async () => {
+    console.log("[EmployeeHome][DEBUG] async function started");
+    setLoading(true);
       setProfileError(null);
 
       const today = new Date();
@@ -756,12 +760,14 @@ export default function EmployeeHome() {
       let profileNamePrefill = "";
       let profilePhotoPrefill: string | null = null;
       let profileDescriptionPrefill = metadataDescription;
+
       try {
         const { data: profileRow } = await supabase
           .from("profiles")
           .select("display_name,photo_url,profile_title")
           .eq("id", uid)
           .maybeSingle();
+
         profileNamePrefill = (profileRow?.display_name as string | null) ?? "";
         profilePhotoPrefill = (profileRow?.photo_url as string | null) ?? null;
         profileDescriptionPrefill =
@@ -769,6 +775,8 @@ export default function EmployeeHome() {
       } catch (e) {
         console.error("[EmployeeHome] profile prefill error", e);
       }
+
+      // Set the UI state for profile fields
       if (!cancelled) {
         setProfileDisplayName(profileNamePrefill);
         const fallbackAvatar = PRESET_AVATARS[0];
@@ -781,19 +789,22 @@ export default function EmployeeHome() {
         setProfileDescription(profileDescriptionPrefill ?? "");
       }
 
-      // DEBUG: log profile prompt decision values so we can trace why
-      // the profile modal may be suppressed in some environments.
-      try {
-        // eslint-disable-next-line no-console
-        console.debug("[EmployeeHome][DEBUG] metadataProfileDone:", metadataProfileDone, "profileNamePrefill:", profileNamePrefill, "profilePhotoPrefill:", profilePhotoPrefill);
-      } catch (e) {
-        // noop
-      }
+      // Enhanced debugging: check each condition explicitly
+      const hasProfileName = profileNamePrefill.trim().length > 0;
+      const hasProfilePhoto = profilePhotoPrefill !== null && profilePhotoPrefill !== "";
+      const profileCompleted = Boolean(metadataProfileDone);
 
-      const shouldPromptProfile =
-        !metadataProfileDone ||
-        profileNamePrefill.trim().length === 0 ||
-        !profilePhotoPrefill;
+      console.log("[EmployeeHome][DEBUG] Profile conditions:");
+      console.log("  - metadataProfileDone (profile completed):", profileCompleted);
+      console.log("  - hasProfileName:", hasProfileName, "(name:", profileNamePrefill, ")");
+      console.log("  - hasProfilePhoto:", hasProfilePhoto, "(photo:", profilePhotoPrefill, ")");
+
+      const shouldPromptProfile = !profileCompleted || !hasProfileName || !hasProfilePhoto;
+
+      console.log("[EmployeeHome][DEBUG] shouldPromptProfile result:", shouldPromptProfile);
+
+      // Now continue with employment checks...
+      // 2) Active employment
 
       // 2) Active employment
       const { data: emps, error: empErr } = await supabase

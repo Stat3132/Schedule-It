@@ -1,3 +1,4 @@
+// app/layout.tsx
 import "./globals.css";
 import Brand from "@/components/ui/brand";
 import ThemeProvider from "./theme-provider";
@@ -5,17 +6,57 @@ import { cookies } from "next/headers";
 import { I18nProvider } from "@/lib/i18n";
 import { GlobalMessageToaster } from "@/components/messages/GlobalMessageToaster";
 
-const PRE_HYDRATION_SCRIPT = `(function(){try{var p=location.pathname;if(/^\/(?:auth|signin|login)(?:$|\/)/.test(p))return;var c=document.cookie.split('; ').find(function(r){return r.indexOf('theme=')===0});var theme=c?decodeURIComponent(c.split('=')[1]):(localStorage.getItem('theme')||(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'));if(theme==='dark')document.documentElement.classList.add('dark');else document.documentElement.classList.remove('dark');}catch(e){}})();`;
+const PRE_HYDRATION_SCRIPT = `
+(function () {
+  try {
+    var path = window.location.pathname;
+    // Skip auth-related pages
+    if (/^\\/(auth|signin|login)(\\/|$)/.test(path)) {
+      return;
+    }
 
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
+    var cookie = document.cookie
+      .split('; ')
+      .find(function (part) {
+        return part.indexOf('theme=') === 0;
+      });
+
+    var theme = cookie
+      ? decodeURIComponent(cookie.split('=')[1])
+      : (window.localStorage && window.localStorage.getItem('theme')) ||
+        (window.matchMedia &&
+         window.matchMedia('(prefers-color-scheme: dark)').matches
+          ? 'dark'
+          : 'light');
+
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  } catch (e) {
+    // swallow errors to avoid breaking the page
+  }
+})();
+`;
+
+export default async function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const cookieStore = await cookies();
-  const cookieTheme = cookieStore.get ? cookieStore.get("theme")?.value : undefined;
+  const cookieTheme = cookieStore.get
+    ? cookieStore.get("theme")?.value
+    : undefined;
   const htmlClass = cookieTheme === "dark" ? "dark" : "";
 
   return (
     <html lang="en" className={htmlClass}>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: PRE_HYDRATION_SCRIPT }} />
+        <script
+          dangerouslySetInnerHTML={{ __html: PRE_HYDRATION_SCRIPT }}
+        />
       </head>
       <body className="theme-scheduleit">
         <I18nProvider>
