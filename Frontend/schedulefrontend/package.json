@@ -7,7 +7,8 @@
     "build": "next build --turbopack",
     "start": "next start",
     "lint": "eslint",
-    "smoke:storage": "node ./scripts/storage-smoke-test.mjs"
+    "smoke:storage": "node ./scripts/storage-smoke-test.mjs",
+    "generate-favicons": "node ./scripts/generate-favicons.mjs"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.3.3",

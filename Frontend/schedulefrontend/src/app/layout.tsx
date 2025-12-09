@@ -5,6 +5,25 @@ import ThemeProvider from "./theme-provider";
 import { cookies } from "next/headers";
 import { I18nProvider } from "@/lib/i18n";
 import { GlobalMessageToaster } from "@/components/messages/GlobalMessageToaster";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Schedule-It - Schedule it your way",
+  description: "Professional scheduling and workforce management platform for businesses and employees",
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
+      { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+    ],
+    apple: "/apple-touch-icon.png",
+    other: [
+      { rel: "android-chrome-192x192", url: "/favicon-192x192.png" },
+      { rel: "android-chrome-512x512", url: "/favicon-512x512.png" },
+    ],
+  },
+  manifest: "/manifest.json",
+};
 
 const PRE_HYDRATION_SCRIPT = `
 (function () {
