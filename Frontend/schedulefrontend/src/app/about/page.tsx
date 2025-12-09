@@ -1,7 +1,6 @@
 "use client";
 
 import Image from "next/image";
-import { useI18n } from "../../lib/i18n";
 import {
   Calendar,
   Users,
@@ -14,16 +13,13 @@ import {
   Globe,
   CheckCircle,
   Clock,
-  Bell,
   Settings,
   UserCheck,
   Briefcase,
   FileText,
-  BarChart3,
 } from "lucide-react";
 
 export default function AboutPage() {
-  const { t } = useI18n();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
@@ -45,7 +41,7 @@ export default function AboutPage() {
               Schedule<span className="text-yellow-300">IT</span>
             </h1>
             <p className="text-xl font-light opacity-90">
-              "Schedule it your way"
+              &quot;Schedule it your way&quot;
             </p>
             <p className="mt-2 text-lg opacity-75">
               Diego Perez Benitez - Info Doc
@@ -564,7 +560,7 @@ export default function AboutPage() {
             <h3 className="text-2xl font-bold mb-2">
               Schedule<span className="text-yellow-300">IT</span>
             </h3>
-            <p className="text-gray-400">"Schedule it your way"</p>
+            <p className="text-gray-400">&quot;Schedule it your way&quot;</p>
           </div>
           <div className="border-t border-gray-800 pt-8">
             <p className="text-sm text-gray-400">
