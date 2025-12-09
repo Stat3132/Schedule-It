@@ -34,7 +34,6 @@ export default function AboutPage() {
                 height={80}
                 className="drop-shadow-lg"
               />
-              {/* Brand wordmark – matches Brand.tsx style */}
               <div className="leading-tight">
                 <div className="text-4xl font-semibold text-primary">
                   Schedule<span className="text-accent">It</span>
@@ -45,7 +44,6 @@ export default function AboutPage() {
               </div>
             </div>
 
-           
             <p className="mt-2 text-lg opacity-75">Diego Perez Benitez</p>
           </div>
         </div>
@@ -434,6 +432,6 @@ export default function AboutPage() {
         </div>
       </div>
     </div>
-
+    
   );
 }

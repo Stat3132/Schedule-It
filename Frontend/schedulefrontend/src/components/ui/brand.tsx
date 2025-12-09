@@ -39,12 +39,13 @@ export default function Brand() {
   const isEmployerRoute = pathname.startsWith("/employermanagement");
   const isSignupRoute = pathname.startsWith("/signup");
   const isEmployerOnboardingRoute = pathname.startsWith("/employeronboarding");
+  const isAboutPage = pathname === "/about";
 
   let href = "/";
   if (pathname.startsWith("/employermanagement"))
     href = "/employermanagement/employerhomepage";
 
-  if (isEmployeeRoute || isEmployerRoute || isEmployerOnboardingRoute) {
+  if (isEmployeeRoute || isEmployerRoute || isEmployerOnboardingRoute || isAboutPage) {
     return null;
   }
 
