@@ -426,24 +426,6 @@ export default function AboutPage() {
       {/* Footer */}
       <div className="bg-gray-900 py-12 text-white">
         <div className="mx-auto max-w-7xl px-4 text-center sm:px-6 lg:px-8">
-          <div className="mb-8 flex flex-col items-center gap-2">
-            <Image
-              src="/scheduleitlogo.png"
-              alt="Schedule-It"
-              width={60}
-              height={60}
-              className="drop-shadow-lg"
-            />
-            {/* Brand wordmark – matches Brand.tsx style */}
-            <div className="leading-tight text-center">
-              <div className="text-2xl font-semibold text-primary">
-                Schedule<span className="text-accent">It</span>
-              </div>
-              <div className="text-xs uppercase tracking-[0.2em] text-secondary">
-                Schedule it your way!
-              </div>
-            </div>
-          </div>
           <div className="border-t border-gray-800 pt-8">
             <p className="text-sm text-gray-400">
               Check the app out now!
@@ -452,6 +434,6 @@ export default function AboutPage() {
         </div>
       </div>
     </div>
-    
+
   );
 }
